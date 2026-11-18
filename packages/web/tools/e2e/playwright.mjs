@@ -128,10 +128,17 @@ async function waitTitle(page, pass, fail, timeout) {
 
 /** The synthetic round-trip harness. */
 async function suiteSelftest(page, project) {
-  for (const [name, url, pass] of [
-    ["gpu-or-cpu", `${ORIGIN}/test.html`, "TESTS PASS"],
-    ["cpu", `${ORIGIN}/test.html?bin=cpu`, "TESTS PASS"],
-  ]) {
+  /** @type {[string, string, string][]} */
+  const cases = [["gpu-or-cpu", `${ORIGIN}/test.html`, "TESTS PASS"]];
+  if (process.env.CI && project !== "chromium") {
+    // The software binarizer's 31-case suite takes minutes on WebKitGTK;
+    // Chromium covers that path explicitly, WebKit still covers the
+    // default binarizer (and every other gate).
+    console.log(`SKIP  ${project.padEnd(8)} selftest  cpu (CI: Chromium covers the explicit CPU path)`);
+  } else {
+    cases.push(["cpu", `${ORIGIN}/test.html?bin=cpu`, "TESTS PASS"]);
+  }
+  for (const [name, url, pass] of cases) {
     const t0 = Date.now();
     await page.goto(url, { waitUntil: "load" });
     const title = await waitTitle(page, pass, "TESTS FAILED", 240_000);
