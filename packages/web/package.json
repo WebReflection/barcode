@@ -74,7 +74,9 @@
     "prepublishOnly": "npm run build",
     "build:docs": "node tools/build-docs.mjs",
     "serve:docs": "node tools/serve-demo.mjs --docs",
-    "serve:docs:iphone": "node tools/serve-demo.mjs --docs --https"
+    "serve:docs:iphone": "node tools/serve-demo.mjs --docs --https",
+    "test:ci:chromium": "node tools/e2e/playwright.mjs --ci --browser chromium",
+    "test:ci:webkit": "node tools/e2e/playwright.mjs --ci --browser webkit"
   },
   "devDependencies": {
     "@webgpu/types": "^0.1.64",

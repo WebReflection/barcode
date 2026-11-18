@@ -18,7 +18,9 @@
     "serve:iphone": "npm --prefix packages/web run serve:iphone",
     "build:docs": "npm --prefix packages/web run build:docs",
     "serve:docs": "npm --prefix packages/web run serve:docs",
-    "serve:docs:iphone": "npm --prefix packages/web run serve:docs:iphone"
+    "serve:docs:iphone": "npm --prefix packages/web run serve:docs:iphone",
+    "test:ci:chromium": "npm --prefix packages/web run test:ci:chromium",
+    "test:ci:webkit": "npm --prefix packages/web run test:ci:webkit"
   },
   "version": "0.1.0"
 }

@@ -210,12 +210,15 @@ the OS-level camera permission:
 
 ## Gates
 
-CI runs the same page suites on Chromium and WebKit with Playwright (the
-fake-camera mock needs no physical device):
+CI runs the page suites with Playwright (the fake-camera mock needs no
+physical device). Per push/PR the gate is **Chromium only** (a couple of
+minutes); WebKit/Safari-engine runs nightly and on manual dispatch:
 
 ```sh
 npm test                          # chromium + webkit + iphone profile
-npm run test:ci                   # headless chromium + webkit (what CI runs)
+npm run test:ci                   # headless chromium + webkit
+npm run test:ci:chromium          # what CI runs per push
+npm run test:ci:webkit            # Safari engine (nightly / manual)
 ```
 
 The CDP tools remain the authority for real phones:

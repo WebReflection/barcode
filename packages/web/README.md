@@ -205,8 +205,10 @@ and keep the CDP tools for real phones:
 
 ```sh
 npm test                                   # chromium + webkit + iphone profile
-npm --prefix packages/web run test:ci      # headless chromium + webkit (CI)
-npm --prefix packages/web run test:webkit  # Safari engine only
+npm --prefix packages/web run test:ci      # headless chromium + webkit
+npm --prefix packages/web run test:ci:chromium  # what CI runs per push
+npm --prefix packages/web run test:ci:webkit    # Safari engine (nightly)
+npm --prefix packages/web run test:webkit  # Safari engine locally
 npm --prefix packages/web run test:iphone  # WebKit + iPhone descriptor only
 npm --prefix packages/web run test:phone   # Android over adb (real camera)
 npm --prefix packages/web run test:field   # local real-photo corpus

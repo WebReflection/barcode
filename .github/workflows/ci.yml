@@ -3,9 +3,76 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
+  schedule:
+    # nightly WebKit/Safari-engine run (the per-push job stays Chromium-only)
+    - cron: "17 3 * * *"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: latest
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install package deps
+        working-directory: packages/web
+        run: npm install --no-audit --no-fund
+
+      - name: Build dist/ (wasm + artifacts + types)
+        working-directory: packages/web
+        run: npm run build
+
+      - name: Docs site builds
+        working-directory: packages/web
+        run: npm run build:docs
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('packages/web/package.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
+
+      - name: Install Chromium for Playwright
+        working-directory: packages/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Regression gates (Chromium + fake camera)
+        working-directory: packages/web
+        run: npm run test:ci:chromium
+
+      - name: Upload Playwright JSONL
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-e2e
+          path: /tmp/opencode/playwright-e2e.jsonl
+          if-no-files-found: ignore
+
+  webkit:
+    # WebKit/Safari engine gate: nightly + manual. The per-push job above
+    # must stay under a couple of minutes; WebKit's system deps are huge.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -30,7 +97,7 @@ jobs:
         working-directory: packages/web
         run: npm install --no-audit --no-fund
 
-      - name: Build dist/ (types + wasm + artifacts)
+      - name: Build dist/ (wasm + artifacts + types)
         working-directory: packages/web
         run: npm run build
 
@@ -38,18 +105,25 @@ jobs:
         working-directory: packages/web
         run: npm run build:docs
 
-      - name: Install Playwright browsers
-        working-directory: packages/web
-        run: npx playwright install --with-deps chromium webkit
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('packages/web/package.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
 
-      - name: Regression gates (Chromium + WebKit, fake camera)
+      - name: Install WebKit for Playwright
         working-directory: packages/web
-        run: npm run test:ci
+        run: npx playwright install --with-deps webkit
+
+      - name: Regression gates (WebKit)
+        working-directory: packages/web
+        run: npm run test:ci:webkit
 
       - name: Upload Playwright JSONL
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-e2e
+          name: playwright-e2e-webkit
           path: /tmp/opencode/playwright-e2e.jsonl
           if-no-files-found: ignore
