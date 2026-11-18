@@ -1,5 +1,7 @@
 # @webreflection/barcode
 
+<sup>**Social Media Photo by [Risto Kokkonen](https://unsplash.com/@risto_kokkonen) on [Unsplash](https://unsplash.com/)**</sup>
+
 WebGPU-accelerated barcode and QR scanning for the web, with encoding
 (rendering) for all 17 supported symbologies. Native JS + a Rust/WASM
 core — clean-room implementations, MIT throughout.
