@@ -42,9 +42,10 @@ if (!existsSync(tsc)) {
   process.exit(2);
 }
 
-run(process.execPath, [tsc, "--noEmit"]);
-run(process.execPath, [tsc, "-p", "tsconfig.types.json"]);
-
+// Generate the modules the type check imports FIRST. On a clean checkout
+// `src/wasm/pkg` and `dist/` do not exist yet; tsc must not run before
+// them or CI fails with "cannot find module".
+//
 // wasm-pack is a native binary; PATH above includes ~/.cargo/bin.
 try {
   run("wasm-pack", [
@@ -61,6 +62,9 @@ try {
 }
 
 run(process.execPath, ["tools/build-artifacts.mjs"]);
+
+run(process.execPath, [tsc, "--noEmit"]);
+run(process.execPath, [tsc, "-p", "tsconfig.types.json"]);
 
 if (DEMO) {
   const vite = resolve(root, "node_modules/vite/bin/vite.js");

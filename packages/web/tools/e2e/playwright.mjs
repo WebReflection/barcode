@@ -176,6 +176,17 @@ async function suiteFakecam(browser, project) {
   const context = await browser.newContext(project.context);
   await context.addInitScript({ content: MOCK });
   const page = await context.newPage();
+  // The mock camera is a canvas + captureStream(). WebKitGTK (CI) does
+  // not always expose canvas capture; the page is still covered by the
+  // synthetic, contract and docs suites there.
+  const canCapture = await page.evaluate(
+    () => typeof HTMLCanvasElement.prototype.captureStream === "function",
+  );
+  if (!canCapture) {
+    console.log(`SKIP  ${project.padEnd(8)} fakecam     canvas.captureStream unavailable in this engine`);
+    await context.close();
+    return;
+  }
   for (const [s, t] of selected) {
     const format = s
       .replace(/^inverted-/, "")

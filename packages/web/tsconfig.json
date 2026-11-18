@@ -13,5 +13,5 @@
     "skipLibCheck": true
   },
   "include": ["src/**/*.js", "api/**/*.js", "demo/**/*.js", "types/**/*.d.ts"],
-  "exclude": ["src/wasm/pkg"]
+  "exclude": ["src/wasm/pkg", "demo/fixture.js"]
 }
