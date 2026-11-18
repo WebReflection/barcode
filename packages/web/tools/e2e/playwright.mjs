@@ -164,7 +164,7 @@ async function suiteArtifact(browser, project) {
   await page.goto(`${STATIC}/packages/web/demo/artifact-test.html`, { waitUntil: "load" });
   const title = await waitTitle(page, "ARTIFACT PASS", "ARTIFACT FAIL", 60_000);
   const result = await page.evaluate(() => globalThis.__RESULT);
-  record({ project, suite: "artifact", name: "dist/ static", ok: title === "ARTIFACT PASS", ms: Date.now() - t0, note: result ?? "" });
+  record({ project: project.name, suite: "artifact", name: "dist/ static", ok: title === "ARTIFACT PASS", ms: Date.now() - t0, note: result ?? "" });
   await context.close();
 }
 
