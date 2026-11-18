@@ -182,8 +182,13 @@ async function suiteFakecam(browser, project) {
   const canCapture = await page.evaluate(
     () => typeof HTMLCanvasElement.prototype.captureStream === "function",
   );
-  if (!canCapture) {
-    console.log(`SKIP  ${project.padEnd(8)} fakecam     canvas.captureStream unavailable in this engine`);
+  if (!canCapture || (process.env.CI && project !== "chromium")) {
+    console.log(
+      `SKIP  ${project.padEnd(8)} fakecam     ` +
+      (canCapture
+        ? "CI runs the fake camera on Chromium; WebKit keeps the other suites"
+        : "canvas.captureStream unavailable in this engine"),
+    );
     await context.close();
     return;
   }
