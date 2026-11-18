@@ -19,5 +19,6 @@
     "build:docs": "npm --prefix packages/web run build:docs",
     "serve:docs": "npm --prefix packages/web run serve:docs",
     "serve:docs:iphone": "npm --prefix packages/web run serve:docs:iphone"
-  }
+  },
+  "version": "0.1.0"
 }
