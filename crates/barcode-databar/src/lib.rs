@@ -20,13 +20,6 @@ const SYMBOL_MODULES: u32 = 95;
 /// Runs that are exactly 1 module wide in every DataBar Omnidirectional.
 const FIXED_ONES: [usize; 6] = [13, 14, 31, 32, 44, 45];
 
-#[derive(Debug, Clone)]
-struct Candidate {
-    text: String,
-    x_start: u32,
-    x_end: u32,
-}
-
 /// GS1 DataBar Omnidirectional decoder.
 #[derive(Debug)]
 pub struct DataBarOmniDecoder {
@@ -339,7 +332,7 @@ impl DataBarStackedDecoder {
     fn quantize(runs: &[(bool, u32)], unit: f32, total: u32) -> Option<Vec<u32>> {
         let mut mods = Vec::with_capacity(runs.len());
         let mut sum = 0u32;
-        for &(ink, w) in runs {
+        for &(_ink, w) in runs {
             let m = (w as f32 / unit).round() as i64;
             if m < 1 {
                 return None;

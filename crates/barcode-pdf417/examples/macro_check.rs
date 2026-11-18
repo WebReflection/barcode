@@ -8,7 +8,7 @@ fn main() {
     let text = fs::read_to_string(path).unwrap();
     let mut label = String::new();
     let mut rows: Vec<Vec<u8>> = Vec::new();
-    let mut flush = |label: &str, rows: &mut Vec<Vec<u8>>| {
+    let flush = |label: &str, rows: &mut Vec<Vec<u8>>| {
         if rows.is_empty() {
             return;
         }

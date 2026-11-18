@@ -632,9 +632,6 @@ impl Tiers {
         self.ean13 || self.code39 || self.itf || self.code128 || self.code93 || self.codabar || self.ean8 || self.upce || self.databar || self.databarltd
     }
 
-    fn any_2d(&self) -> bool {
-        self.qr || self.microqr || self.datamatrix || self.aztec || self.pdf417 || self.databarstk
-    }
 }
 
 impl BarcodeScanner {
@@ -1379,7 +1376,8 @@ fn microqr_canvas(text: &str, module: u32) -> Result<Canvas, JsValue> {
 }
 
 /// Draw a `#`/`.` oracle matrix (1 char = 1 module) onto a Canvas with a
-/// `quiet`-module margin. Used by the frozen-specimen fixture arms.
+/// `quiet`-module margin. Used by the frozen-specimen fixture tests.
+#[cfg(test)]
 fn matrix_canvas(pattern: &str, rows: u32, cols: u32, module: u32, quiet: u32) -> Canvas {
     let mut c = Canvas::new((cols + 2 * quiet) * module, (rows + 2 * quiet) * module);
     for (y, line) in pattern.split('\n').enumerate() {

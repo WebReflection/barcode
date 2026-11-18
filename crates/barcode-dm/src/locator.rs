@@ -766,7 +766,7 @@ fn try_corner_fast(map: &BinaryMap, corner: &Corner, budget: &mut u64) -> Option
         fits.push((ratio, lo, hi, spec, rows, cols, (p_h + p_v) / 2.0));
     }
     fits.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    for (_ratio, lo, hi, spec, rows, cols, p_est) in fits {
+    for (_ratio, lo, hi, _spec, rows, cols, p_est) in fits {
         // Pitch ladder ordered by the leg-derived estimate, not bottom-up:
         // agreeing legs pin the pitch to a few percent (the wedge-legged
         // rig frame's true pitch sat ~9 steps above `lo` — bottom-up burned

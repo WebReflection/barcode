@@ -1541,25 +1541,6 @@ fn ltd_unrank(k: usize, mut t: u32, w: u32, mut need_one: bool, mut r: u64) -> [
     out
 }
 
-/// Lex-ascending rank of a composition (the inverse of [`ltd_unrank`]).
-fn ltd_rank(parts: &[u32; 7], w: u32, mut need_one: bool) -> u64 {
-    let mut t: u32 = parts.iter().sum();
-    let mut r = 0u64;
-    for (i, &p) in parts.iter().enumerate() {
-        let rest = 6 - i;
-        for q in 1..p {
-            r += if need_one && q != 1 {
-                ltd_compositions_single(rest, t - q, w)
-            } else {
-                ltd_compositions(rest, t - q, w)
-            };
-        }
-        t -= p;
-        need_one = need_one && p != 1;
-    }
-    r
-}
-
 /// (26,7) data character: value -> (7 space widths, 7 bar widths).
 /// VD = GSUM + V_spaces·T_bars + V_bars; the bars vary fastest.
 fn ltd_char_widths(d: u32) -> ([u32; 7], [u32; 7]) {

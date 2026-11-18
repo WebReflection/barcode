@@ -22,5 +22,8 @@
     "test:ci:chromium": "npm --prefix packages/web run test:ci:chromium",
     "test:ci:webkit": "npm --prefix packages/web run test:ci:webkit"
   },
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=24"
+  }
 }

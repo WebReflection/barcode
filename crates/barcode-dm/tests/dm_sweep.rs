@@ -1,5 +1,4 @@
-use barcode_dm::{decode_upright, encode};
-use barcode_dm::encode::encode;
+use barcode_dm::decode_upright;
 
 #[test]
 fn sweep_lengths() {

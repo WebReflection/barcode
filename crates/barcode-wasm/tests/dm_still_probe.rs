@@ -1,7 +1,5 @@
 //! Mirror the wasm still path exactly: BitImage -> decode_datamatrix_mask_budget.
 
-use barcode_dm::encode;
-use barcode_core::BitImage;
 use barcode_wasm::decode_datamatrix_mask_budget;
 
 #[test]

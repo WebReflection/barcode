@@ -265,7 +265,7 @@ mod grid_tests {
     /// samples back to the same bits through `quad_homography`.
     #[test]
     fn quad_homography_round_trips_a_perspective_grid() {
-        let (cols, rows, m) = (7u32, 3u32, 10u32);
+        let (cols, rows, _m) = (7u32, 3u32, 10u32);
         // A sheared + scaled destination quad (as a phone would see it).
         let quad = [
             Point { x: 20.0, y: 15.0 },

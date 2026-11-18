@@ -89,5 +89,8 @@
     "@webreflection/bindings": "^0.3.0",
     "@webreflection/utils": "^0.4.20",
     "html-escaper": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

@@ -1039,10 +1039,6 @@ mod perspective_tests {
     use super::*;
     use barcode_core::geometry::{apply_h, fit_homography};
 
-    fn image_of(canvas: &barcode_fixtures::Canvas) -> BitImage<'_> {
-        BitImage::new(canvas.width, canvas.height, canvas.bits())
-    }
-
     /// Render the fixture canvas through a homography: each output pixel
     /// is inverse-mapped into the source's module space and samples the
     /// axis-aligned render. This is a TRUE perspective image (what the
@@ -1117,7 +1113,7 @@ mod perspective_tests {
             .collect();
         let h = fit_homography(&pairs).expect("homography from the quad");
 
-        let (wbits, wbpr) = warp(&canvas, h, out);
+        let (wbits, _wbpr) = warp(&canvas, h, out);
         let img = BitImage::new(out, out, &wbits);
 
         let mut d = QrDecoder::new();

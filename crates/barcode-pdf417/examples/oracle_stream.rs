@@ -21,7 +21,7 @@ fn main() {
     if let Some(path) = std::env::args().nth(1) {
         let text = std::fs::read_to_string(path).unwrap();
         let mut rows: Vec<Vec<u8>> = Vec::new();
-        let mut flush =
+        let flush =
             |rows: &mut Vec<Vec<u8>>, w: &mut std::io::BufWriter<std::io::StdoutLock>| {
                 if rows.is_empty() {
                     return;

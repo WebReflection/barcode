@@ -28,7 +28,7 @@ fn specimens() -> Vec<(String, Vec<Vec<u8>>)> {
     let mut out = Vec::new();
     let mut label = String::new();
     let mut rows = Vec::new();
-    let mut flush = |label: &str, rows: &mut Vec<Vec<u8>>, out: &mut Vec<(String, Vec<Vec<u8>>)>| {
+    let flush = |label: &str, rows: &mut Vec<Vec<u8>>, out: &mut Vec<(String, Vec<Vec<u8>>)>| {
         if !rows.is_empty() {
             out.push((label.to_string(), std::mem::take(rows)));
         }

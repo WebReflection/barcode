@@ -94,7 +94,6 @@ pub fn read_frame(dark: &[u8], w: usize, h: usize) -> Option<FrameDecode> {
 struct Hit {
     x0: usize,
     x1: usize,
-    s: u32,
     /// Fractional pitch at the start/stop ends: camera keystoning tapers
     /// the pitch across the symbol (~12% on the phone rig), so elements
     /// are snapped against a linearly interpolated pitch, not a constant.
@@ -220,7 +219,7 @@ fn scan_candidates(dark: &[u8], w: usize, h: usize) -> Vec<Hit> {
                 if (width_m - (69.0 + 17.0 * ncols as f64)).abs() > tol {
                     continue;
                 }
-                hits.push(Hit { x0: *x0 as usize, x1: *x1 as usize, s: *ss, s0: *s0, s1: *s1, y, ncols: ncols as usize });
+                hits.push(Hit { x0: *x0 as usize, x1: *x1 as usize, s0: *s0, s1: *s1, y, ncols: ncols as usize });
             }
         }
     }
@@ -568,45 +567,6 @@ fn fit_linear(pts: &[(f64, f64)]) -> Option<(f64, f64)> {
     let b = (n * suv - su * sv) / den;
     let a = (sv - b * su) / n;
     Some((a, b))
-}
-
-/// Least-squares fit with two outlier-rejection passes (text above/below the
-/// symbol contributes first/last-ink points that are not the symbol edge).
-fn robust_fit(pts: &[(f64, f64)]) -> Option<(f64, f64)> {
-    let mut pts = pts.to_vec();
-    for _ in 0..2 {
-        let Some((a, b)) = fit_linear(&pts) else {
-            return None;
-        };
-        let mut res: Vec<f64> = pts.iter().map(|&(u, v)| (v - (a + b * u)).abs()).collect();
-        res.sort_unstable_by(f64::total_cmp);
-        let med = res[res.len() / 2];
-        let tol = (med * 3.0).max(2.5);
-        let keep: Vec<(f64, f64)> = pts
-            .iter()
-            .zip(res.iter())
-            .filter(|(_, &r)| r <= tol)
-            .map(|(p, _)| *p)
-            .collect();
-        if keep.len() < 4 {
-            return None;
-        }
-        pts = keep;
-    }
-    fit_linear(&pts)
-}
-
-/// Intersection of `x = a + b*y` and `y = c + d*x`.
-fn intersect(left: (f64, f64), top: (f64, f64)) -> Option<Point> {
-    let (la, lb) = left;
-    let (ta, tb) = top;
-    let den = 1.0 - lb * tb;
-    if den.abs() < 1e-9 {
-        return None;
-    }
-    let x = (la + lb * ta) / den;
-    let y = ta + tb * x;
-    Some(Point { x: x as f32, y: y as f32 })
 }
 
 /// The longest dark run **along an edge line** `x = a + b*y` (offset into

@@ -160,6 +160,8 @@ Personal fixtures stay local: `packages/web/test-codes/field/` (photos +
 cd packages/web && pnpm install && pnpm dev   # http://localhost:5173
 ```
 
+Node 24+ is required (CI tracks the latest LTS via `lts/*`).
+
 Open `/scan.html` — the public-API demo: one `barcode()` session, one
 worker, `scan()` then `render()`; its default is everything — or
 `/test.html` (the self-test harness). `/demo.html` is the diagnostic dev

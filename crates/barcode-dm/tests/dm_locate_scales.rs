@@ -6,7 +6,6 @@
 //! (spec, pitch) candidate; try_corner now orders candidates by the
 //! corner legs' own pitch estimate.
 
-use barcode_dm::encode;
 use barcode_dm::locator::{locate_binary, BinaryMap};
 use barcode_dm::encode::encode;
 

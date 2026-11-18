@@ -594,7 +594,7 @@ mod tests {
 
     #[test]
     fn read_frame_decodes_oracle_frames() {
-        for (rows, size, scale, quiet, full, want) in [
+        for (rows, size, scale, quiet, _full, want) in [
             (B_V2, 19usize, 8usize, 4usize, false, &b"B"[..]),
             (HELLO_V1, 15, 12, 3, false, b"hello world"),
             (FULL23, 23, 10, 5, true, b"FULL23"),

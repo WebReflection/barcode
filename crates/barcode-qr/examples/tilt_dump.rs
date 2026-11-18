@@ -25,7 +25,7 @@ fn main() {
         }
     }
     let img = BitImage::new(dest.width, dest.height, dest.bits());
-    let mut d = barcode_qr::QrDecoder::new();
+    let _d = barcode_qr::QrDecoder::new();
     // the failing cluster: (122,122) m_est 9.24, dir (-0.41, 0.91)
     // the true TL finder: (178,122), m_est 9.24, local Y axis at -30deg
     let (fcx, fcy) = (178.0f64, 122.0f64);
