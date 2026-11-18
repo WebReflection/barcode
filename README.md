@@ -1,5 +1,7 @@
 # barcode
 
+<sup>**Social Media Photo by [Risto Kokkonen](https://unsplash.com/@risto_kokkonen) on [Unsplash](https://unsplash.com/)**</sup>
+
 MIT-licensed, WebGPU-accelerated barcode and QR scanning for the web. The
 decoder core is clean-room Rust compiled to WebAssembly (the same core is
 meant to grow native Android/iOS bindings later).
