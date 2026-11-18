@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Scan a photo — @webreflection/barcode</title>
+<style>
+  :root { color-scheme: dark; --line:#263241; --muted:#93a4b5; --accent:#5b9dff; --card:#151d26; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:0 18px 48px; background:#0d1117; color:#e8edf2;
+    font:15px/1.55 ui-sans-serif,system-ui,-apple-system,sans-serif; }
+  h1 { font-size:20px; margin:8px 0 4px; }
+  .lede { margin:0 0 22px; color:var(--muted); max-width:760px; }
+  .docs-back { display:inline-flex; margin:12px 0; padding:5px 11px; border:1px solid var(--line);
+    border-radius:999px; color:var(--muted); background:var(--card); font-size:13px; text-decoration:none; }
+  .docs-back:hover { color:#e8edf2; border-color:var(--accent); }
+  .wrap { display:grid; grid-template-columns:minmax(280px,420px) 1fr; gap:22px; max-width:1100px; }
+  @media (max-width: 860px) { .wrap { grid-template-columns:1fr; } }
+  .drop { border:1px dashed #3a4a5e; border-radius:14px; background:var(--card);
+    min-height:220px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:8px; padding:22px; text-align:center; transition:border-color .15s, background .15s; cursor:pointer; }
+  .drop.drag { border-color:var(--accent); background:#182636; }
+  .drop strong { font-size:15px; }
+  .drop span { color:var(--muted); font-size:13px; }
+  .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:14px; }
+  button { padding:9px 15px; border-radius:9px; border:1px solid var(--line);
+    background:#1b2633; color:#e8edf2; font:600 13px/1.2 inherit; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  .preview { border:1px solid var(--line); border-radius:12px; background:#fff; min-height:320px;
+    display:flex; align-items:center; justify-content:center; padding:18px; overflow:hidden; }
+  .preview img, .preview svg, .preview canvas { max-width:100%; max-height:520px; width:auto; height:auto; }
+  .result { margin-top:14px; border:1px solid var(--line); border-radius:12px; background:var(--card); padding:16px 18px; }
+  .result .sym { color:var(--accent); font-size:11px; letter-spacing:.14em; text-transform:uppercase; }
+  .result .value { font:700 20px/1.3 ui-monospace,monospace; word-break:break-all; margin-top:4px; }
+  .result .meta { color:var(--muted); font-size:12px; margin-top:6px; }
+  .status { margin-top:12px; color:var(--muted); font-size:14px; min-height:20px; }
+  .status.error { color:#ff7b6b; }
+  .status.pass { color:#61d26a; }
+  .note { color:var(--muted); font-size:13px; }
+  .hidden { display:none; }
+  code { font-family:ui-monospace,monospace; background:#0a0f14; border:1px solid var(--line); border-radius:4px; padding:1px 5px; }
+</style>
+  <script type="module" crossorigin src="./assets/still-BU6q9_3E.js"></script>
+  <link rel="modulepreload" crossorigin href="./assets/modulepreload-polyfill-B5Qt9EMX.js">
+  <link rel="modulepreload" crossorigin href="./assets/main-DyWwqnZv.js">
+  <link rel="modulepreload" crossorigin href="./assets/worker-C-xm9Xse.js">
+</head>
+<body>
+<a class="docs-back" href="./index.html">← API demos</a>
+<h1>Scan a photo or file</h1>
+<p class="lede">
+  <code>scan({ image })</code> takes a <code>Blob</code>/<code>File</code>,
+  canvas, <code>ImageBitmap</code>, <code>HTMLImageElement</code> or SVG and
+  resolves once. Files are decoded locally and never uploaded.
+</p>
+
+<div class="wrap">
+  <div>
+    <div class="drop" id="drop" tabindex="0" role="button">
+      <strong>Drop an image here</strong>
+      <span>or click to choose a file — PNG, JPEG, WebP, SVG…</span>
+      <input id="file" class="hidden" type="file" accept="image/*" />
+    </div>
+
+    <div class="actions">
+      <button type="button" id="sample-qr">Scan a generated QR</button>
+      <button type="button" id="sample-c128">Scan a generated Code 128</button>
+      <button type="button" id="sample-dm">Scan a generated Data Matrix</button>
+    </div>
+
+    <div id="status" class="status"></div>
+  </div>
+
+  <div>
+    <div class="preview" id="preview"><span class="note">Nothing loaded yet.</span></div>
+    <div class="result hidden" id="result">
+      <div class="sym" id="sym"></div>
+      <div class="value" id="value"></div>
+      <div class="meta" id="meta"></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

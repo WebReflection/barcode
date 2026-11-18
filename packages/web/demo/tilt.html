@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>barcode — tilt harness</title>
+  <style>
+    body { font-family: ui-monospace, monospace; background: #14181d; color: #ddd; margin: 16px; }
+    h1 { font-size: 15px; color: #9ab; }
+    table { border-collapse: collapse; font-size: 12px; }
+    td, th { border: 1px solid #2a333c; padding: 3px 8px; text-align: left; }
+    tr.pass td:nth-child(4) { color: #7c6; }
+    tr.fail td:nth-child(4) { color: #f76; font-weight: 700; }
+    #summary { font-size: 14px; margin: 10px 0; }
+    #summary.pass { color: #7c6; }
+    #summary.fail { color: #f76; }
+  </style>
+</head>
+<body>
+  <h1>tilt harness — every family, rendered rotated, through the real GPU pipeline</h1>
+  <div id="summary">running…</div>
+  <table>
+    <thead><tr><th>sym</th><th>text</th><th>render</th><th>result</th><th>got</th><th>mask</th><th>ms</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <script type="module" src="./tilt.js"></script>
+</body>
+</html>

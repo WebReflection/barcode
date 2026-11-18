@@ -1,0 +1,183 @@
+{
+ "8x18": {
+  "blocks": 1,
+  "data": 5,
+  "ecc": 7,
+  "total": 12
+ },
+ "8x32": {
+  "blocks": 1,
+  "data": 10,
+  "ecc": 11,
+  "total": 21
+ },
+ "10x10": {
+  "blocks": 1,
+  "data": 3,
+  "ecc": 5,
+  "total": 8
+ },
+ "12x12": {
+  "blocks": 1,
+  "data": 5,
+  "ecc": 7,
+  "total": 12
+ },
+ "12x26": {
+  "blocks": 1,
+  "data": 16,
+  "ecc": 14,
+  "total": 30
+ },
+ "14x14": {
+  "blocks": 1,
+  "data": 8,
+  "ecc": 10,
+  "total": 18
+ },
+ "16x16": {
+  "blocks": 1,
+  "data": 12,
+  "ecc": 12,
+  "total": 24
+ },
+ "16x36": {
+  "blocks": 1,
+  "data": 32,
+  "ecc": 24,
+  "total": 56
+ },
+ "18x18": {
+  "blocks": 1,
+  "data": 18,
+  "ecc": 14,
+  "total": 32
+ },
+ "20x20": {
+  "blocks": 1,
+  "data": 22,
+  "ecc": 18,
+  "total": 40
+ },
+ "22x22": {
+  "blocks": 1,
+  "data": 30,
+  "ecc": 20,
+  "total": 50
+ },
+ "24x24": {
+  "blocks": 1,
+  "data": 36,
+  "ecc": 24,
+  "total": 60
+ },
+ "26x26": {
+  "blocks": 1,
+  "data": 44,
+  "ecc": 28,
+  "total": 72
+ },
+ "12x36": {
+  "blocks": 1,
+  "data": 22,
+  "ecc": 18,
+  "total": 40
+ },
+ "16x48": {
+  "blocks": 1,
+  "data": 49,
+  "ecc": 28,
+  "total": 77
+ },
+ "32x32": {
+  "blocks": 1,
+  "data": 62,
+  "ecc": 36,
+  "total": 98
+ },
+ "36x36": {
+  "blocks": 1,
+  "data": 86,
+  "ecc": 42,
+  "total": 128
+ },
+ "40x40": {
+  "blocks": 1,
+  "data": 114,
+  "ecc": 48,
+  "total": 162
+ },
+ "44x44": {
+  "blocks": 1,
+  "data": 144,
+  "ecc": 56,
+  "total": 200
+ },
+ "48x48": {
+  "blocks": 1,
+  "data": 174,
+  "ecc": 68,
+  "total": 242
+ },
+ "52x52": {
+  "blocks": 2,
+  "data": 204,
+  "ecc": 84,
+  "total": 288
+ },
+ "64x64": {
+  "blocks": 2,
+  "data": 280,
+  "ecc": 112,
+  "total": 392
+ },
+ "72x72": {
+  "blocks": 4,
+  "data": 368,
+  "ecc": 144,
+  "total": 512
+ },
+ "80x80": {
+  "blocks": 4,
+  "data": 456,
+  "ecc": 192,
+  "total": 648
+ },
+ "88x88": {
+  "blocks": 4,
+  "data": 576,
+  "ecc": 224,
+  "total": 800
+ },
+ "96x96": {
+  "blocks": 4,
+  "data": 696,
+  "ecc": 272,
+  "total": 968
+ },
+ "104x104": {
+  "blocks": 6,
+  "data": 816,
+  "ecc": 336,
+  "total": 1152
+ },
+ "120x120": {
+  "blocks": 6,
+  "data": 1050,
+  "ecc": 408,
+  "total": 1458
+ },
+ "132x132": {
+  "blocks": 8,
+  "data": 1304,
+  "ecc": 496,
+  "total": 1800
+ },
+ "144x144": {
+  "blocks": 10,
+  "data": 1558,
+  "ecc": 620,
+  "total": 2178,
+  "note": "uneven deal: data[i] -> block (i - 8) mod 10 (short blocks 0,1)"
+ }
+}

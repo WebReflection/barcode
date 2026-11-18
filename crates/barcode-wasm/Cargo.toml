@@ -1,0 +1,45 @@
+[package]
+name = "barcode-wasm"
+description = "WASM bridge: exposes the decoder crates to the web SDK"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+barcode-core = { workspace = true }
+barcode-ean13 = { path = "../barcode-ean13" }
+barcode-code39 = { path = "../barcode-code39" }
+barcode-itf = { path = "../barcode-itf" }
+barcode-code128 = { path = "../barcode-code128" }
+barcode-code93 = { path = "../barcode-code93" }
+barcode-codabar = { path = "../barcode-codabar" }
+barcode-ean8 = { path = "../barcode-ean8" }
+barcode-upce = { path = "../barcode-upce" }
+barcode-qr = { path = "../barcode-qr" }
+barcode-microqr = { path = "../barcode-microqr" }
+barcode-aztec = { path = "../barcode-aztec" }
+barcode-pdf417 = { path = "../barcode-pdf417" }
+barcode-dm = { path = "../barcode-dm" }
+barcode-databar = { path = "../barcode-databar" }
+barcode-fixtures = { path = "../barcode-fixtures" }
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+
+[package.metadata.wasm-pack.profile.dev]
+wasm-opt = false
+
+# Release: wasm-opt was silently failing on `i32.trunc_sat_f64_*` (the
+# float→int saturating conversions Rust emits for `as` casts) and
+# `memory.fill` (bulk memory) — wasm-pack then left the unoptimized 2.6MB
+# module in place, 60% more bytes for a phone to fetch and instantiate on
+# every session. wasm-opt 130's validator wants the feature set spelled
+# out; `--all-features` only relaxes validation (the input already
+# contains what Rust emitted), and every feature involved is standard in
+# WebAssembly-capable browsers.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O", "--all-features"]

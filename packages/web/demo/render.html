@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Render a barcode — @webreflection/barcode</title>
+<style>
+  :root { color-scheme: dark; --line:#263241; --muted:#93a4b5; --accent:#5b9dff; --card:#151d26; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:0 18px 48px; background:#0d1117; color:#e8edf2;
+    font:15px/1.55 ui-sans-serif,system-ui,-apple-system,sans-serif; }
+  h1 { font-size:20px; margin:8px 0 4px; }
+  .lede { margin:0 0 22px; color:var(--muted); max-width:720px; }
+  .grid { display:grid; grid-template-columns:minmax(280px,420px) 1fr; gap:22px; }
+  @media (max-width: 860px) { .grid { grid-template-columns:1fr; } }
+  fieldset { border:1px solid var(--line); border-radius:12px; background:var(--card); padding:16px 18px 18px; margin:0 0 14px; }
+  legend { padding:0 6px; color:var(--muted); font-size:12px; letter-spacing:.12em; text-transform:uppercase; }
+  label { display:block; margin:12px 0 0; color:var(--muted); font-size:12px; }
+  input, textarea, select {
+    width:100%; margin-top:5px; padding:9px 10px; border-radius:8px;
+    border:1px solid var(--line); background:#0a0f14; color:#e8edf2;
+    font:inherit;
+  }
+  textarea { min-height:82px; resize:vertical; font-family:ui-monospace,monospace; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .row.three { grid-template-columns:1fr 1fr 1fr; }
+  .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
+  button { padding:10px 16px; border-radius:9px; border:1px solid var(--line);
+    background:#1b2633; color:#e8edf2; font:600 14px/1.2 inherit; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  .preview { border:1px solid var(--line); border-radius:12px; background:#fff; min-height:320px;
+    display:flex; align-items:center; justify-content:center; padding:20px; }
+  .preview svg { width:auto; height:auto; max-width:100%; max-height:520px; }
+  .status { margin-top:12px; color:var(--muted); font-size:14px; min-height:20px; }
+  .status.error { color:#ff7b6b; }
+  .status.pass { color:#61d26a; }
+  .note { color:var(--muted); font-size:13px; }
+  .hidden { display:none; }
+  code { font-family:ui-monospace,monospace; background:#0a0f14; border:1px solid var(--line); border-radius:4px; padding:1px 5px; }
+  .docs-back { display:inline-flex; margin:12px 0; padding:5px 11px; border:1px solid var(--line);
+    border-radius:999px; color:var(--muted); background:var(--card); font-size:13px; text-decoration:none; }
+  .docs-back:hover { color:#e8edf2; border-color:var(--accent); }
+</style>
+</head>
+<body>
+<a class="docs-back" href="./index.html">← API demos</a>
+<h1>Render any symbol</h1>
+<p class="lede">
+  <code>render(result, opts)</code> re-encodes a payload as a fresh SVG.
+  Change anything; the preview updates. “Scan it back” rasterizes the SVG
+  and feeds it to <code>scan({ image })</code> on the same session/worker.
+</p>
+
+<div class="grid">
+  <form id="form">
+    <fieldset>
+      <legend>payload</legend>
+      <label>symbology</label>
+      <select id="symbology"></select>
+      <label>text / value</label>
+      <textarea id="text" spellcheck="false"></textarea>
+      <div class="actions">
+        <button type="button" id="sample">Load a sample</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>layout</legend>
+      <div class="row">
+        <div><label>module (px)</label><input id="module" type="number" min="1" max="20" step="1" value="4" /></div>
+        <div><label>1D height (px)</label><input id="height" type="number" min="10" max="600" step="1" placeholder="30 × module" /></div>
+      </div>
+
+      <div id="qr-opts">
+        <div class="row three">
+          <div><label>QR EC</label>
+            <select id="ec">
+              <option value="">default (M)</option>
+              <option value="L">L</option><option value="M">M</option>
+              <option value="Q">Q</option><option value="H">H</option>
+            </select>
+          </div>
+          <div><label>QR mask</label>
+            <select id="mask">
+              <option value="">default (2)</option>
+              <option>0</option><option>1</option><option>2</option><option>3</option>
+              <option>4</option><option>5</option><option>6</option><option>7</option>
+            </select>
+          </div>
+          <div><label>QR version</label><input id="version" type="number" min="1" max="40" step="1" placeholder="smallest" /></div>
+        </div>
+      </div>
+
+      <div id="pdf-opts" class="hidden">
+        <div class="row">
+          <div><label>PDF417 EC level</label><input id="level" type="number" min="0" max="8" step="1" placeholder="encoder default" /></div>
+          <div><label>PDF417 columns</label><input id="columns" type="number" min="1" max="30" step="1" placeholder="auto" /></div>
+        </div>
+      </div>
+
+      <div id="dm-opts" class="hidden">
+        <div class="row">
+          <div><label>Data Matrix rows</label><input id="rows" type="number" min="1" max="144" step="1" placeholder="smallest square" /></div>
+          <div><label>Data Matrix cols</label><input id="cols" type="number" min="1" max="144" step="1" placeholder="smallest square" /></div>
+        </div>
+        <p class="note">Size includes the borders, e.g. 12 × 36 for a rectangular DMRE.</p>
+      </div>
+    </fieldset>
+
+    <div class="actions">
+      <button type="button" class="primary" id="scanback">Scan it back</button>
+      <button type="button" id="download">Download SVG</button>
+    </div>
+    <div id="status" class="status"></div>
+  </form>
+
+  <div class="preview" id="preview"></div>
+</div>
+
+<script type="module" src="./render.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+[package]
+name = "barcode-qr"
+description = "Clean-room QR Code decoder (ISO/IEC 18004), MIT licensed"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+barcode-core.workspace = true
+
+[dev-dependencies]
+barcode-fixtures = { path = "../barcode-fixtures" }

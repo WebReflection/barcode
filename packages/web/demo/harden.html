@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>harden</title>
+</head>
+<body>
+  <!--
+    Synthetic hardening sweep: specimens -> degradation grid -> the real
+    binarizer+wasm pipeline. Driven headless by tools/harden.mjs, which
+    polls window.__HARDEN_DONE / __HARDEN. Open by hand for the table view.
+  -->
+  <pre id="out">running…</pre>
+  <script type="module" src="./harden.js"></script>
+</body>
+</html>

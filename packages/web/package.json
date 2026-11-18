@@ -1,0 +1,91 @@
+{
+  "name": "@webreflection/barcode",
+  "version": "0.0.0",
+  "description": "WebGPU-accelerated barcode and QR scanning for the web: clean-room Rust/WASM decoders, native JS with JSDoc types, one static dist folder.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Andrea Giammarchi <andrea.giammarchi@gmail.com> (https://github.com/WebReflection)",
+  "homepage": "https://webreflection.github.io/barcode/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WebReflection/barcode.git"
+  },
+  "keywords": [
+    "barcode",
+    "qrcode",
+    "qr",
+    "datamatrix",
+    "aztec",
+    "pdf417",
+    "ean13",
+    "code128",
+    "webgpu",
+    "wasm",
+    "scanner",
+    "camera"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "./dist",
+    "./README.md",
+    "./LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./index": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./main": {
+      "types": "./dist/main.d.ts",
+      "default": "./dist/main.js"
+    },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "default": "./dist/worker.js"
+    },
+    "./css": "./dist/css.css",
+    "./wasm": "./dist/wasm.wasm",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "node tools/build.mjs",
+    "build:demo": "node tools/build.mjs --demo",
+    "demo": "node tools/build.mjs --demo",
+    "check": "node node_modules/typescript/bin/tsc --noEmit",
+    "types": "node node_modules/typescript/bin/tsc -p tsconfig.types.json",
+    "wasm": "wasm-pack build ../../crates/barcode-wasm --target web --out-dir ../../packages/web/src/wasm/pkg",
+    "artifacts": "node tools/build-artifacts.mjs",
+    "test": "node tools/e2e/playwright.mjs",
+    "test:ci": "node tools/e2e/playwright.mjs --ci",
+    "test:phone": "node tools/e2e/fakecam.mjs --all --port 9222",
+    "test:field": "node tools/e2e/field.mjs --port 9225",
+    "test:field:live": "node tools/e2e/field.mjs --port 9225 --mode live",
+    "serve:demo": "node tools/serve-demo.mjs",
+    "serve:iphone": "node tools/serve-demo.mjs --https",
+    "preview": "vite preview",
+    "test:iphone": "node tools/e2e/playwright.mjs --browser iphone",
+    "test:webkit": "node tools/e2e/playwright.mjs --browser webkit",
+    "prepublishOnly": "npm run build",
+    "build:docs": "node tools/build-docs.mjs",
+    "serve:docs": "node tools/serve-demo.mjs --docs",
+    "serve:docs:iphone": "node tools/serve-demo.mjs --docs --https"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.64",
+    "playwright": "^1.65.1",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0",
+    "vite-plugin-singlefile": "^2.3.3"
+  },
+  "dependencies": {
+    "@webreflection/bindings": "^0.3.0",
+    "@webreflection/utils": "^0.4.20",
+    "html-escaper": "^3.0.3"
+  }
+}

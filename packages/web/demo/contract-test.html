@@ -1,0 +1,107 @@
+<!doctype html><meta charset="utf-8"><title>RUNNING</title>
+<!-- Worker-contract test: every transport barcode() accepts, driven
+     through REAL scan/render round-trips (no camera, still images only).
+     Sets document.title = TESTS PASS / TESTS FAILED for run-contract.mjs.
+-->
+<style>body{font:14px/1.5 ui-sans-serif,system-ui,sans-serif;background:#0d1117;color:#e8edf2;padding:14px}.docs-back{display:inline-flex;margin:10px 0;padding:5px 11px;border:1px solid #2a3948;border-radius:999px;color:#93a4b5;background:#151d26;font:500 13px/1.4 ui-sans-serif,system-ui,sans-serif;text-decoration:none}.docs-back:hover{color:#e8edf2;border-color:#5b9dff}</style>
+<a class="docs-back" href="./index.html">← API demos</a>
+<script type="module">
+const rows = [];
+const table = document.createElement('table');
+document.body.append(table);
+const row = (name, pass, note = '') => {
+  rows.push({ name, pass, note });
+  const tr = table.insertRow();
+  tr.insertCell().textContent = name;
+  tr.insertCell().textContent = pass ? 'PASS' : 'FAIL';
+  tr.insertCell().textContent = note;
+};
+const finish = () => {
+  document.title = rows.every((r) => r.pass) ? 'TESTS PASS' : 'TESTS FAILED';
+  const s = document.createElement('p');
+  s.textContent = `${rows.filter((r) => r.pass).length}/${rows.length} contract checks pass`;
+  document.body.append(s);
+};
+
+try {
+  const { default: barcode } = await import('../api/main.js');
+  // Bundlers emit the worker as its own chunk; passing the URL string is
+  // what a consumer does with `import workerUrl from '.../worker?worker&url'`.
+  const { default: workerUrl } = await import('../api/worker.js?worker&url');
+
+  // render a payload through a session, rasterize at 480px with a quiet zone
+  const rasterize = async (/** @type {SVGSVGElement} */ svg) => {
+    const url = 'data:image/svg+xml;base64,' + btoa(new XMLSerializer().serializeToString(svg));
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('svg img load')); img.src = url; });
+    const canvas = document.createElement('canvas');
+    canvas.width = 480; canvas.height = 480;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 480, 480);
+    const s = Math.min(420 / img.naturalWidth, 420 / img.naturalHeight);
+    ctx.drawImage(img, (480 - img.naturalWidth * s) / 2, (480 - img.naturalHeight * s) / 2, img.naturalWidth * s, img.naturalHeight * s);
+    return canvas;
+  };
+  const specimen = async (session, text, sym = 'qrcode') => {
+    const svg = await session.render({ symbology: sym, text });
+    if (!(svg instanceof SVGSVGElement)) throw new Error('render → ' + svg);
+    return rasterize(svg);
+  };
+  // never hang the harness: a scan that outlives its budget fails the row
+  const guarded = (p, ms = 20000) =>
+    Promise.race([p, new Promise((r) => setTimeout(() => r({ TIMEOUT: true }), ms))]);
+
+  // ---- 1. caller-created dedicated Worker, used as-is ----
+  const w = new Worker(new URL('../api/worker.js', import.meta.url), { type: 'module' });
+  const s1 = barcode({ worker: w });
+  row('caller-worker: is same reference', s1.worker === w);
+  const code1 = await guarded((async () =>
+    await s1.scan({ image: await specimen(s1, 'CT-CALLER-WORKER') }))());
+  row('caller-worker: render+scan', code1?.text === 'CT-CALLER-WORKER' && code1?.raw instanceof Uint8Array, JSON.stringify({ ...code1, raw: code1?.raw instanceof Uint8Array ? `u8:${code1.raw.length}` : String(code1?.raw) }));
+
+  // ---- 2. the same worker to a second session throws ----
+  let dup = '';
+  try { barcode({ worker: w }); } catch (err) { dup = String(err?.message ?? err); }
+  row('duplicated worker throws', /duplicated worker/.test(dup), dup);
+
+  // ---- 3. abort never kills a caller worker; re-scan re-binds ----
+  const c2 = new AbortController(); c2.abort();
+  const t0 = performance.now();
+  const stopped = await s1.scan({ image: await specimen(s1, 'CT-ABORT'), signal: c2.signal });
+  const ms = Math.round(performance.now() - t0);
+  row('pre-aborted scan → undefined fast', stopped === undefined && ms < 200, `${ms}ms ${JSON.stringify(stopped ?? {})}`);
+  const again = await guarded((async () =>
+    await s1.scan({ image: await specimen(s1, 'CT-RES CAN') }))());
+  row('re-scan after abort works', again?.text === 'CT-RES CAN' && again?.raw instanceof Uint8Array, JSON.stringify({ ...again, raw: again?.raw instanceof Uint8Array ? `u8:${again.raw.length}` : String(again?.raw) }));
+
+  // ---- 4. URL worker: spawned by the session, returned as a Worker ----
+  const s4 = barcode({ worker: workerUrl });
+  row('url-worker: spawned worker is a Worker', s4.worker instanceof Worker);
+  const code4 = await guarded((async () =>
+    await s4.scan({ image: await specimen(s4, 'CT-URL-WORKER') }))());
+  row('url-worker: render+scan', code4?.text === 'CT-URL-WORKER' && code4?.raw instanceof Uint8Array, JSON.stringify({ ...code4, raw: code4?.raw instanceof Uint8Array ? `u8:${code4.raw.length}` : String(code4?.raw) }));
+
+  // ---- 5. non-Worker transports are rejected with a TypeError ----
+  let bad = '';
+  try {
+    barcode({ worker: /** @type {any} */ ({ postMessage() {} }) });
+  } catch (err) { bad = String(err?.message ?? err); }
+  row('invalid worker rejected', /must be a string, a URL, or a Worker/.test(bad), bad);
+
+  // ---- 6. binary render: raw in → the same bytes back out ----
+  const BIN = Uint8Array.from([0x00, 0x01, 0x7f, 0x80, 0xff, 0xfe, 0x23]);
+  const binCode = await guarded((async () => {
+    const svg = await s1.render({ symbology: 'qrcode', raw: BIN });
+    if (!(svg instanceof SVGSVGElement)) throw new Error('render → ' + svg);
+    return await s1.scan({ image: await rasterize(svg) });
+  })());
+  const binOk =
+    binCode?.raw instanceof Uint8Array &&
+    binCode.raw.length === BIN.length &&
+    BIN.every((b, i) => binCode.raw[i] === b);
+  row('render-raw: scan round-trip', binOk, JSON.stringify({ ...binCode, raw: binCode?.raw instanceof Uint8Array ? `u8:${binCode.raw.length}` : String(binCode?.raw) }));
+} catch (err) {
+  row('harness', false, String((err && err.stack) || err));
+}
+finish();
+</script>

@@ -1,0 +1,38 @@
+<!doctype html><meta charset="utf-8"><title>api smoke</title>
+<script type="module">
+window.result = { status: 'boot' };
+try {
+  const { default: barcode } = await import('../api/main.js');
+  const { scan, render } = barcode({});
+  // 1. render a candidate (encode side, through the bound worker)
+  const svg = await render({ symbology: 'qrcode', text: 'API-SMOKE-1' });
+  if (!(svg instanceof SVGSVGElement)) throw new Error('render → ' + svg);
+  // 2. rasterize into a canvas
+  const url = 'data:image/svg+xml;base64,' + btoa(new XMLSerializer().serializeToString(svg));
+  const img = new Image();
+  await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('svg img load')); img.src = url; });
+  const canvas = document.createElement('canvas');
+  canvas.width = 480; canvas.height = 480;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 480, 480);
+  const s = Math.min(420 / img.naturalWidth, 420 / img.naturalHeight);
+  const w = img.naturalWidth * s, h = img.naturalHeight * s;
+  ctx.drawImage(img, (480 - w) / 2, (480 - h) / 2, w, h);
+  document.body.append(canvas);
+  // 3. scan it back — still path through the bound worker (5000ms law),
+  //    single best result (centered first)
+  const code = await scan({ image: canvas });
+  if (code?.text !== 'API-SMOKE-1')
+    throw new Error('scan → ' + JSON.stringify(code));
+  // 4. an already-aborted signal ends gracefully: undefined, instantly
+  const c2 = new AbortController(); c2.abort();
+  const t0 = performance.now();
+  const stopped = await scan({ image: canvas, signal: c2.signal });
+  if (stopped !== undefined) throw new Error('aborted scan → ' + JSON.stringify(stopped));
+  const ms = Math.round(performance.now() - t0);
+  if (ms > 100) throw new Error('abort took ' + ms + 'ms');
+  window.result = { status: 'PASS', text: code.text, symbology: code.symbology, abortMs: ms };
+} catch (err) {
+  window.result = { status: 'FAIL', message: String((err && err.stack) || err) };
+}
+</script>

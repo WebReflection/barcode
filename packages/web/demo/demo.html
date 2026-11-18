@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<title>barcode — live demo</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0d10;
+    --panel: #14181d;
+    --line: #2a3038;
+    --text: #e8eaed;
+    --dim: #93a0ab;
+    --accent: #ffd60a;
+    --blue: #2f6fed;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    padding: max(18px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 18px; align-items: center;
+  }
+  .wrap { width: min(100%, 520px); display: flex; flex-direction: column; gap: 18px; }
+
+  header.hero h1 { font-size: 22px; letter-spacing: -.02em; margin: 0 0 4px; }
+  header.hero p { margin: 0; color: var(--dim); font-size: 14px; }
+
+  .banner {
+    background: #2a2113; border: 1px solid #6b5622; color: #ffd98a;
+    border-radius: 12px; padding: 10px 12px; font-size: 13px;
+  }
+  .banner code { font-family: ui-monospace, monospace; font-size: 12px; }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 18px; padding: 14px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chips button {
+    font: 600 13px/1 system-ui, sans-serif;
+    color: var(--text); background: #1c222a; border: 1px solid #323a44;
+    border-radius: 999px; padding: 8px 13px; cursor: pointer;
+  }
+  .chips button[aria-pressed="true"] {
+    background: var(--accent); color: #14140a; border-color: var(--accent);
+  }
+  .chips button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+  .row { display: flex; gap: 10px; align-items: center; }
+  .row label {
+    display: flex; gap: 8px; align-items: center;
+    color: var(--dim); font-size: 13px; flex: 1;
+  }
+  select {
+    font: inherit; font-size: 13px; color: var(--text); background: #1c222a;
+    border: 1px solid #323a44; border-radius: 10px; padding: 8px 10px; flex: 1;
+  }
+
+  button.primary {
+    font: 700 17px/1 system-ui, sans-serif;
+    padding: 16px 18px; border: 0; border-radius: 14px;
+    background: var(--blue); color: #fff; cursor: pointer;
+  }
+  button.primary:disabled { opacity: .55; cursor: progress; }
+  button.ghost {
+    font: 600 13px/1 system-ui, sans-serif;
+    padding: 11px 13px; border: 1px solid #323a44; border-radius: 11px;
+    background: #1c222a; color: var(--text); cursor: pointer;
+  }
+  .file { position: relative; overflow: hidden; }
+  .file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+  #status { margin: 0; min-height: 1.4em; font-size: 13px; color: var(--dim); }
+  #status[data-kind="ok"] { color: #8fe3b0; }
+  #status[data-kind="err"] { color: #ff8a7a; }
+
+  #result {
+    border-top: 1px solid var(--line); padding-top: 12px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  #result[hidden] { display: none; }
+  .result-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  #sym { font: 700 13px/1 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; color: #9ab; }
+  #ms { font: 12px/1 ui-monospace, monospace; color: var(--dim); }
+  #svg-box {
+    display: grid; place-items: center;
+    background: #fff; border-radius: 12px; padding: 12px;
+  }
+  #svg-box svg { width: min(100%, 240px); height: auto; display: block; }
+  #svg-box:empty { display: none; }
+  #text {
+    display: block; margin: 0; font: 600 18px/1.4 ui-monospace, monospace;
+    word-break: break-all; user-select: all;
+  }
+  #result .actions { display: flex; gap: 8px; }
+
+  .history { display: flex; flex-direction: column; gap: 8px; }
+  .history h2 { font-size: 13px; color: var(--dim); margin: 0; font-weight: 600; }
+  .history .empty { color: #5f6a74; font-size: 13px; }
+  .read {
+    display: flex; gap: 10px; align-items: baseline;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 9px 12px; font-size: 13px;
+  }
+  .read .sym { color: #9ab; font: 700 11px/1 ui-monospace, monospace; letter-spacing: .06em; text-transform: uppercase; flex: none; }
+  .read .val { font-family: ui-monospace, monospace; word-break: break-all; flex: 1; }
+  .read .ms { color: var(--dim); font-size: 11px; flex: none; }
+
+  .samples h2 { font-size: 15px; margin: 0 0 2px; }
+  .samples p { margin: 0 0 10px; color: var(--dim); font-size: 13px; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .sample {
+    display: flex; flex-direction: column; gap: 6px; align-items: center;
+    background: #fff; border: 0; border-radius: 12px; padding: 10px 8px 8px;
+    cursor: zoom-in; color: #111;
+  }
+  .sample svg { width: 100%; height: auto; max-height: 96px; display: block; }
+  .sample span { font: 600 10px/1 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; color: #334; }
+  .sample:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  footer { color: #5f6a74; font-size: 12px; text-align: center; }
+  footer code { font-family: ui-monospace, monospace; }
+
+  dialog#big {
+    background: #fff; color: #111; border: 0; border-radius: 18px;
+    padding: 16px; width: min(94vw, 640px); max-height: 92dvh;
+  }
+  dialog#big::backdrop { background: rgba(0, 0, 0, .7); }
+  dialog#big svg { width: 100%; height: auto; max-height: 70dvh; display: block; }
+  dialog#big p { font: 12px/1.4 ui-monospace, monospace; color: #334; margin: 10px 0 0; word-break: break-all; }
+  dialog#big form { display: flex; justify-content: flex-end; margin: 0 0 8px; }
+  dialog#big button { font: 600 13px/1 system-ui, sans-serif; padding: 8px 12px; border-radius: 9px; border: 1px solid #ccd; background: #f3f5f8; color: #111; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <h1>barcode</h1>
+    <p>WebGPU barcode &amp; QR scanning — 17 symbologies, decode and render, MIT.</p>
+  </header>
+
+  <div class="banner" id="insecure" hidden>
+    <strong>Camera needs HTTPS or localhost.</strong><br>
+    Android over USB: <code>adb reverse tcp:5173 tcp:5173</code>, then open
+    <code>http://localhost:5173/demo.html</code>. Photo scanning works here anyway.
+  </div>
+
+  <section class="panel">
+    <div class="chips" role="group" aria-label="What to scan">
+      <button type="button" data-mode="qr" aria-pressed="true">QR &amp; Micro</button>
+      <button type="button" data-mode="barcode" aria-pressed="false">1D barcodes</button>
+      <button type="button" data-mode="datamatrix" aria-pressed="false">DataMatrix</button>
+      <button type="button" data-mode="pdf417" aria-pressed="false">PDF417</button>
+      <button type="button" data-mode="all" aria-pressed="false">Everything</button>
+    </div>
+
+    <div class="row">
+      <label>Lens
+        <select id="lens">
+          <option value="">auto</option>
+          <option value="wide">wide (1x)</option>
+          <option value="ultrawide">ultra-wide</option>
+        </select>
+      </label>
+      <label class="file">Photo
+        <span class="ghost">Scan a photo</span>
+        <input id="file" type="file" accept="image/*" aria-label="Scan a photo">
+      </label>
+    </div>
+
+    <button type="button" id="scan" class="primary">Scan with camera</button>
+    <p id="status" role="status" aria-live="polite">Ready — pick a mode and point at a code.</p>
+
+    <article id="result" hidden>
+      <div class="result-head">
+        <span id="sym"></span>
+        <span id="ms"></span>
+      </div>
+      <div id="svg-box"></div>
+      <output id="text"></output>
+      <div class="actions">
+        <button type="button" id="copy" class="ghost">Copy</button>
+        <button type="button" id="again" class="ghost">Scan again</button>
+      </div>
+    </article>
+  </section>
+
+  <section class="history" id="history">
+    <h2>Recent reads</h2>
+    <span class="empty">Nothing yet.</span>
+  </section>
+
+  <section class="samples">
+    <h2>Try these</h2>
+    <p>Scan these from another device, or tap one to enlarge it.</p>
+    <div class="grid" id="samples"></div>
+  </section>
+
+  <footer>
+    GPU binarizer when WebGPU is available, CPU fallback otherwise.<br>
+    QR mode reads in single-digit milliseconds per frame.
+  </footer>
+</div>
+
+<dialog id="big">
+  <form method="dialog"><button>Close</button></form>
+  <div id="big-svg"></div>
+  <p id="big-label"></p>
+</dialog>
+
+<script type="module" src="./demo.js"></script>
+</body>
+</html>

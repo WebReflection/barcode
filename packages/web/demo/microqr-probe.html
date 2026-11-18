@@ -1,0 +1,59 @@
+<!doctype html><meta charset="utf-8"><title>microqr probe</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: dark; }
+  body { font: 13px/1.5 ui-monospace, monospace; margin: 1rem; background: #0b0d10; color: #e8eaed; }
+  canvas, video { width: min(80vw, 360px); aspect-ratio: 1; object-fit: cover; background: #000; display: block; }
+  .hit { color: #ffd60a; font-weight: 700; }
+  #log { white-space: pre-wrap; color: #9dd39d; }
+</style>
+<h2>microqr probe — hold the code steady</h2>
+<video id="v" muted playsinline autoplay></video>
+<canvas id="grabbed"></canvas>
+<div id="out">booting…</div>
+<div id="log"></div>
+<script type="module">
+window.__PROBE = { attempts: [], lastFrame: null };
+const out = document.getElementById('out');
+const log = (s) => { document.getElementById('log').textContent = s + '\n' + document.getElementById('log').textContent; };
+const { default: barcode } = await import('../api/main.js');
+const { scan } = barcode({});
+
+const video = document.getElementById('v');
+const stream = await navigator.mediaDevices.getUserMedia({
+  video: { facingMode: 'environment', width: { ideal: 1080 }, height: { ideal: 1920 } },
+});
+video.srcObject = stream;
+await video.play();
+out.textContent = 'camera up — probing every 3s…';
+
+const attempt = async () => {
+  const s = Math.min(video.videoWidth, video.videoHeight);
+  if (!s) return;
+  const c = document.createElement('canvas');
+  c.width = s; c.height = s;
+  c.getContext('2d').drawImage(video, (video.videoWidth - s) / 2, (video.videoHeight - s) / 2, s, s, 0, 0, s, s);
+  // show the user exactly what the decoder sees
+  const g = document.getElementById('grabbed');
+  g.width = s; g.height = s;
+  g.getContext('2d').drawImage(c, 0, 0);
+  const bitmap = await createImageBitmap(c);
+  const t0 = performance.now();
+  const code = await scan({ image: bitmap, latency: 10000 });
+  const ms = Math.round(performance.now() - t0);
+  const entry = { ms, hit: code ? { text: code.text, symbology: code.symbology } : null };
+  window.__PROBE.attempts.push(entry);
+  if (code) {
+    out.className = 'hit';
+    out.textContent = `STILL HIT in ${ms}ms: ${code.symbology} ${code.text}`;
+    log(`HIT ${ms}ms ${code.symbology} ${code.text}`);
+  } else {
+    out.textContent = `no read (${ms}ms) — frame saved, keep holding…`;
+    log(`MISS ${ms}ms`);
+    // keep the last missed frame for offline analysis
+    window.__PROBE.lastFrame = c.toDataURL('image/jpeg', 0.9);
+  }
+};
+
+setInterval(attempt, 3000);
+</script>

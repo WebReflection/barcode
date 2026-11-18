@@ -1,0 +1,39 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>field corpus</title>
+<!--
+  Field-corpus regression gate (roadmap item 9): replays REAL photos
+  through the published artifacts (main.js -> worker.js -> wasm.wasm),
+  asserting ground truth from a caller-supplied manifest. The photos and
+  the manifest are personal and local-only (gitignored), so this page
+  never references a fixture: everything arrives in `?corpus=`.
+
+    /field.html?corpus=/@fs/…/test-codes/field/corpus.json
+    /field.html?corpus=…&mode=live        # fake camera -> live pipeline
+    /field.html?corpus=…&id=a,b           # subset
+    /field.html?corpus=…&formats=all      # scan everything (the default UI)
+    /field.html?corpus=…&api=<url>        # explicit bundle (driver supplies it)
+
+  Same table + title contract as test.html, driven by
+  tools/e2e/field.mjs on desktop (:9225) or a phone (:9222).
+-->
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 16px; font: 13px/1.45 ui-monospace, monospace; background: #111; color: #eee; }
+  h1 { font-size: 15px; margin: 0 0 12px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #262626; vertical-align: top; }
+  td:nth-child(5), td:nth-child(6) { max-width: 34ch; overflow-wrap: anywhere; }
+  .pass td:nth-child(7) { color: #61d26a; }
+  .fail td:nth-child(7) { color: #ff6b6b; }
+  #summary { margin-top: 12px; font-weight: 600; }
+  #video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+</style>
+<h1>field corpus — real photos through the published bundle</h1>
+<table>
+  <thead><tr><th>id</th><th>mode</th><th>symbology</th><th>expected</th><th>got</th><th>ms</th><th>result</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<div id="summary">running…</div>
+<video id="video" muted playsinline></video>
+<script type="module" src="./field.js"></script>

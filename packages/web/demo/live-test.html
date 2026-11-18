@@ -1,0 +1,132 @@
+<!doctype html><meta charset="utf-8"><title>live api test</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="../css.css">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    font: 15px/1.5 system-ui, sans-serif;
+    margin: 0; padding: 2rem 1rem 4rem;
+    background: #0b0d10; color: #e8eaed;
+    display: flex; flex-direction: column; align-items: center; gap: 1rem;
+  }
+  h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+  .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; justify-content: center; }
+  select, button {
+    font: inherit; color: inherit;
+    background: #1b1f24; border: 1px solid #2c333b; border-radius: 10px;
+    padding: .5rem .9rem;
+  }
+  #go { background: #2f6fed; border-color: #2f6fed; font-weight: 600; padding: .6rem 1.4rem; }
+  #out { min-height: 1.4em; color: #9aa4af; }
+  .card {
+    width: min(92vw, 480px);
+    background: #14181d; border: 1px solid #2c333b; border-radius: 16px;
+    padding: 1rem; display: none;
+  }
+  .card.show { display: block; }
+  .card svg { display: block; margin: 0 auto 0.75rem; max-width: 60%; height: auto; --barcode-ink: #111; --barcode-paper: #fff; }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  td { padding: .2rem 0; vertical-align: top; }
+  td:first-child { color: #9aa4af; padding-right: .75rem; white-space: nowrap; }
+  td:last-child { word-break: break-all; }
+  #history { width: min(92vw, 480px); display: flex; flex-direction: column; gap: .5rem; }
+  .read {
+    display: flex; gap: .75rem; align-items: center;
+    background: #14181d; border: 1px solid #2c333b; border-radius: 12px; padding: .5rem .75rem;
+  }
+  .read svg { width: 56px; height: 56px; flex: none; --barcode-ink: #111; --barcode-paper: #fff; background: #fff; border-radius: 8px; padding: 4px; box-sizing: content-box; }
+  .read .meta { min-width: 0; }
+  .read .text { font-weight: 600; word-break: break-all; }
+  .read .sub { color: #9aa4af; font-size: .8rem; }
+</style>
+<h1>live api test</h1>
+<div class="row">
+  <label>lens <select id="lens">
+    <option value="">default</option>
+    <option value="wide">wide</option>
+    <option value="ultrawide">ultrawide</option>
+  </select></label>
+  <label>crop <select id="crop">
+    <option value="square">square</option>
+    <option value="full">full</option>
+  </select></label>
+</div>
+<div class="row">
+  <button id="go">start scan</button>
+</div>
+<div id="out">idle</div>
+<div class="card" id="card">
+  <table>
+    <tr><td>symbology</td><td id="d-sym"></td></tr>
+    <tr><td>text</td><td id="d-text"></td></tr>
+    <tr><td>score</td><td id="d-score"></td></tr>
+    <tr><td>position</td><td id="d-pos"></td></tr>
+    <tr><td>time</td><td id="d-ms"></td></tr>
+  </table>
+</div>
+<div id="history"></div>
+<script type="module">
+window.__PAGE_ID = Math.random().toString(36).slice(2);   // changes ⇔ the page reloaded
+const out = document.getElementById('out');
+const { default: barcode } = await import('../api/main.js');
+const { scan, render } = barcode({});
+
+const show = (code, ms) => {
+  // full render(): the scanned code comes back as a standalone SVG
+  window.__LIVE = { stage: 'rendering', text: code.text };
+  render(code, { module: 4 }).then((svg) => {
+    window.__LIVE = { stage: 'rendered', text: code.text, gotSvg: !!svg };
+    const card = document.getElementById('card');
+    card.querySelector('svg')?.remove();
+    if (svg) card.prepend(svg);
+    card.classList.add('show');
+    document.getElementById('d-sym').textContent = code.symbology;
+    document.getElementById('d-text').textContent = code.text;
+    document.getElementById('d-score').textContent = code.score?.toFixed(3) ?? '-';
+    document.getElementById('d-pos').textContent = code.position.map(p => `(${p.x},${p.y})`).join(' ');
+    document.getElementById('d-ms').textContent = ms + 'ms';
+    // history entry with a mini render
+    if (svg) {
+      const row = document.createElement('div');
+      row.className = 'read';
+      const clone = /** @type {SVGSVGElement} */ (svg.cloneNode(true));
+      row.append(clone);
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.innerHTML = `<div class="text"></div><div class="sub"></div>`;
+      meta.querySelector('.text').textContent = code.text;
+      meta.querySelector('.sub').textContent = `${code.symbology} · score ${code.score?.toFixed(3)} · ${ms}ms`;
+      row.append(meta);
+      document.getElementById('history').prepend(row);
+    }
+  }).catch((err) => {
+    // render failures must never be silent
+    out.textContent = 'READ but render FAILED: ' + (err?.message ?? err);
+    window.__LIVE = { stage: 'render-failed', error: String(err?.message ?? err) };
+  });
+};
+
+document.getElementById('go').onclick = async () => {
+  const lens = /** @type {HTMLSelectElement} */ (document.getElementById('lens')).value || undefined;
+  const crop = /** @type {HTMLSelectElement} */ (document.getElementById('crop')).value;
+  out.textContent = 'scanning… (✕ aborts — settles undefined, no throw)';
+  window.__LIVE = { stage: 'started' };
+  const t0 = performance.now();
+  try {
+    const code = await scan({ into: document.body, lens, crop });
+    const ms = Math.round(performance.now() - t0);
+    if (code) {
+      out.textContent = `READ in ${ms}ms`;
+      show(code, ms);
+      window.__LIVE = { text: code.text, symbology: code.symbology, score: code.score, ms };
+    } else {
+      out.textContent = `ended without a read (undefined) after ${ms}ms — no throw ✓`;
+      window.__LIVE = { undefined: true, ms };
+    }
+  } catch (err) {
+    out.textContent = 'REJECTED (real error): ' + (err?.message ?? err);
+    window.__LIVE = { error: String(err?.message ?? err) };
+  }
+};
+</script>

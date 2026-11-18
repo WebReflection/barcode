@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Live scan — @webreflection/barcode</title>
+<style>
+  :root { color-scheme: dark; --line:#263241; --muted:#93a4b5; --accent:#5b9dff; --card:#151d26; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:0 18px 48px; background:#0d1117; color:#e8edf2;
+    font:15px/1.55 ui-sans-serif,system-ui,-apple-system,sans-serif; max-width:980px; }
+  h1 { font-size:20px; margin:8px 0 4px; }
+  h2 { font-size:16px; margin:20px 0 8px; }
+  .lede { margin:0 0 16px; color:var(--muted); }
+  .docs-back { display:inline-flex; margin:12px 0; padding:5px 11px; border:1px solid var(--line);
+    border-radius:999px; color:var(--muted); background:var(--card); font-size:13px; text-decoration:none; }
+  .docs-back:hover { color:#e8edf2; border-color:var(--accent); }
+  section { border:1px solid var(--line); border-radius:12px; background:var(--card); padding:16px 18px; margin:0 0 16px; }
+  p { color:var(--muted); margin:0 0 12px; }
+  .stage { position:relative; width:100%; max-width:520px; aspect-ratio:1/1; background:#05080b;
+    border-radius:10px; overflow:hidden; margin:0 auto; }
+  video { width:100%; height:100%; object-fit:cover; background:#05080b; }
+  .actions { display:flex; flex-wrap:wrap; gap:10px; margin:12px 0; }
+  button { padding:9px 15px; border-radius:9px; border:1px solid var(--line);
+    background:#1b2633; color:#e8edf2; font:600 13px/1.2 inherit; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  .status { margin-top:6px; color:var(--muted); font-size:14px; min-height:20px; }
+  .status.error { color:#ff7b6b; }
+  .status.pass { color:#61d26a; }
+  .result { margin-top:10px; font:700 18px/1.3 ui-monospace,monospace; word-break:break-all; }
+  .result svg { width:100%; max-width:300px; height:auto; display:block; margin-top:10px; }
+  #mount { min-height:80px; border:1px dashed var(--line); border-radius:10px; padding:10px; }
+  code { font-family:ui-monospace,monospace; background:#0a0f14; border:1px solid var(--line); border-radius:4px; padding:1px 5px; }
+</style>
+  <script type="module" crossorigin src="./assets/live-JQpgHoe3.js"></script>
+  <link rel="modulepreload" crossorigin href="./assets/modulepreload-polyfill-B5Qt9EMX.js">
+  <link rel="modulepreload" crossorigin href="./assets/main-DyWwqnZv.js">
+  <link rel="modulepreload" crossorigin href="./assets/worker-C-xm9Xse.js">
+</head>
+<body>
+<a class="docs-back" href="./index.html">← API demos</a>
+<h1>Bring your own camera / mount point</h1>
+<p class="lede">
+  <code>scan({ video, signal })</code> uses your element and your
+  <code>AbortController</code>; <code>scan({ into })</code> mounts the
+  built-in dialog in a card instead of <code>document.body</code>.
+</p>
+
+<section>
+  <h2><code>scan({ video, signal })</code></h2>
+  <p>Your <code>&lt;video&gt;</code>, your stop button. One scan at a time.</p>
+  <div class="stage"><video id="video" autoplay playsinline muted></video></div>
+  <div class="actions">
+    <button class="primary" id="start">Start scan</button>
+    <button id="stop" disabled>Stop</button>
+  </div>
+  <div id="status" class="status"></div>
+  <div id="result" class="result"></div>
+</section>
+
+<section>
+  <h2><code>scan({ into })</code></h2>
+  <p>The same dialog the default <code>scan()</code> opens, mounted inside this card.</p>
+  <div id="mount"></div>
+  <div class="actions"><button class="primary" id="into">Open dialog in the card</button></div>
+  <div id="into-status" class="status"></div>
+  <div id="into-result" class="result"></div>
+</section>
+
+</body>
+</html>

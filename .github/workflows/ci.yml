@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: latest
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install package deps
+        working-directory: packages/web
+        run: npm install --no-audit --no-fund
+
+      - name: Build dist/ (types + wasm + artifacts)
+        working-directory: packages/web
+        run: npm run build
+
+      - name: Docs site builds
+        working-directory: packages/web
+        run: npm run build:docs
+
+      - name: Install Playwright browsers
+        working-directory: packages/web
+        run: npx playwright install --with-deps chromium webkit
+
+      - name: Regression gates (Chromium + WebKit, fake camera)
+        working-directory: packages/web
+        run: npm run test:ci
+
+      - name: Upload Playwright JSONL
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-e2e
+          path: /tmp/opencode/playwright-e2e.jsonl
+          if-no-files-found: ignore

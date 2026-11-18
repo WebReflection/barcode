@@ -1,0 +1,97 @@
+<!doctype html><meta charset="utf-8"><title>diag</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: dark; }
+  body { font: 13px/1.5 ui-monospace, monospace; margin: 1rem; background: #0b0d10; color: #e8eaed; }
+  h2 { font-size: .9rem; color: #9aa4af; }
+  video { width: min(80vw, 360px); aspect-ratio: 1; object-fit: cover; background: #000; display: block; }
+  pre { white-space: pre-wrap; word-break: break-all; color: #9dd39d; }
+  .hit { color: #ffd60a; font-weight: 700; }
+  select, button { font: inherit; color: inherit; background: #1b1f24; border: 1px solid #2c333b; border-radius: 8px; padding: .4rem .7rem; }
+  button.on { background: #ffd60a; color: #111; }
+  .row { display: flex; gap: .5rem; align-items: center; margin: .5rem 0; }
+</style>
+<h2>diag — point at the code</h2>
+<div class="row">
+  <label>latency <select id="lat">
+    <option>500</option><option>1000</option><option>2000</option><option>5000</option>
+  </select></label>
+  <button id="torch">⚡ torch</button>
+  <span id="ms">frameMs: —</span>
+</div>
+<video id="v" muted playsinline autoplay></video>
+<pre id="info">booting…</pre>
+<div id="hits"></div>
+<script type="module">
+const { Scanner } = await import('../src/scanner.js');
+const { listBackLenses } = await import('../src/camera.js');
+const { default: barcode } = await import('../api/main.js');
+const { scan } = barcode({});
+
+window.__DIAG = { frames: 0, maxMs: 0, slowFrames: 0, stats: null, codes: [], track: null, lenses: null, api: 'pending' };
+const D = window.__DIAG;
+const info = document.getElementById('info');
+const dump = () => { info.textContent = JSON.stringify(D, null, 1); };
+setInterval(dump, 500);
+
+let scanner = null;
+let video = document.getElementById('v');
+
+const start = async (latency) => {
+  if (scanner) await scanner.stop().catch(() => {});
+  D.frames = 0; D.maxMs = 0; D.slowFrames = 0; D.codes = [];
+  scanner = new Scanner({
+    video,
+    crop: 'square',
+    budget: latency,
+    onStats: (s) => {
+      D.frames++;
+      D.stats = s;
+      D.maxMs = Math.max(D.maxMs, s.frameMs);
+      if (s.frameMs > latency) D.slowFrames++;
+      document.getElementById('ms').textContent =
+        `frameMs: ${Math.round(s.frameMs)} (max ${Math.round(D.maxMs)}, slow ${D.slowFrames})`;
+    },
+    onResults: (codes) => {
+      D.codes.push(...codes.map((c) => `${c.symbology} ${c.text} score=${c.score?.toFixed(2)}`));
+      const div = document.createElement('div');
+      div.className = 'hit';
+      div.textContent = `HIT @${latency}ms: ${codes[0].symbology} ${codes[0].text}`;
+      document.getElementById('hits').prepend(div);
+    },
+  });
+  await scanner.start();
+  const t = video.srcObject?.getVideoTracks?.()[0];
+  D.track = t ? { label: t.label, settings: t.getSettings() } : null;
+  D.torch = scanner.hasTorch();
+  document.getElementById('torch').classList.toggle('on', false);
+  document.getElementById('torch').onclick = async () => {
+    const on = document.getElementById('torch').classList.toggle('on');
+    await scanner.setTorch(on);
+  };
+};
+
+try {
+  D.lenses = await listBackLenses();
+  await start(500);
+  // relaunch on latency change
+  document.getElementById('lat').onchange = (e) => start(Number(e.target.value));
+
+  // after 25s: stop dev path, try the api path (bound worker, same latency)
+  setTimeout(async () => {
+    D.devFrames = D.frames;
+    await scanner.stop().catch(() => {});
+    const latency = Number(document.getElementById('lat').value);
+    const t0 = performance.now();
+    try {
+      const code = await scan({ into: document.body, crop: 'square', latency });
+      D.api = code ? { hit: code.text, symbology: code.symbology, score: code.score, ms: Math.round(performance.now() - t0) }
+                   : { none: true, ms: Math.round(performance.now() - t0) };
+    } catch (err) {
+      D.api = { rejected: String(err?.message ?? err) };
+    }
+  }, 25000);
+} catch (err) {
+  D.error = String(err?.stack ?? err);
+}
+</script>

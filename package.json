@@ -1,0 +1,23 @@
+{
+  "name": "@webreflection/barcode-dev",
+  "private": true,
+  "type": "module",
+  "description": "Development entry for the @webreflection/barcode monorepo (Rust crates + packages/web).",
+  "scripts": {
+    "install:web": "npm --prefix packages/web install",
+    "dev": "npm --prefix packages/web run dev",
+    "build": "npm --prefix packages/web run build",
+    "build:demo": "npm --prefix packages/web run build:demo",
+    "test": "npm --prefix packages/web run test:ci",
+    "test:local": "npm --prefix packages/web run test",
+    "test:phone": "npm --prefix packages/web run test:phone",
+    "test:field": "npm --prefix packages/web run test:field",
+    "test:iphone": "npm --prefix packages/web run test:iphone",
+    "test:webkit": "npm --prefix packages/web run test:webkit",
+    "serve:demo": "npm --prefix packages/web run serve:demo",
+    "serve:iphone": "npm --prefix packages/web run serve:iphone",
+    "build:docs": "npm --prefix packages/web run build:docs",
+    "serve:docs": "npm --prefix packages/web run serve:docs",
+    "serve:docs:iphone": "npm --prefix packages/web run serve:docs:iphone"
+  }
+}

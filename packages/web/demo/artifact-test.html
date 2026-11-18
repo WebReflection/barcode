@@ -1,0 +1,132 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>artifact test</title>
+<h1>artifact smoke: dist/ served plainly (no bundler)</h1>
+<pre id="log"></pre>
+<script type="module">
+// Served with NO bundler: this is the publish shape (import maps /
+// unpacked localhost / CDN). Everything resolves relative to dist/main.js.
+const log = (line) => {
+  document.getElementById("log").textContent += line + "\n";
+};
+const checks = [];
+const check = async (name, fn) => {
+  try {
+    await fn();
+    checks.push(true);
+    log(`PASS  ${name}`);
+  } catch (err) {
+    checks.push(false);
+    log(`FAIL  ${name}: ${err?.message ?? err}`);
+  }
+};
+
+const withTimeout = (promise, ms, label) =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), ms)),
+  ]);
+
+const rasterize = async (/** @type {SVGSVGElement} */ svg, size = 480) => {
+  const url = "data:image/svg+xml;base64," + btoa(new XMLSerializer().serializeToString(svg));
+  const img = new Image();
+  await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error("svg img load")); img.src = url; });
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, size, size);
+  const s = Math.min((size * 0.875) / img.naturalWidth, (size * 0.875) / img.naturalHeight);
+  ctx.drawImage(img, (size - img.naturalWidth * s) / 2, (size - img.naturalHeight * s) / 2, img.naturalWidth * s, img.naturalHeight * s);
+  return canvas;
+};
+
+try {
+  // 1. explicit main entry: render + scan + abort
+  const { default: barcode } = await import("../dist/main.js");
+  const { scan, render } = barcode({});
+  const svg = await render({ symbology: "qrcode", text: "ARTIFACT-1" });
+  await check("main.js: render", () => {
+    if (!(svg instanceof SVGSVGElement)) throw new Error("render → " + svg);
+  });
+  const canvas = await rasterize(svg);
+  const code = await scan({ image: canvas });
+  await check("main.js: scan", () => {
+    if (code?.text !== "ARTIFACT-1" || code?.symbology?.toLowerCase() !== "qrcode")
+      throw new Error("scan → " + JSON.stringify(code));
+  });
+
+  const c = new AbortController();
+  c.abort();
+  const stopped = await scan({ image: canvas, signal: c.signal });
+  await check("main.js: aborted scan → undefined", () => {
+    if (stopped !== undefined) throw new Error("aborted scan → " + JSON.stringify(stopped));
+  });
+
+  // 2. thread-aware default entry on the MAIN thread: barcode()
+  const { default: autoEntry } = await import("../dist/index.js");
+  const auto = /** @type {typeof import("../dist/main.js").default} */ (autoEntry);
+  await check("index.js: main thread default is barcode()", () => {
+    if (typeof auto !== "function") throw new Error(`typeof ${typeof auto}`);
+  });
+  const autoSession = auto({});
+  const autoSvg = await autoSession.render({ symbology: "qrcode", text: "AUTO-ENTRY-1" });
+  const autoCode = await autoSession.scan({ image: await rasterize(autoSvg) });
+  await check("index.js: main thread render + scan", () => {
+    if (autoCode?.text !== "AUTO-ENTRY-1") throw new Error("scan → " + JSON.stringify(autoCode));
+  });
+
+  // 3. thread-aware default entry INSIDE a worker: bootstrap promise.
+  // A real file (not a blob): relative ./worker.js must resolve next to
+  // index.js, which a blob URL cannot do.
+  const worker = new Worker(new URL("./auto-worker-test.js", import.meta.url), {
+    type: "module",
+  });
+  const workerMessages = [];
+  worker.addEventListener("message", (event) => {
+    workerMessages.push(event.data);
+    log("worker message: " + JSON.stringify(event.data));
+  });
+  worker.addEventListener("error", (event) => {
+    log("worker error: " + event.message);
+  });
+  const workerSession = auto({ worker });
+  const workerSvg = await withTimeout(
+    workerSession.render({ symbology: "qrcode", text: "AUTO-ENTRY-W" }),
+    15_000,
+    "worker render",
+  );
+  const workerCode = await withTimeout(
+    workerSession.scan({ image: await rasterize(workerSvg) }),
+    15_000,
+    "worker scan",
+  );
+  await check("index.js: worker default + handshake", () => {
+    if (workerSession.worker !== worker) throw new Error("not the caller worker");
+    if (workerCode?.text !== "AUTO-ENTRY-W") throw new Error("scan → " + JSON.stringify(workerCode));
+  });
+  await check("index.js: worker default is a promise", async () => {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const bad = workerMessages.find((m) => m?.error);
+      if (bad) throw new Error(bad.error);
+      const ready = workerMessages.find((m) => m?.bound === true);
+      if (ready) {
+        if (ready.kind !== "object") throw new Error(`typeof ${ready.kind}`);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    throw new Error("bootstrap never resolved");
+  });
+
+  window.__RESULT = checks.every(Boolean)
+    ? `PASS: ${checks.length}/${checks.length} dist/ artifact checks`
+    : `FAIL: ${checks.filter(Boolean).length}/${checks.length} dist/ artifact checks`;
+} catch (err) {
+  window.__RESULT = "FAIL: " + (err?.message ?? err);
+}
+log(window.__RESULT);
+document.title = window.__RESULT.startsWith("PASS") ? "ARTIFACT PASS" : "ARTIFACT FAIL";
+</script>

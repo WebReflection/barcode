@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>barcode — native ROI gate</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 16px; font: 14px/1.4 ui-monospace, monospace; background: #111; color: #eee; }
+  h1 { font-size: 15px; font-weight: 600; color: #aaa; margin: 0 0 12px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: 4px 8px; border-bottom: 1px solid #2a3038; text-align: left; white-space: nowrap; }
+  tr.pass td { color: #9f9; }
+  tr.fail td { color: #f99; }
+  #summary { margin: 12px 0; font-weight: 600; }
+  #summary.pass { color: #9f9; }
+  #summary.fail { color: #f99; }
+</style>
+</head>
+<body>
+<h1>native-resolution ROI gate (small code in a 4096px frame)</h1>
+<div id="summary">running…</div>
+<table>
+  <thead><tr><th>symbology</th><th>payload</th><th>got</th><th>result</th><th>frame</th><th>ms</th></tr></thead>
+  <tbody></tbody>
+</table>
+<script type="module" src="./roi-gate.js"></script>
+</body>
+</html>

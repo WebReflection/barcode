@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Worker API — @webreflection/barcode</title>
+<style>
+  :root { color-scheme: dark; --line:#263241; --muted:#93a4b5; --accent:#5b9dff; --card:#151d26; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:0 18px 48px; background:#0d1117; color:#e8edf2;
+    font:15px/1.55 ui-sans-serif,system-ui,-apple-system,sans-serif; max-width:980px; }
+  h1 { font-size:20px; margin:8px 0 4px; }
+  .lede { margin:0 0 22px; color:var(--muted); }
+  .docs-back { display:inline-flex; margin:12px 0; padding:5px 11px; border:1px solid var(--line);
+    border-radius:999px; color:var(--muted); background:var(--card); font-size:13px; text-decoration:none; }
+  .docs-back:hover { color:#e8edf2; border-color:var(--accent); }
+  section { border:1px solid var(--line); border-radius:12px; background:var(--card); padding:16px 18px; margin:0 0 14px; }
+  h2 { font-size:16px; margin:0 0 6px; }
+  p { margin:0 0 10px; color:var(--muted); }
+  .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+  button { padding:9px 15px; border-radius:9px; border:1px solid var(--line);
+    background:#1b2633; color:#e8edf2; font:600 13px/1.2 inherit; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  pre { background:#0a0f14; border:1px solid var(--line); border-radius:10px; padding:14px 16px;
+    overflow:auto; font:12px/1.5 ui-monospace,monospace; margin:12px 0 0; min-height:100px; }
+  .pass { color:#61d26a; } .fail { color:#ff7b6b; } .dim { color:var(--muted); }
+  code { font-family:ui-monospace,monospace; background:#0a0f14; border:1px solid var(--line); border-radius:4px; padding:1px 5px; }
+</style>
+</head>
+<body>
+<a class="docs-back" href="./index.html">← API demos</a>
+<h1>Worker API, three ways</h1>
+<p class="lede">
+  One session, one worker. These buttons prove the explicit
+  <code>@webreflection/barcode/worker</code> entry, the thread-aware
+  <code>@webreflection/barcode</code> entry inside a real module Worker,
+  and the main-thread default.
+</p>
+
+<section>
+  <h2>1 · Auto entry on the main thread</h2>
+  <p><code>import barcode from '@webreflection/barcode'</code> must give the
+  session factory here, never the worker bootstrap.</p>
+  <div class="actions"><button class="primary" id="auto-main">Check</button></div>
+</section>
+
+<section>
+  <h2>2 · Explicit <code>/worker</code> entry</h2>
+  <p>Spawn <code>worker.js</code> yourself, then hand it to
+  <code>barcode({ worker })</code>. The same worker renders and scans.</p>
+  <div class="actions"><button class="primary" id="explicit">Run round-trip</button></div>
+</section>
+
+<section>
+  <h2>3 · Auto entry inside a worker</h2>
+  <p>A module Worker that imports <code>@webreflection/barcode</code>; its
+  default is the bootstrap promise. The page binds it with
+  <code>barcode({ worker })</code> and uses it immediately.</p>
+  <div class="actions"><button class="primary" id="auto-worker">Run round-trip</button></div>
+</section>
+
+<pre id="log" class="dim">ready.</pre>
+
+<script type="module" src="./worker.js"></script>
+</body>
+</html>

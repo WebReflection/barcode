@@ -1,0 +1,86 @@
+<!doctype html><meta charset="utf-8"><title>bench</title>
+<!--
+  Static-image performance bench — no camera needed. Loads an image URL,
+  runs the published API (scan/render) against it N times, and reports
+  wall-clock timings. Driven via CDP on desktop or the phone; the result
+  lands in window.result AND the DOM (pre#out).
+
+  Params:
+    img      image URL (default: the local DM receipt crop)
+    iters    scan repetitions per latency point (default 3)
+    render   1 = also render()+rasterize+scan-back round-trip (default 1)
+    lat      comma list of still latency budgets in ms (default 500,5000)
+
+  The image comes from the caller, so personal fixtures stay outside the
+  repo; this page only knows how to time.
+-->
+<pre id="out">boot</pre>
+<script type="module">
+const q = new URLSearchParams(location.search);
+const IMG = q.get('img') || '/fixture-img/viva-dm-crop.png';
+const ITERS = +(q.get('iters') || 3);
+const LAT = (q.get('lat') || '500,5000').split(',').map(Number);
+const DO_ROUNDTRIP = q.get('render') !== '0';
+const out = document.getElementById('out');
+const log = (s) => { out.textContent += '\n' + s; };
+window.result = { status: 'boot', img: IMG };
+
+try {
+  const { default: barcode } = await import('../api/main.js');
+  const session = barcode({});
+
+  // load the specimen at native size
+  const blob = await (await fetch(IMG)).blob();
+  const bmp = await createImageBitmap(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = bmp.width; canvas.height = bmp.height;
+  canvas.getContext('2d').drawImage(bmp, 0, 0);
+  bmp.close?.();
+  log(`img ${canvas.width}x${canvas.height}`);
+
+  const result = { status: 'PASS', img: `${canvas.width}x${canvas.height}`, points: [] };
+
+  for (const latency of LAT) {
+    const walls = [];
+    let last;
+    for (let i = 0; i < ITERS; i++) {
+      const t0 = performance.now();
+      last = await session.scan({ image: canvas, latency });
+      walls.push(Math.round(performance.now() - t0));
+    }
+    const point = { latency, walls, text: last?.text ?? null, symbology: last?.symbology ?? null };
+    result.points.push(point);
+    log(`latency ${latency}: walls ${walls.join(' ')}ms -> ${last ? last.symbology + ' ' + JSON.stringify(last.text) : 'no read'}`);
+  }
+
+  if (DO_ROUNDTRIP) {
+    const code = result.points.findLast?.((p) => p.text) ?? [...result.points].reverse().find((p) => p.text);
+    if (code) {
+      const svg = await session.render({ symbology: code.symbology, text: code.text });
+      const url = 'data:image/svg+xml;base64,' + btoa(new XMLSerializer().serializeToString(svg));
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('svg load')); img.src = url; });
+      const rc = document.createElement('canvas');
+      rc.width = img.naturalWidth + 16; rc.height = img.naturalHeight + 16;
+      const rctx = rc.getContext('2d');
+      rctx.fillStyle = '#fff'; rctx.fillRect(0, 0, rc.width, rc.height);
+      rctx.drawImage(img, 8, 8);
+      const t0 = performance.now();
+      const back = await session.scan({ image: rc, latency: 5000 });
+      result.roundtrip = {
+        ms: Math.round(performance.now() - t0),
+        text: back?.text ?? null,
+        match: back?.text === code.text,
+      };
+      log(`roundtrip ${result.roundtrip.ms}ms match=${result.roundtrip.match}`);
+    }
+  }
+
+  result.status = 'DONE';
+  window.result = result;
+  log('DONE');
+} catch (err) {
+  window.result = { status: 'FAIL', message: String((err && err.stack) || err) };
+  log('FAIL ' + window.result.message);
+}
+</script>

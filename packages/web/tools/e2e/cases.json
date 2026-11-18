@@ -1,0 +1,128 @@
+[
+  {
+    "s": "ean13",
+    "t": "4006381333931"
+  },
+  {
+    "s": "upca",
+    "t": "036000291452"
+  },
+  {
+    "s": "ean8",
+    "t": "96385074"
+  },
+  {
+    "s": "upce",
+    "t": "042100005264"
+  },
+  {
+    "s": "code39",
+    "t": "ABC-123"
+  },
+  {
+    "s": "code93",
+    "t": "TEST93"
+  },
+  {
+    "s": "code128",
+    "t": "CODE128"
+  },
+  {
+    "s": "itf",
+    "t": "12345670"
+  },
+  {
+    "s": "codabar",
+    "t": "40156"
+  },
+  {
+    "s": "microqr",
+    "t": "12345"
+  },
+  {
+    "s": "microqr",
+    "t": "HELLO"
+  },
+  {
+    "s": "qrcode",
+    "t": "HELLO WORLD"
+  },
+  {
+    "s": "qrcode",
+    "t": "https://example.com/p?a=1&b=2"
+  },
+  {
+    "s": "qrcode",
+    "t": "1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890"
+  },
+  {
+    "s": "qrcode",
+    "t": "a"
+  },
+  {
+    "s": "qrcode",
+    "t": "H\u00e9llo \u2014 \u00fcn\u00efcode \u2713"
+  },
+  {
+    "s": "qrcode",
+    "t": "Hello World 0123456789 \u2014 mixed case forces byte mode"
+  },
+  {
+    "s": "datamatrix",
+    "t": "DM-PHYS-001"
+  },
+  {
+    "s": "datamatrix",
+    "t": "DM-RECT-001"
+  },
+  {
+    "s": "datamatrix",
+    "t": "DM-BIG-001"
+  },
+  {
+    "s": "datamatrix",
+    "t": "DATA MATRIX LONGER PAYLOAD 42"
+  },
+  {
+    "s": "aztec",
+    "t": "AZTEC-PHYS-001"
+  },
+  {
+    "s": "aztec",
+    "t": "https://example.com/aztec"
+  },
+  {
+    "s": "pdf417",
+    "t": "PDF417-PHYS-001"
+  },
+  {
+    "s": "pdf417",
+    "t": "PDF417-PHYS-002"
+  },
+  {
+    "s": "datamatrix",
+    "t": "00385F00030004L51QZWWY0003304960"
+  },
+  {
+    "s": "qrcode",
+    "hex": "0001021f7f80fffe",
+    "comment": "binary byte-mode QR: control + non-UTF8 bytes"
+  },
+  {
+    "s": "qrcode",
+    "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+    "comment": "64 arbitrary bytes"
+  },
+  {
+    "s": "datamatrix",
+    "hex": "00ff7f80fe"
+  },
+  {
+    "s": "aztec",
+    "hex": "00ff7f80"
+  },
+  {
+    "s": "pdf417",
+    "hex": "00ff7f80fe"
+  }
+]

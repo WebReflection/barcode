@@ -1,0 +1,12 @@
+[package]
+name = "barcode-itf"
+description = "Clean-room Interleaved 2 of 5 decoder (ISO/IEC 16390 incl. ITF-14), MIT licensed"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+barcode-core = { workspace = true }
+
+[dev-dependencies]
+barcode-fixtures = { path = "../barcode-fixtures" }

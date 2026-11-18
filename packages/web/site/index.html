@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>@webreflection/barcode — WebGPU barcode &amp; QR SDK</title>
+<meta name="description" content="MIT-licensed, WebGPU-accelerated barcode and QR scanning and rendering for the web. All 17 symbologies, clean-room Rust/WASM, one session, one worker." />
+<link rel="stylesheet" href="./docs.css" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23fff'/%3E%3Cg fill='%23101820'%3E%3Crect x='2' y='2' width='4' height='4'/%3E%3Crect x='10' y='2' width='2' height='4'/%3E%3Crect x='16' y='2' width='6' height='4'/%3E%3Crect x='2' y='10' width='4' height='2'/%3E%3Crect x='2' y='16' width='8' height='2'/%3E%3Crect x='14' y='10' width='2' height='8'/%3E%3Crect x='20' y='10' width='4' height='2'/%3E%3Crect x='20' y='16' width='2' height='6'/%3E%3Crect x='2' y='22' width='2' height='8'/%3E%3Crect x='8' y='22' width='6' height='2'/%3E%3Crect x='8' y='28' width='2' height='2'/%3E%3Crect x='14' y='22' width='2' height='6'/%3E%3Crect x='20' y='26' width='4' height='4'/%3E%3Crect x='28' y='2' width='2' height='14'/%3E%3Crect x='28' y='20' width='2' height='10'/%3E%3C/g%3E%3C/svg%3E" />
+</head>
+<body>
+<header class="hero">
+  <p class="eyebrow">MIT · clean-room · Rust → WASM · WebGPU</p>
+  <h1>@webreflection/barcode</h1>
+  <p class="lede">
+    A barcode and QR <strong>scanner</strong> that reads 17 symbologies from a
+    camera or a still image, and a <strong>renderer</strong> that produces a
+    fresh, standards-compliant SVG for every one of them. One import, one
+    session, one worker. Everything runs on the device.
+  </p>
+  <nav class="cta">
+    <a class="button primary" href="./scan.html">Scan a code</a>
+    <a class="button" href="./render.html">Render a code</a>
+    <a class="button" href="https://github.com/WebReflection/barcode">Source</a>
+  </nav>
+</header>
+
+<main>
+  <section>
+    <h2>Live demos</h2>
+    <p class="section-lede">Each card is a real page using the shipped public API — no mock-ups.</p>
+    <div class="cards">
+      <a class="card" href="./scan.html">
+        <span class="card-kicker">camera</span>
+        <h3>Scan a code</h3>
+        <p>The built-in dialog: viewfinder, torch, ✕. Live frames go through the same one worker as everything else.</p>
+        <code>scan()</code>
+      </a>
+      <a class="card" href="./live.html">
+        <span class="card-kicker">bring your own</span>
+        <h3>Your video / mount point</h3>
+        <p>Use your own <code>&lt;video&gt;</code> with your <code>AbortController</code>, or mount the built-in dialog inside a card.</p>
+        <code>scan({ video, signal })</code>
+      </a>
+      <a class="card" href="./still.html">
+        <span class="card-kicker">still image</span>
+        <h3>Scan a photo or file</h3>
+        <p>Drop a picture, pick a file, or try a generated sample. Nothing leaves the browser.</p>
+        <code>scan({ image })</code>
+      </a>
+      <a class="card" href="./render.html">
+        <span class="card-kicker">encoder</span>
+        <h3>Render any symbol</h3>
+        <p>All 17 symbologies, with QR EC/mask/version, PDF417 level/columns and Data Matrix sizes. Scan it back in one click.</p>
+        <code>render(code, opts)</code>
+      </a>
+      <a class="card" href="./worker.html">
+        <span class="card-kicker">worker</span>
+        <h3>Use the worker entry</h3>
+        <p>The explicit <code>/worker</code> entry and the auto entry inside a real module Worker, handed to <code>barcode({ worker })</code>.</p>
+        <code>barcode({ worker })</code>
+      </a>
+      <a class="card" href="./test.html">
+        <span class="card-kicker">self-test</span>
+        <h3>Round-trip every symbology</h3>
+        <p>31 synthetic specimens through the exact GPU/CPU binarizer → WASM pipeline, plus SVG round-trips and render options.</p>
+        <code>31 cases</code>
+      </a>
+      <a class="card" href="./contract-test.html">
+        <span class="card-kicker">contract</span>
+        <h3>Worker transports</h3>
+        <p>Caller-created workers, URL workers, duplicate binding, abort + re-scan, raw-byte render round-trips.</p>
+        <code>9 checks</code>
+      </a>
+    </div>
+  </section>
+
+  <section>
+    <h2>One import, three entries</h2>
+    <table class="api-table">
+      <thead><tr><th>import</th><th>context</th><th>default</th></tr></thead>
+      <tbody>
+        <tr><td><code>@webreflection/barcode</code></td><td>auto</td><td>page → <code>barcode()</code>; worker → bootstrap promise</td></tr>
+        <tr><td><code>@webreflection/barcode/main</code></td><td>page</td><td><code>barcode(options)</code></td></tr>
+        <tr><td><code>@webreflection/barcode/worker</code></td><td>worker</td><td>bootstrap promise</td></tr>
+        <tr><td><code>@webreflection/barcode/css</code></td><td>page</td><td>optional default scan UI</td></tr>
+      </tbody>
+    </table>
+    <pre class="snippet"><code>import barcode from '@webreflection/barcode';
+import '@webreflection/barcode/css';
+
+const { scan, render } = barcode();     // one session, one worker
+
+const code = await scan();              // default UI: camera + torch + ✕
+if (code) {
+  console.log(code.symbology, code.text);
+  document.body.append(await render(code));
+}</code></pre>
+  </section>
+
+  <section>
+    <h2>What it reads</h2>
+    <div class="split">
+      <div>
+        <h3>2D</h3>
+        <p><code>qrcode</code> (v1–40, all EC levels and masks, ECI, rotation/perspective), <code>microqr</code>, <code>datamatrix</code> (square and rectangular), <code>aztec</code>, <code>pdf417</code>.</p>
+      </div>
+      <div>
+        <h3>1D</h3>
+        <p><code>ean13</code> / <code>upca</code>, <code>ean8</code>, <code>upce</code>, <code>code39</code>, <code>code93</code>, <code>code128</code> / GS1-128, <code>itf</code>, <code>codabar</code>, GS1 DataBar (Omni, Limited, Stacked, Stacked Omni).</p>
+      </div>
+    </div>
+    <p class="note">
+      Inverted (white-on-black) codes work on both paths. A code filling a
+      dark scene and a white-on-black code on a light page are handled by the
+      same polarity pass.
+    </p>
+  </section>
+
+  <section>
+    <h2>The API in one screen</h2>
+    <div class="split">
+      <div>
+        <h3><code>scan(options)</code></h3>
+        <p>One complete scan. Resolves once with the best <code>Code</code>
+        (most centered first) or <code>undefined</code> for a graceful stop.
+        Modes: <code>{ into }</code>, <code>{ video, signal }</code> or
+        <code>{ image }</code>.</p>
+        <pre class="snippet"><code>await scan();                    // built-in UI
+await scan({ into: '#modal' });  // mount it yourself
+await scan({ video, signal });   // your &lt;video&gt;
+await scan({ image });           // still: canvas | bitmap |
+                                 // image | SVG | Blob/File</code></pre>
+      </div>
+      <div>
+        <h3><code>render(result, opts)</code></h3>
+        <p>Re-encodes the payload as a fresh SVG (class
+        <code>barcode-svg</code>). Options: <code>module</code>,
+        <code>height</code>, QR <code>ec</code>/<code>mask</code>/<code>version</code>,
+        PDF417 <code>level</code>/<code>columns</code>, Data Matrix
+        <code>rows</code>/<code>cols</code>.</p>
+        <pre class="snippet"><code>await render(code);
+await render(code, { ec: 'H', version: 7 });
+await render(code, { rows: 12, cols: 36 });</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="privacy">
+    <h2>Private by construction</h2>
+    <p>
+      The camera stream, still images and decoded payloads never leave the
+      device. There is no analytics, no upload endpoint and no network call
+      after the static files are fetched.
+    </p>
+  </section>
+
+  <section>
+    <h2>Run it locally</h2>
+    <pre class="snippet"><code>npm install
+npm run build          # → packages/web/dist
+npm run build:demo     # → packages/web/demo-dist
+npm run serve:demo     # http://&lt;lan-ip&gt;:8124
+
+# phone over USB, no HTTPS needed
+adb reverse tcp:5173 tcp:5173
+npm run dev            # http://localhost:5173/scan.html</code></pre>
+    <p class="note">
+      A real iPhone needs a secure origin: <code>npm run serve:iphone</code>
+      serves the built demo over LAN HTTPS with mkcert and prints the
+      one-time CA trust steps.
+    </p>
+  </section>
+</main>
+
+<footer>
+  <p>
+    <a href="https://github.com/WebReflection/barcode">GitHub</a> ·
+    <a href="https://www.npmjs.com/package/@webreflection/barcode">npm</a> ·
+    <a href="https://github.com/WebReflection/barcode/blob/main/LICENSE">MIT</a>
+  </p>
+  <p class="fine">Clean-room decoders. No ZXing, no ZBar, no zint source.</p>
+</footer>
+</body>
+</html>

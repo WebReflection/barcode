@@ -1,0 +1,182 @@
+[
+  {
+    "file": "qr-v01-m.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: HELLO WORLD",
+    "modulePx": 5
+  },
+  {
+    "file": "qr-v02-m.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: https://example.com/",
+    "modulePx": 4
+  },
+  {
+    "file": "qr-v03-m.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: 4006381333931",
+    "modulePx": 4
+  },
+  {
+    "file": "qr-v04-m.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: CODE 39 $%*+-./:",
+    "modulePx": 3
+  },
+  {
+    "file": "qr-v05-m.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: Grüße aus Wien",
+    "modulePx": 3
+  },
+  {
+    "file": "qr-v06-m.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: https://example.com/p?a=1&b=2",
+    "modulePx": 3
+  },
+  {
+    "file": "qr-v07-m.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: https://example.com/very/long/path/for/version/seven/testing?with=query&params=1",
+    "modulePx": 3
+  },
+  {
+    "file": "qr-v08-m.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: 1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890",
+    "modulePx": 2
+  },
+  {
+    "file": "qr-v09-m.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: MILESTONE FIVE VERSION NINE ON THE E-INK TEST SHEET",
+    "modulePx": 2
+  },
+  {
+    "file": "qr-v10-m.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: https://example.com/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/v10/",
+    "modulePx": 2
+  },
+  {
+    "file": "qr-v11-m.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: QR VERSION ELEVEN ON THE E-INK TEST SHEET FOR THE CAMERA",
+    "modulePx": 2
+  },
+  {
+    "file": "qr-v12-m.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: 123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890",
+    "modulePx": 2
+  },
+  {
+    "file": "qr-v13-m.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: https://example.com/version-thirteen/test?sheet=eink&camera=phone",
+    "modulePx": 2
+  },
+  {
+    "file": "qr-v14-m.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: QR VERSION FOURTEEN - THE LARGEST THAT FITS 264X176 AT 2PX PER MODULE",
+    "modulePx": 2
+  },
+  {
+    "file": "qr-v05-l.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: EC LEVEL LOW ON VERSION FIVE",
+    "modulePx": 3
+  },
+  {
+    "file": "qr-v05-q.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: EC LEVEL QUARTILE ON VERSION FIVE",
+    "modulePx": 3
+  },
+  {
+    "file": "qr-v05-h.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: EC LEVEL HIGH ON VERSION FIVE",
+    "modulePx": 3
+  },
+  {
+    "file": "qr-v10-l.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: EC LEVEL LOW ON VERSION TEN",
+    "modulePx": 2
+  },
+  {
+    "file": "qr-v10-q.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: EC LEVEL QUARTILE ON VERSION TEN",
+    "modulePx": 2
+  },
+  {
+    "file": "qr-v10-h.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: EC LEVEL HIGH ON VERSION TEN",
+    "modulePx": 2
+  },
+  {
+    "file": "ean13.png",
+    "symbology": "ean13",
+    "expected": "ean13: 4006381333931",
+    "modulePx": 2
+  },
+  {
+    "file": "ean8.png",
+    "symbology": "ean8",
+    "expected": "ean8: 96385074",
+    "modulePx": 2
+  },
+  {
+    "file": "upce.png",
+    "symbology": "upce",
+    "expected": "upce: 042100005264",
+    "modulePx": 2
+  },
+  {
+    "file": "code39.png",
+    "symbology": "code39",
+    "expected": "code39: ABC-123",
+    "modulePx": 2
+  },
+  {
+    "file": "code93.png",
+    "symbology": "code93",
+    "expected": "code93: TEST93",
+    "modulePx": 2
+  },
+  {
+    "file": "code128.png",
+    "symbology": "code128",
+    "expected": "code128: CODE128",
+    "modulePx": 2
+  },
+  {
+    "file": "itf.png",
+    "symbology": "itf",
+    "expected": "itf: 12345670",
+    "modulePx": 2
+  },
+  {
+    "file": "codabar.png",
+    "symbology": "codabar",
+    "expected": "codabar: 40156",
+    "modulePx": 2
+  },
+  {
+    "file": "qr-v2-m-rot180.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: https://example.com/ (rotated 180°)",
+    "modulePx": 4
+  },
+  {
+    "file": "qr-v3-m-rot90.png",
+    "symbology": "qrcode",
+    "expected": "QRCode: 4006381333931 (rotated 90°)",
+    "modulePx": 4
+  }
+]

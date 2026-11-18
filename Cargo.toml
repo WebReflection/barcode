@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/barcode-core",
+    "crates/barcode-qr",
+    "crates/barcode-ean13",
+    "crates/barcode-code39",
+    "crates/barcode-code128",
+    "crates/barcode-code93",
+    "crates/barcode-codabar",
+    "crates/barcode-ean8",
+    "crates/barcode-upce",
+    "crates/barcode-qr",
+    "crates/barcode-dm",
+    "crates/barcode-aztec",
+    "crates/barcode-pdf417",
+    "crates/barcode-microqr",
+    "crates/barcode-itf",
+    "crates/barcode-databar",
+    "crates/barcode-fixtures",
+    "crates/barcode-wasm",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/ag/barcode"
+
+[workspace.dependencies]
+barcode-core = { path = "crates/barcode-core" }
+
+[profile.release]
+# Size-optimized for the published wasm artifact (opt-level "z" + strip +
+# wasm-opt -Oz): decode must still fit the 500ms/5000ms budget laws —
+# the browser self-test gates enforce that after every rebuild.
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

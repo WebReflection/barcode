@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "note": "Format reference only. A real corpus lives at test-codes/field/corpus.json (gitignored) and resolves images relative to itself.",
+  "cases": [
+    {
+      "id": "example-receipt",
+      "image": "phone-2026-11-17/P_example.jpg",
+      "symbology": "code128",
+      "text": "0123456789012345678901",
+      "modes": ["still", "live"],
+      "latencyMs": 5000,
+      "budgetMs": 5000,
+      "formats": ["code128"]
+    },
+    {
+      "id": "example-qr",
+      "image": "example-qr.png",
+      "symbology": "qrcode",
+      "text": "https://example.com/",
+      "modes": ["still"],
+      "budgetMs": 5000,
+      "formats": null,
+      "xfail": "known limitation: tracked in the table and summary, does not turn the gate red"
+    }
+  ]
+}

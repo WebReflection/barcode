@@ -1,0 +1,58 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Fixture display — point the phone at this</title>
+<style>
+  body { margin: 0; background: #fff; display: grid; place-items: center; min-height: 100vh; font-family: system-ui; }
+  main { text-align: center; }
+  canvas { image-rendering: pixelated; }
+  p { color: #333; font-size: 14px; margin-top: 12px; }
+</style>
+<main>
+  <canvas id="c"></canvas>
+  <p id="label"></p>
+</main>
+<script type="module">
+// Draws a barcode fixture full-screen so another device (the phone) can scan
+// it off this display. Specimen comes from the same WASM encoder the test
+// harness uses — guaranteed valid round-trip input.
+// Usage: /show.html?s=ean13&t=4006381333931
+import init, { encode_fixture } from "../src/wasm/pkg/barcode_wasm.js";
+
+const q = new URLSearchParams(location.search);
+const symbology = q.get("s") ?? "ean13";
+const text = q.get("t") ?? "4006381333931";
+
+await init();
+/** @type {any} */
+let fx;
+try {
+  fx = encode_fixture(symbology, text, Number(q.get("m") ?? 4), 400);
+} catch (err) {
+  document.title = "FIXTURE ERROR";
+  document.getElementById("label").textContent = `encode_fixture(${symbology}, ${text}): ${err?.message ?? err}`;
+  throw err;
+}
+
+const c = /** @type {HTMLCanvasElement} */ (document.getElementById("c"));
+// &fill= (0..1] caps the code's width fraction of the screen — simulates
+// scanning the same code from farther away (physical A/B testing).
+const fill = Math.min(1, Math.max(0.02, Number(q.get("fill") ?? 0.92)));
+const scale = Math.max(1, Math.floor(Math.min(
+  (window.innerWidth * fill) / fx.width,
+  (window.innerHeight * 0.8) / fx.height,
+)));
+c.width = fx.width * scale;
+c.height = fx.height * scale;
+const ctx = /** @type {CanvasRenderingContext2D} */ (c.getContext("2d"));
+ctx.fillStyle = "#fff";
+ctx.fillRect(0, 0, c.width, c.height);
+ctx.fillStyle = "#000";
+for (let y = 0; y < fx.height; y++) {
+  for (let x = 0; x < fx.width; x++) {
+    if ((fx.data[y * fx.bytesPerRow + (x >> 3)] >> (x & 7)) & 1) {
+      ctx.fillRect(x * scale, y * scale, scale, scale);
+    }
+  }
+}
+document.getElementById("label").textContent = `${symbology}: ${text}`;
+</script>

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>barcode-web · default UI try-out</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; padding: max(16px, env(safe-area-inset-top)) 16px 16px; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  button { font: 600 16px system-ui, sans-serif; padding: 12px 20px; border-radius: 12px;
+           border: 0; background: #111; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; }
+  pre { white-space: pre-wrap; font: 13px/1.5 ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<h1>default UI try-out</h1>
+<p>Tap scan and point at a code. The bar fills to 50% on the first
+read, 100% on confirm (two agreeing frames), then the dialog fades
+out and the result lands below.</p>
+<button id="scan" type="button">Scan</button>
+<pre id="out"></pre>
+<script type="module">
+import barcode from "../api/main.js";
+import cssHref from "../css.css?url";
+
+// the default UI is themed entirely by css.css — link it like a consumer
+document.head.append(Object.assign(document.createElement("link"), {
+  rel: "stylesheet", href: cssHref,
+}));
+
+const { scan } = barcode();
+const btn = document.getElementById("scan");
+const out = document.getElementById("out");
+
+btn.addEventListener("click", async () => {
+  btn.disabled = true;
+  out.textContent = "scanning… (✕ cancels)";
+  try {
+    const code = await scan();
+    out.textContent = code
+      ? `${code.symbology}\n${code.text}\n(${code.raw.length} bytes)`
+      : "no read (cancelled or expired)";
+  } catch (err) {
+    out.textContent = `ERROR: ${err?.message ?? err}`;
+  }
+  btn.disabled = false;
+});
+</script>
+</body>
+</html>
