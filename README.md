@@ -183,8 +183,9 @@ npm run serve:docs      # http://<lan-ip>:8128
 npm run serve:docs:iphone  # https on :8443 for a real iPhone
 ```
 
-GitHub Pages deploys the committed `docs/` folder via
-`.github/workflows/pages.yml` (Settings → Pages → Source: GitHub Actions).
+GitHub Pages serves the committed `docs/` folder: Settings → Pages →
+Deploy from a branch → `main` / `/docs` (the built-in
+`pages-build-deployment` run).
 
 The iPhone needs a secure origin for the camera; `serve:iphone` generates
 a LAN certificate with `mkcert` and prints the one-time CA trust steps.
