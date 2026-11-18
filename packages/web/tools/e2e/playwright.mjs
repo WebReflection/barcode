@@ -43,7 +43,8 @@ if (!existsSync(resolve(pkg, "dist/main.js"))) {
 const argv = process.argv.slice(2);
 const has = (name) => argv.includes(`--${name}`);
 const flag = (name, fallback) => {
-  const i = argv.indexOf(`--${name}`);
+  // `name` already includes the leading dashes (`--browser`, `--only`, …).
+  const i = argv.indexOf(name);
   return i >= 0 ? (argv[i + 1] ?? fallback) : fallback;
 };
 
