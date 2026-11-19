@@ -333,6 +333,34 @@ async function suiteDocs(browser, project) {
   await context.close();
 }
 
+/** Committed, non-sensitive specimens from shipped bug reports. */
+async function suiteRegression(browser, project) {
+  const fixture = resolve(pkg, "test-codes/regression/code32-aic-2026-11-19.jpeg");
+  if (!existsSync(fixture)) {
+    console.log(`SKIP  ${project.padEnd(8)} regression no fixture at ${fixture}`);
+    return;
+  }
+  const context = await browser.newContext(project.context);
+  const page = await context.newPage();
+  const t0 = Date.now();
+  try {
+    await page.goto(`${ORIGIN}/still.html`, { waitUntil: "load" });
+    await page.setInputFiles("#file", fixture);
+    await page.waitForFunction(
+      () => document.getElementById("value")?.textContent === "A938261563",
+      null,
+      { timeout: 30_000 },
+    );
+    record({ project, suite: "regression", name: "code32-aic", ok: true, ms: Date.now() - t0 });
+  } catch (err) {
+    record({
+      project, suite: "regression", name: "code32-aic", ok: false, ms: Date.now() - t0,
+      note: String(/** @type {Error} */ (err)?.message ?? err).split("\n")[0],
+    });
+  }
+  await context.close();
+}
+
 /** Real photos, local-only. Skips (does not fail) when the corpus is absent. */
 async function suiteField(browser, project) {
   const corpus = resolve(pkg, "test-codes/field/corpus.json");
@@ -376,6 +404,7 @@ try {
         await suiteContract(page, project.name);
         await context.close();
         await suiteDocs(browser, project.name);
+        await suiteRegression(browser, project.name);
       }
       await suiteFakecam(browser, project.name);
       if (FIELD) await suiteField(browser, project.name);

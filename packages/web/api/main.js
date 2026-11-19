@@ -49,7 +49,7 @@ const handled = new WeakSet();
 /**
  * A symbology name, in the lowercase canonical form the encoders speak.
  * @typedef {'qrcode' | 'microqr' | 'aztec' | 'datamatrix' | 'pdf417' |
- *   'upca' | 'ean13' | 'ean8' | 'upce' | 'code39' | 'code93' | 'code128' |
+ *   'upca' | 'ean13' | 'ean8' | 'upce' | 'code39' | 'code32' | 'code93' | 'code128' |
  *   'itf' | 'codabar' | 'databar' | 'databarltd' | 'databarstk'} Symbology
  */
 
@@ -152,7 +152,7 @@ const handled = new WeakSet();
 const GROUPS = {
   qr: ['qrcode', 'microqr'],
   barcode: [
-    'upca', 'ean13', 'ean8', 'upce', 'code39', 'code93', 'code128',
+    'upca', 'ean13', 'ean8', 'upce', 'code39', 'code32', 'code93', 'code128',
     'itf', 'codabar', 'databar', 'databarltd', 'databarstk',
   ],
 };

@@ -31,6 +31,7 @@ const SUPPORTED = new Set([
   "upce",
   "upca",
   "code39",
+  "code32",
   "code93",
   "code128",
   "itf",

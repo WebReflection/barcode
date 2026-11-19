@@ -38,6 +38,10 @@ pub enum Symbology {
     UPCA,
     UPCE,
     Code39,
+    /// Code 32 (Italian Pharmacode): a Code 39 payload convention used on
+    /// Italian medicine boxes. The printed human-readable form is "A" + a
+    /// nine-digit AIC code; the carrier is plain Code 39.
+    Code32,
     Code93,
     Codabar,
     Itf,
@@ -69,6 +73,7 @@ impl Symbology {
             Symbology::UPCA => "upca",
             Symbology::UPCE => "upce",
             Symbology::Code39 => "code39",
+            Symbology::Code32 => "code32",
             Symbology::Code93 => "code93",
             Symbology::Codabar => "codabar",
             Symbology::Itf => "itf",

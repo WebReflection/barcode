@@ -17,8 +17,8 @@ use barcode_microqr::decode_microqr;
 use barcode_ean13::UpcaDecoder;
 use barcode_upce::UpceDecoder;
 use barcode_code93::Code93Decoder;
-use barcode_code39::Code39Decoder;
-use barcode_core::{BitImage, SymbologyDecoder};
+use barcode_code39::{Code39Decoder, code32_raw, code32_text};
+use barcode_core::{BitImage, Symbology, SymbologyDecoder};
 use barcode_ean13::Ean13Decoder;
 use barcode_itf::ItfDecoder;
 use barcode_databar::{DataBarLtdDecoder, DataBarOmniDecoder, DataBarStackedDecoder};
@@ -449,6 +449,7 @@ impl BarcodeScanner {
             // pre-pass on a photo has no 2D cost, so it always gets them.
             let allow_quarter = !still || now_ms().saturating_sub(start) < still_budget_ms;
             out.extend(decode_linear(self.linear_decoders(), img, tiers, allow_quarter, still));
+            out = apply_code32(out, tiers);
         }
         out
     }
@@ -596,9 +597,9 @@ fn rotated_supersampled(img: &BitImage, deg: f64) -> Vec<u8> {
 /// The canonical symbology names, in a stable order. Results carry these
 /// (title-cased via the debug format); the `formats` API accepts the
 /// lowercase forms with "qr" accepted as an alias for "qrcode".
-pub const SYMBOLOGIES: [&str; 17] = [
-    "qrcode", "microqr", "upca", "datamatrix", "aztec", "pdf417", "ean13", "ean8", "upce", "code39", "code93",
-    "code128", "itf", "codabar", "databar", "databarltd", "databarstk",
+pub const SYMBOLOGIES: [&str; 18] = [
+    "qrcode", "microqr", "upca", "datamatrix", "aztec", "pdf417", "ean13", "ean8", "upce", "code39",
+    "code32", "code93", "code128", "itf", "codabar", "databar", "databarltd", "databarstk",
 ];
 
 /// Which decoder tiers to run for one frame.
@@ -612,6 +613,9 @@ pub struct Tiers {
     pub pdf417: bool,
     pub ean13: bool,
     pub code39: bool,
+    /// Code 32 is a Code 39 payload interpretation: the carrier decoder is
+    /// the same one, only the result mapping differs.
+    pub code32: bool,
     pub itf: bool,
     pub code128: bool,
     pub code93: bool,
@@ -625,11 +629,11 @@ pub struct Tiers {
 
 impl Tiers {
     pub fn all() -> Tiers {
-        Tiers { qr: true, microqr: true, upca: true, datamatrix: true, aztec: true, pdf417: true, ean13: true, code39: true, itf: true, code128: true, code93: true, codabar: true, ean8: true, upce: true, databar: true, databarltd: true, databarstk: true }
+        Tiers { qr: true, microqr: true, upca: true, datamatrix: true, aztec: true, pdf417: true, ean13: true, code39: true, code32: true, itf: true, code128: true, code93: true, codabar: true, ean8: true, upce: true, databar: true, databarltd: true, databarstk: true }
     }
 
     fn any_linear(&self) -> bool {
-        self.ean13 || self.code39 || self.itf || self.code128 || self.code93 || self.codabar || self.ean8 || self.upce || self.databar || self.databarltd
+        self.ean13 || self.code39 || self.code32 || self.itf || self.code128 || self.code93 || self.codabar || self.ean8 || self.upce || self.databar || self.databarltd
     }
 
 }
@@ -685,6 +689,7 @@ fn parse_formats(formats: &[String]) -> Result<Tiers, String> {
             "ean8" => t.ean8 = true,
             "upce" => t.upce = true,
             "code39" => t.code39 = true,
+            "code32" | "pharmacode32" | "italianpharmacode" => t.code32 = true,
             "code93" => t.code93 = true,
             "code128" => t.code128 = true,
             "itf" => t.itf = true,
@@ -709,6 +714,31 @@ pub fn supported_symbologies() -> Vec<String> {
     SYMBOLOGIES.iter().map(|s| s.to_string()).collect()
 }
 
+/// Re-label valid Code 32 payloads. Code 32 has no separate carrier: the
+/// six-char Code 39 text *is* the base-32 encoding of the printed AIC
+/// value. `code32_text` is strict (alphabet + check digit), so an ordinary
+/// Code 39 symbol passes through unchanged. When only `code32` was
+/// requested, non-Code-32 Code 39 hits are dropped.
+fn apply_code32(out: Vec<barcode_core::DecodeResult>, tiers: &Tiers) -> Vec<barcode_core::DecodeResult> {
+    if !tiers.code32 {
+        return out;
+    }
+    out.into_iter()
+        .filter_map(|mut r| {
+            if r.symbology != Symbology::Code39 {
+                return Some(r);
+            }
+            let Some(text) = code32_text(&r.text) else {
+                return if tiers.code39 { Some(r) } else { None };
+            };
+            r.symbology = Symbology::Code32;
+            r.raw = text.as_bytes().to_vec();
+            r.text = text;
+            Some(r)
+        })
+        .collect()
+}
+
 /// The 1D tier: all linear decoders over one bitmap, plus an upside-down
 /// pass. A 180°-rotated linear barcode's run sequence is the reverse of
 /// the true one, so the decoders see nothing; feeding them a horizontally
@@ -727,7 +757,7 @@ fn decode_linear(
     let mut out: Vec<barcode_core::DecodeResult> = Vec::new();
     let mut active: Vec<&mut dyn barcode_core::SymbologyDecoder> = Vec::new();
     if tiers.ean13 { active.push(ean13); }
-    if tiers.code39 { active.push(code39); }
+    if tiers.code39 || tiers.code32 { active.push(code39); }
     if tiers.itf { active.push(itf); }
     if tiers.code128 { active.push(code128); }
     if tiers.code93 { active.push(code93); }
@@ -1617,6 +1647,11 @@ fn encode_fixture_impl(
     let canvas = match symbology {
         "ean13" => barcode_fixtures::encode_ean13(text, module, height, quiet),
         "code39" => barcode_fixtures::encode_code39(text, module, 3.0, height),
+        "code32" => {
+            let raw = code32_raw(text)
+                .ok_or_else(|| JsValue::from_str("code32 needs A + 9 digits with a valid check digit"))?;
+            barcode_fixtures::encode_code39(&raw, module, 3.0, height)
+        }
         "itf" => barcode_fixtures::encode_itf(text, module, 2.5, height),
         "code128" => barcode_fixtures::encode_code128(text, module, height),
         "code93" => barcode_fixtures::encode_code93(text, module, height),
@@ -2230,6 +2265,27 @@ mod upside_down_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn decodes_italian_pharmacode_code32() {
+        // A real box: the six Code 39 symbols VYTH1V carry the printed AIC
+        // value A938261563. `code32` must relabel it; plain `code39` must
+        // keep the carrier payload.
+        let canvas = barcode_fixtures::encode_code39("VYTH1V", 4, 3.0, 80);
+        let img = BitImage::new(canvas.width, canvas.height, canvas.bits());
+        let mut sc = BarcodeScanner::new();
+
+        let all = sc.scan_tiered(&img, &Tiers::all(), false, 0);
+        let hit = all.first().expect("code32 specimen did not decode");
+        assert_eq!(hit.symbology, barcode_core::Symbology::Code32, "{all:?}");
+        assert_eq!(hit.text, "A938261563");
+
+        let only32 = parse_formats(&["code32".into()]).unwrap();
+        assert!(sc.scan_tiered(&img, &only32, false, 0).iter().any(|r| r.text == "A938261563"));
+
+        let only39 = parse_formats(&["code39".into()]).unwrap();
+        assert!(sc.scan_tiered(&img, &only39, false, 0).iter().any(|r| r.text == "VYTH1V"));
     }
 
     trait IntoText {

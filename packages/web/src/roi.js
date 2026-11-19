@@ -17,6 +17,8 @@
  * candidate only costs one crop.
  */
 
+import { LINEAR } from "./live-schedule.js";
+
 /** @typedef {import("./gpu/binarizer.js").BinarizedFrame} BinarizedFrame */
 
 /**
@@ -221,6 +223,205 @@ export function roiCandidates(frame, sourceW, sourceH, limit = 4) {
     if (picked.length >= limit) break;
   }
   return picked;
+}
+
+/**
+ * Row-scan (1D) ROI candidates. The compact-cluster detector above sees a
+ * barcode as a thin band of high-frequency ink, and a wide symbol often
+ * loses to a text block or merges with the box/hand around it. A 1D reader
+ * only needs one clean scanline, so look for rows with many black/white
+ * transitions and crop the densest horizontal run of them. Cheap: one
+ * pass over the mask, and it runs only after the full-frame pass missed.
+ *
+ * @param {BinarizedFrame} frame
+ * @param {number} sourceW @param {number} sourceH
+ * @param {number} [limit]
+ * @returns {RoiBox[]}
+ */
+export function linearRoiCandidates(frame, sourceW, sourceH, limit = 2) {
+  if (!(frame.width > 0 && frame.height > 0 && sourceW > 0 && sourceH > 0)) return [];
+  const { width, height, bytesPerRow, data } = frame;
+  /** @param {number} y */
+  const transitions = (y) => {
+    let count = 0;
+    let prev = 0;
+    for (let x = 0; x < width; x++) {
+      const bit = (data[y * bytesPerRow + (x >> 3)] ?? 0) >> (x & 7) & 1;
+      if (bit !== prev) count++;
+      prev = bit;
+    }
+    return count;
+  };
+
+  const counts = new Uint16Array(height);
+  let max = 0;
+  for (let y = 0; y < height; y++) {
+    const n = transitions(y);
+    counts[y] = n;
+    if (n > max) max = n;
+  }
+  // Text lines have their own transition rhythm; only the densest rows are
+  // worth a crop. 24 transitions is ~12 bars even for the narrowest 1D.
+  const floor = Math.max(24, max * 0.4);
+  /** @type {{ y0: number, y1: number, max: number }[]} */
+  const bands = [];
+  for (let y = 0; y < height; y++) {
+    const count = counts[y] ?? 0;
+    if (count < floor) continue;
+    const band = bands.at(-1);
+    if (band && y <= band.y1 + 8) {
+      band.y1 = y;
+      band.max = Math.max(band.max, count);
+    } else {
+      bands.push({ y0: y, y1: y, max: count });
+    }
+  }
+
+  const sx = sourceW <= width ? 1 : sourceW / width;
+  const sy = sourceH <= height ? 1 : sourceH / height;
+  /** @type {RoiBox[]} */
+  const boxes = [];
+  for (const band of bands) {
+    // Random texture (noise, foliage, fabric) puts transitions on every
+    // row, merging into a full-height band. A 1D symbol is a horizontal
+    // band, not most of the frame; skipping it keeps the junk-frame
+    // fallback cheap (a full-frame crop costs the same as the sweep).
+    if (band.y1 - band.y0 + 1 > height * 0.5) continue;
+    // Bucket the transition positions per 8px cell; group cells separated
+    // by more than four cells (32px) and keep the densest group. That is
+    // the symbol, while the hand/box edges are long runs with few flips.
+    /** @type {Map<number, number>} */
+    const cells = new Map();
+    for (let y = band.y0; y <= band.y1; y++) {
+      let prev = 0;
+      for (let x = 0; x < width; x++) {
+        const bit = (data[y * bytesPerRow + (x >> 3)] ?? 0) >> (x & 7) & 1;
+        if (bit !== prev) {
+          const cell = x >> 3;
+          cells.set(cell, (cells.get(cell) ?? 0) + 1);
+        }
+        prev = bit;
+      }
+    }
+    if (!cells.size) continue;
+    const keys = [...cells.keys()].sort((a, b) => a - b);
+    /** @type {number[][]} */
+    const groups = [];
+    for (const key of keys) {
+      const group = groups.at(-1);
+      if (group && key <= (group[group.length - 1] ?? key) + 4) group.push(key);
+      else groups.push([key]);
+    }
+    /** @type {{ total: number, x0: number, x1: number } | null} */
+    let best = null;
+    for (const group of groups) {
+      const total = group.reduce((sum, key) => sum + (cells.get(key) ?? 0), 0);
+      if (!best || total > best.total) {
+        best = {
+          total,
+          x0: (group[0] ?? 0) * 8,
+          x1: ((group[group.length - 1] ?? 0) + 1) * 8,
+        };
+      }
+    }
+    if (!best) continue;
+    // A 1D symbol is short: the transition-dense rows are its middle. Pad
+    // vertically enough to keep the full bar height (and the quiet zone).
+    const padX = Math.max(8, Math.round((best.x1 - best.x0) * 0.12));
+    const padY = Math.max(8, Math.round((band.y1 - band.y0 + 1) * 0.6));
+    const x = Math.max(0, Math.round((best.x0 - padX) * sx));
+    const y = Math.max(0, Math.round((band.y0 - padY) * sy));
+    const w = Math.min(sourceW - x, Math.round((best.x1 - best.x0 + 2 * padX) * sx));
+    const h = Math.min(sourceH - y, Math.round((band.y1 - band.y0 + 1 + 2 * padY) * sy));
+    if (w < MIN_SIDE || h < MIN_SIDE) continue;
+    boxes.push({ x, y, w, h, score: best.total });
+  }
+
+  boxes.sort((a, b) => b.score - a.score);
+  /** @type {RoiBox[]} */
+  const picked = [];
+  for (const box of boxes) {
+    const overlap = picked.some((p) => {
+      const ix = Math.max(0, Math.min(box.x + box.w, p.x + p.w) - Math.max(box.x, p.x));
+      const iy = Math.max(0, Math.min(box.y + box.h, p.y + p.h) - Math.max(box.y, p.y));
+      return ix * iy > 0.6 * Math.min(box.w * box.h, p.w * p.h);
+    });
+    if (!overlap) picked.push(box);
+    if (picked.length >= limit) break;
+  }
+  return picked;
+}
+
+/**
+ * Global-histogram (Otsu) binarization of a small crop, upscaled to give
+ * the 1D decoder back the module pitch it lost in the full-frame
+ * downscale. The local Bradley pass is best on a whole scene, but on a
+ * tightly cropped bar strip the blur makes every space a little darker
+ * than its neighbourhood — a global two-class split keeps those spaces
+ * white where `threshold * local mean` floods them. Runs in the worker;
+ * the crop is small.
+ *
+ * @param {HTMLCanvasElement | OffscreenCanvas} source
+ * @param {number} [scale] Upscale factor (capped so no side exceeds 1600px).
+ * @returns {BinarizedFrame & { threshold: number }}
+ */
+export function otsuMask(source, scale = 2) {
+  const sw = source.width;
+  const sh = source.height;
+  const factor = Math.max(1, Math.min(scale, 1600 / Math.max(sw, sh)));
+  const w = Math.max(1, Math.round(sw * factor));
+  const h = Math.max(1, Math.round(sh * factor));
+  /** @type {HTMLCanvasElement | OffscreenCanvas} */
+  const canvas =
+    typeof OffscreenCanvas !== "undefined"
+      ? new OffscreenCanvas(w, h)
+      : Object.assign(document.createElement("canvas"), { width: w, height: h });
+  const ctx = /** @type {CanvasRenderingContext2D | null} */ (canvas.getContext("2d", { willReadFrequently: true }));
+  if (!ctx) throw new TypeError("otsuMask: no 2d context");
+  ctx.imageSmoothingEnabled = factor !== 1;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(/** @type {CanvasImageSource} */ (source), 0, 0, w, h);
+  const px = ctx.getImageData(0, 0, w, h).data;
+  const luma = new Uint8Array(w * h);
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < w * h; i++) {
+    const l = (0.299 * (px[i * 4] ?? 0) + 0.587 * (px[i * 4 + 1] ?? 0) + 0.114 * (px[i * 4 + 2] ?? 0)) | 0;
+    luma[i] = l;
+    hist[l] = (hist[l] ?? 0) + 1;
+  }
+  const total = w * h;
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * (hist[t] ?? 0);
+  let weight = 0;
+  let sumB = 0;
+  let threshold = 128;
+  let best = -1;
+  for (let t = 0; t < 256; t++) {
+    weight += hist[t] ?? 0;
+    if (!weight) continue;
+    const weightF = total - weight;
+    if (!weightF) break;
+    sumB += t * (hist[t] ?? 0);
+    const meanB = sumB / weight;
+    const meanF = (sum - sumB) / weightF;
+    const variance = weight * weightF * (meanB - meanF) ** 2;
+    if (variance > best) {
+      best = variance;
+      threshold = t;
+    }
+  }
+  const bytesPerRow = Math.ceil(w / 8 / 4) * 4;
+  const data = new Uint8Array(bytesPerRow * h);
+  for (let y = 0; y < h; y++) {
+    const row = y * bytesPerRow;
+    for (let x = 0; x < w; x++) {
+      if ((luma[y * w + x] ?? 0) < threshold) {
+        const byte = row + (x >> 3);
+        data[byte] = (data[byte] ?? 0) | (1 << (x & 7));
+      }
+    }
+  }
+  return { width: w, height: h, bytesPerRow, data, threshold };
 }
 
 /** @param {CanvasImageSource | HTMLVideoElement} source */
