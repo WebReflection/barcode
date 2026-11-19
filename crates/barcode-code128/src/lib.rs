@@ -326,14 +326,22 @@ impl Code128Decoder {
         // otherwise clean read early ("ROTATED-CODE128" -> "ROTATED-").
         // Exact stops win immediately; a tolerant stop is only a fallback
         // for the same start (degraded prints never round exactly).
-        let mut fallback: Option<Candidate> = None;
+        // A tolerant stop can also match a window inside the data. Keep
+        // the LONGEST valid read from this start: a damaged start can
+        // produce an early 1-2 codeword stop (the checksum is only 1/103),
+        // and that must not shadow the full symbol. A genuine short
+        // symbol has exactly one validating stop, so nothing changes.
+        let mut fallback: Option<(Candidate, usize)> = None;
         loop {
             if values.len() >= 2 {
                 let (stop, stop_err) = self.stop_at_impl(k);
                 if stop != 0 {
                     let check = *values.last().unwrap();
                     let data = &values[1..values.len() - 1];
-                    if data.len() >= 3 && check_valid(first, data, check) {
+                    // ISO/IEC 15417 allows a single data codeword: do not
+                    // reject valid short symbols. The mod-103 check plus
+                    // the scanner's `min_rows` corroboration gate noise.
+                    if !data.is_empty() && check_valid(first, data, check) {
                         let cand = Candidate {
                             text: build_text(first, data),
                             x_start: self.offsets[start],
@@ -344,21 +352,21 @@ impl Code128Decoder {
                         if cand.exact {
                             return Some(cand);
                         }
-                        if fallback.is_none() {
-                            fallback = Some(cand);
+                        if fallback.as_ref().map_or(true, |(_, len)| data.len() > *len) {
+                            fallback = Some((cand, data.len()));
                         }
                     }
                 }
             }
             let Some((v, _, this_exact, err)) = self.char_value(k) else {
-                return fallback;
+                return fallback.map(|(c, _)| c);
             };
             exact &= this_exact;
             score += err;
             values.push(v);
             k += 6;
             if values.len() > 30 {
-                return fallback; // implausibly long
+                return fallback.map(|(c, _)| c); // implausibly long
             }
         }
     }
