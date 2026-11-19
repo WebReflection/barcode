@@ -47,6 +47,22 @@ const SUPPORTED = new Set([
   "pdf417",
 ]);
 
+/**
+ * Scan results for GS1 DataBar carry the `(01)` AI prefix and the GTIN-14
+ * check digit; the encoder takes the 13-digit body. Without this the demo
+ * result card shows the value but no SVG (`databar needs exactly 13
+ * digits`). Hand-built 13-digit values pass through unchanged.
+ * @param {string} symbology canonical lowercase name
+ * @param {string} text
+ */
+export function encodableText(symbology, text) {
+  if (symbology === "databar" || symbology === "databarltd" || symbology === "databarstk") {
+    const m = /^(?:\(01\))?(\d{13})\d$/.exec(text);
+    if (m) return m[1];
+  }
+  return text;
+}
+
 /** @type {Worker | null} */
 let worker = null;
 /** @type {Promise<Worker> | null} */
@@ -118,6 +134,7 @@ export async function createSVG({ type, value, module = 4, height, ...options })
   }
   const text = String(value ?? "");
   if (!text) throw new Error("missing value");
+  const payload = encodableText(symbology, text);
   const layout = normalizeRenderOptions(options);
   await ensureWorker();
   const fx = await (chain = chain.then(() => {
@@ -132,7 +149,7 @@ export async function createSVG({ type, value, module = 4, height, ...options })
     /** @type {Worker} */ (worker).postMessage({
       type: "encode",
       symbology,
-      text,
+      text: payload,
       module,
       height: height ?? 30 * module,
       ...layout,

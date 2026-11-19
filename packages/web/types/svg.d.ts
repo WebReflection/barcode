@@ -1,4 +1,13 @@
 /**
+ * Scan results for GS1 DataBar carry the `(01)` AI prefix and the GTIN-14
+ * check digit; the encoder takes the 13-digit body. Without this the demo
+ * result card shows the value but no SVG (`databar needs exactly 13
+ * digits`). Hand-built 13-digit values pass through unchanged.
+ * @param {string} symbology canonical lowercase name
+ * @param {string} text
+ */
+export function encodableText(symbology: string, text: string): string | undefined;
+/**
  * @typedef {import("./render-options.js").RenderOptions & {
  *   type: string,
  *   value: string,
