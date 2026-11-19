@@ -737,7 +737,9 @@ fn try_corner_fast(map: &BinaryMap, corner: &Corner, budget: &mut u64) -> Option
             if !tight {
                 continue;
             }
-            let p = (p_h + p_v) * 0.5;
+            // Legs are eroded by blur/thresholding, so they are lower
+            // bounds: the longer implied pitch is the better estimate.
+            let p = p_h.max(p_v);
             fits.push((ratio, p * 0.92, p * 1.08, spec, rows, cols, p));
             continue;
         }
@@ -763,9 +765,20 @@ fn try_corner_fast(map: &BinaryMap, corner: &Corner, budget: &mut u64) -> Option
         if vl < 0.4 * vdim * lo || vl > 1.8 * vdim * hi {
             continue;
         }
-        fits.push((ratio, lo, hi, spec, rows, cols, (p_h + p_v) / 2.0));
+        fits.push((ratio, lo, hi, spec, rows, cols, p_h.max(p_v)));
     }
-    fits.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    // Equal aspect ratios cannot separate 12x36 from 16x48: both are 3:1.
+    // The finder leg is one module thick, so the spec whose implied pitch
+    // agrees with the measured stroke thickness is the real one. Use the
+    // SMALLER thickness: a tilted/keystoned stroke is chained across scan
+    // lines and reports a bbox thickness spanning its drift, i.e. an
+    // over-estimate; erosion only makes it thinner.
+    let thick32 = corner.hth.min(corner.vth).max(1) as f32;
+    fits.sort_by(|a, b| {
+        let ka = (a.0, (a.6 - thick32).abs() / thick32);
+        let kb = (b.0, (b.6 - thick32).abs() / thick32);
+        ka.partial_cmp(&kb).unwrap()
+    });
     for (_ratio, lo, hi, _spec, rows, cols, p_est) in fits {
         // Pitch ladder ordered by the leg-derived estimate, not bottom-up:
         // agreeing legs pin the pitch to a few percent (the wedge-legged
@@ -817,35 +830,56 @@ fn try_corner_fast(map: &BinaryMap, corner: &Corner, budget: &mut u64) -> Option
                 let (crx, cry) = (cd.0 * ct - cd.1 * st, cd.0 * st + cd.1 * ct);
                 let (hd, vd) = if rows_on_h { (rows as f32, cols as f32) } else { (cols as f32, rows as f32) };
                 if (hl - hd * pitch).abs() < 1.5 * pitch && (vl - vd * pitch).abs() < 1.5 * pitch {
-                    let pos = |r: f32, c: f32| {
-                        (
-                            corner.x + (r + 0.5 - rows as f32) * pitch * rrx
-                                + (c + 0.5) * pitch * crx,
-                            corner.y + (r + 0.5 - rows as f32) * pitch * rry
-                                + (c + 0.5) * pitch * cry,
-                        )
+                    // The corner is only a coarse estimate, so check the
+                    // dashed edges at the same offsets the sweep will try.
+                    // Using the raw corner rejected the correct hypothesis
+                    // on the portrait field mask (a ~3px x shift was enough
+                    // to break the 75% parity vote) before the offset loop
+                    // ever ran.
+                    let edges_ok = |ox: f32, oy: f32| -> bool {
+                        let pos = |r: f32, c: f32| {
+                            (
+                                ox + (r + 0.5 - rows as f32) * pitch * rrx
+                                    + (c + 0.5) * pitch * crx,
+                                oy + (r + 0.5 - rows as f32) * pitch * rry
+                                    + (c + 0.5) * pitch * cry,
+                            )
+                        };
+                        let mut good = 0usize;
+                        let mut total = 0usize;
+                        for c in 0..cols {
+                            let (px, py) = pos(0.0, c as f32);
+                            if dark_at(map, px, py) == (c % 2 == 0) {
+                                good += 1;
+                            }
+                            total += 1;
+                        }
+                        for r in 0..rows {
+                            let (px, py) = pos(r as f32, (cols - 1) as f32);
+                            if dark_at(map, px, py) == ((r + cols - 1) % 2 == 0) {
+                                good += 1;
+                            }
+                            total += 1;
+                        }
+                        (good as f32) >= 0.75 * total as f32
                     };
-                    let mut good = 0usize;
-                    let mut total = 0usize;
-                    for c in 0..cols {
-                        let (px, py) = pos(0.0, c as f32);
-                        if dark_at(map, px, py) == (c % 2 == 0) {
-                            good += 1;
+                    let mut ok = false;
+                    for &ex in &[-OFFSET_RANGE, 0.0, OFFSET_RANGE] {
+                        for &ey in &[-OFFSET_RANGE, 0.0, OFFSET_RANGE] {
+                            if edges_ok(corner.x + ex, corner.y + ey) {
+                                ok = true;
+                                break;
+                            }
                         }
-                        total += 1;
-                    }
-                    for r in 0..rows {
-                        let (px, py) = pos(r as f32, (cols - 1) as f32);
-                        if dark_at(map, px, py) == ((r + cols - 1) % 2 == 0) {
-                            good += 1;
+                        if ok {
+                            break;
                         }
-                        total += 1;
                     }
-                    *budget = budget.saturating_sub(total as u64);
+                    *budget = budget.saturating_sub(9 * (rows + cols) as u64);
                     if *budget == 0 {
                         return None;
                     }
-                    if (good as f32) < 0.75 * total as f32 {
+                    if !ok {
                         continue;
                     }
                 }
