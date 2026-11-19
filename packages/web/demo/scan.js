@@ -91,7 +91,13 @@ function showResult(code) {
     .then((node) => {
       if (node) resultSvgEl.replaceChildren(node);
     })
-    .catch(() => {}); // unsupported symbology: value-only view is fine
+    .catch((err) => {
+      // The value-only card is still useful, but a silent failure hid a
+      // real DataBar re-render bug. Keep both the console detail and a
+      // visible note so the gap is obvious.
+      console.warn("result re-render failed:", err);
+      resultSvgEl.textContent = "SVG unavailable for this result";
+    });
 }
 
 /** One `scan()`: the SDK dialog is the viewfinder (camera, torch, ✕). */
