@@ -54,6 +54,39 @@ pub enum Symbology {
     Pharmacode,
 }
 
+impl Symbology {
+    /// The canonical lowercase name. This is the one vocabulary: the
+    /// `formats` API, the live scheduler, `checked` and decode results
+    /// all use these names (`"qrcode"`, `"microqr"`, `"databarstk"`, ...).
+    pub fn name(self) -> &'static str {
+        match self {
+            Symbology::QRCode => "qrcode",
+            Symbology::DataMatrix => "datamatrix",
+            Symbology::Code128 => "code128",
+            Symbology::EAN13 => "ean13",
+            Symbology::QRCodeMicro => "microqr",
+            Symbology::EAN8 => "ean8",
+            Symbology::UPCA => "upca",
+            Symbology::UPCE => "upce",
+            Symbology::Code39 => "code39",
+            Symbology::Code93 => "code93",
+            Symbology::Codabar => "codabar",
+            Symbology::Itf => "itf",
+            Symbology::DataBar => "databar",
+            Symbology::DataBarStacked => "databarstk",
+            Symbology::DataBarExpanded => "databarexpanded",
+            Symbology::DataBarLimited => "databarltd",
+            Symbology::PDF417 => "pdf417",
+            Symbology::Aztec => "aztec",
+            Symbology::MaxiCode => "maxicode",
+            Symbology::DotCode => "dotcode",
+            Symbology::HanXin => "hanxin",
+            Symbology::CodablockF => "codablockf",
+            Symbology::Pharmacode => "pharmacode",
+        }
+    }
+}
+
 /// A successfully decoded symbol.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DecodeResult {

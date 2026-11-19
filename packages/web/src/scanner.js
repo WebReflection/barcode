@@ -16,7 +16,6 @@ import {
   trackCapabilities,
   waitForFocusSettle,
 } from "./camera.js";
-import { familyOf } from "./live-schedule.js";
 
 /** @typedef {import("./camera.js").CameraLens} CameraLens */
 /** @typedef {import("./camera.js").LensPreference} LensPreference */
@@ -27,7 +26,7 @@ import { familyOf } from "./live-schedule.js";
 /** @typedef {Object} DetectedCode
  * @property {string} text
  * @property {Uint8Array} raw Exact payload bytes (binary QR byte mode etc.).
- * @property {string} symbology
+ * @property {string} symbology Canonical lowercase name ("qrcode", "ean13", ...).
  * @property {Array<{x: number, y: number}>} position Corner quad in frame pixel coordinates.
  */
 
@@ -128,23 +127,14 @@ import { familyOf } from "./live-schedule.js";
  * @property {number} dropped Frames skipped while the pipeline was busy or maxFps throttled.
  */
 
-/** Decode-result symbology ("DataBar Stacked") → canonical format name. */
-const FORMAT_OF = /** @type {Record<string, string>} */ ({
-  qrcode: "qrcode", microqr: "microqr", microqrcode: "microqr",
-  datamatrix: "datamatrix", aztec: "aztec", pdf417: "pdf417",
-  ean13: "ean13", ean8: "ean8", upca: "upca", upce: "upce",
-  code39: "code39", code93: "code93", code128: "code128", itf: "itf",
-  codabar: "codabar", databar: "databar", databarltd: "databarltd",
-  databarstacked: "databarstk", databarstk: "databarstk",
-});
-
 /**
  * Symbologies expensive enough to deserve a close-up re-confirmation.
  * The linear tier scans the full frame in ~1ms, and a 1D quad is a thin
  * horizontal band: cropping to it can cut the bar height, so the
  * re-confirmation never lands (a white-on-black Code128 measured this).
+ * Results carry canonical lowercase names (see `Symbology::name`).
  */
-const HINTED = new Set(["QRCode", "QRCode Micro", "Data Matrix", "DataMatrix", "Aztec", "PDF417"]);
+const HINTED = new Set(["qrcode", "microqr", "datamatrix", "aztec", "pdf417"]);
 
 const ZOOM_TARGET_FRACTION = 0.4; // want the code >= 40% of frame width
 const ZOOM_COOLDOWN_MS = 1200;
@@ -206,7 +196,7 @@ export class Scanner {
   // (the worker sorts centered-first) when several reach 2 in the same
   // frame. No timers: the ~1s fire latency emerges from the 500ms cap.
   /** Per-value consecutive-frame streaks ("symbology\0text" → count). */
-  /** @type {Map<string, number>} */ #streaks = new Map();
+  /** @type {Map<string, { symbology: string, streak: number }>} */ #streaks = new Map();
   /** Consecutive failed frames (decoder throws) — 3 in a row is fatal. */
   #failStreak = 0;
   /** Frames skipped while busy / above maxFps — the serial pipeline's drop count. */
@@ -601,20 +591,19 @@ export class Scanner {
    * first does, and every frame after while it keeps agreeing.
    * @param {DetectedCode[]} results ranked best-first by the worker
    * @param {boolean} slow true when the frame's wall time exceeded the budget
-   * @param {string[] | null} [checked] the families this frame actually
-   *   decoded: null = everything requested ran (a full frame); an array =
-   *   the scheduled subset that ran (a cheap frame). Values from families
-   *   that ran count normally — presence adds, absence clears — while
-   *   values from skipped families are frozen: their absence is no
-   *   evidence (the skipped tier may still hold them). `[]` therefore
-   *   freezes every streak, and `null` observes everything.
+   * @param {string[] | null} [checked] the canonical lowercase families
+   *   this frame actually decoded: null = everything requested ran (a full
+   *   frame); an array = the scheduled subset that ran (a cheap frame).
+   *   Values from families that ran count normally — presence adds,
+   *   absence clears — while values from skipped families are frozen:
+   *   their absence is no evidence (the skipped tier may still hold them).
+   *   `[]` therefore freezes every streak, and `null` observes everything.
    * @returns {DetectedCode[]}
    */
   #confirm(results, slow, checked = null) {
-    // Result symbologies (Rust debug names) and `checked` (canonical
-    // family names) share one vocabulary: "QRCodeMicro" -> "microqr",
-    // "DataBarStacked" -> "databarstk", "DataBarLimited" -> "databarltd".
-    const ran = checked == null ? null : new Set(checked.map(familyOf));
+    // `checked` and result symbologies share one canonical vocabulary
+    // (`Symbology::name` in the wasm), so there is nothing to normalize.
+    const ran = checked == null ? null : new Set(checked);
     const keyOf = (/** @type {DetectedCode} */ r) => r.symbology + "\u0000" + r.text;
     if (slow && results.length === 0) {
       // Over-budget frames carry stale evidence — but only when they
@@ -627,27 +616,31 @@ export class Scanner {
       // keeps the accuracy guarantee).
       if (ran == null) this.#streaks.clear();
       else {
-        for (const key of this.#streaks.keys()) {
-          if (ran.has(familyOf(key.split("\u0000")[0]))) this.#streaks.delete(key);
+        for (const [key, entry] of this.#streaks) {
+          if (ran.has(entry.symbology)) this.#streaks.delete(key);
         }
       }
       return [];
     }
     const byKey = new Map(results.map((r) => [keyOf(r), r]));
     // missing values lose their streak — but only when their family
-    // actually ran this frame; a value whose family was skipped keeps it
-    for (const key of this.#streaks.keys()) {
+    // actually ran this frame; a value whose family was skipped keeps it.
+    // The family rides on the streak entry: no key parsing or
+    // re-normalization per loop.
+    for (const [key, entry] of this.#streaks) {
       if (byKey.has(key)) continue;
-      if (ran == null || ran.has(familyOf(key.split("\u0000")[0]))) this.#streaks.delete(key);
+      if (ran == null || ran.has(entry.symbology)) this.#streaks.delete(key);
     }
     // present values count the frame when their family ran
-    for (const [key] of byKey) {
-      if (ran != null && !ran.has(familyOf(key.split("\u0000")[0]))) continue;
-      this.#streaks.set(key, (this.#streaks.get(key) ?? 0) + 1);
+    for (const [key, r] of byKey) {
+      if (ran != null && !ran.has(r.symbology)) continue;
+      const entry = this.#streaks.get(key);
+      if (entry) entry.streak += 1;
+      else this.#streaks.set(key, { symbology: r.symbology, streak: 1 });
     }
     // results are ranked (centered first): the first value to have
     // earned 2 consecutive frames wins the race
-    const winner = results.find((r) => (this.#streaks.get(keyOf(r)) ?? 0) >= 2);
+    const winner = results.find((r) => (this.#streaks.get(keyOf(r))?.streak ?? 0) >= 2);
     return winner ? [winner] : [];
   }
 
@@ -731,8 +724,8 @@ export class Scanner {
     w = Math.min(vw - x, Math.round(w + 2 * mx));
     h = Math.min(vh - y, Math.round(h + 2 * my));
     if (w < 32 || h < 16) return;
-    const name = String(r.symbology).toLowerCase().replace(/[^a-z0-9]/g, "");
-    this.#hint = { x, y, w, h, format: FORMAT_OF[name] ?? null, frames: 5 };
+    // HINTED already guarantees a canonical family name.
+    this.#hint = { x, y, w, h, format: r.symbology, frames: 5 };
   }
 
   /**

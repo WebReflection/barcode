@@ -45,32 +45,15 @@ export const LINEAR = [
 /** Families decoded by the 2D tier (DataBar Stacked is a stacked tier). */
 const TWO_D = new Set(['qrcode', 'microqr', 'datamatrix', 'aztec', 'pdf417', 'databarstk']);
 
-/** Normalize a decode result's title-cased symbology. @param {unknown} name */
-const norm = (name) => String(name).toLowerCase().replace(/[^a-z0-9]/g, '');
-
-/**
- * One vocabulary for result symbologies and scheduler family names. The
- * wasm carries Rust debug names ("QRCodeMicro", "DataBarStacked",
- * "DataBarLimited"); the scheduler and the `formats` API speak the
- * canonical lowercase names. Everything else already matches.
- * @param {unknown} name
- * @returns {string}
- */
-export const familyOf = (name) => {
-  const n = norm(name);
-  if (n === 'qrcodemicro') return 'microqr';
-  if (n === 'databarstacked') return 'databarstk';
-  if (n === 'databarlimited') return 'databarltd';
-  return n;
-};
-
 /**
  * True when a scan result came from the 2D tier — the evidence that
  * gates the linear tier (a 2D code's texture false-positives 1D).
+ * Results carry the canonical lowercase names already (`Symbology::name`
+ * in the wasm), so this is a plain set lookup.
  * @param {string} symbology
  * @returns {boolean}
  */
-export const is2DResult = (symbology) => TWO_D.has(familyOf(symbology));
+export const is2DResult = (symbology) => TWO_D.has(symbology);
 
 /**
  * True when the requested formats include an exotic family (or no filter

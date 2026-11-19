@@ -77,6 +77,9 @@ export type DetectedCode = {
      * Exact payload bytes (binary QR byte mode etc.).
      */
     raw: Uint8Array;
+    /**
+     * Canonical lowercase name ("qrcode", "ean13", ...).
+     */
     symbology: string;
     /**
      * Corner quad in frame pixel coordinates.

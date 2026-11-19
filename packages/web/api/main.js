@@ -562,6 +562,8 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
     const raw = result?.raw instanceof Uint8Array && result.raw.length ? result.raw : null;
     const text = typeof result?.text === 'string' ? result.text : '';
     if (!result || (!raw && !text)) return null;
+    // Decode results are canonical already; hand-built inputs may use any
+    // case, so this boundary still normalizes once for the encoder.
     const symbology = String(result.symbology ?? '').trim().toLowerCase();
     // Throws a clear TypeError for out-of-range / unknown options.
     const layout = normalizeRenderOptions(opts);
@@ -571,8 +573,6 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
     // is on scan results) — the text path is byte-identical then
     const useRaw = raw && (BINARY_RENDER.has(symbology) || !text);
     const fx = await utils.encode({
-      // decode results carry the wasm's title-cased symbology ("Code128");
-      // the encoder speaks the lowercase canonical names ("code128")
       symbology,
       text,
       raw: useRaw ? raw : null,

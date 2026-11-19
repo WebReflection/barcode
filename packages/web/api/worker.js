@@ -19,7 +19,7 @@ import { createBinarizer } from '../src/binarizer-factory.js';
 import { getWasmScanner, decodeFrame } from '../src/decoder.js';
 import { rotateDrawable } from '../src/source-rotate.js';
 import { cropDrawable, roiCandidates } from '../src/roi.js';
-import { ALL_FORMATS, cheapFormats, dueForFullSweep, familyOf, is2DResult, markFullSweep, needsScheduling } from '../src/live-schedule.js';
+import { ALL_FORMATS, cheapFormats, dueForFullSweep, is2DResult, markFullSweep, needsScheduling } from '../src/live-schedule.js';
 import {
   encode_fixture_opts,
   encode_fixture_raw_opts,
@@ -281,16 +281,14 @@ const handlers = {
           // agreeing read waited for the next scheduled full sweep (a
           // screen PDF417 measured 17.4s in Everything mode). The boost
           // keeps the 2D-first order — it only appends a family that was
-          // just observed. `familyOf` canonicalizes the Rust result name
-          // ("QRCodeMicro" -> "microqr"), which the wasm `formats` parser
-          // requires (it rejects "qrcodemicro").
+          // just observed. Result names are already canonical, so this
+          // is the same vocabulary as `activeFormats` and `formats`.
           if (activeFormats.length) {
             const seen = new Set(activeFormats);
             for (const symbology of lastCandidates) {
-              const name = familyOf(symbology);
-              if (name && !seen.has(name)) {
-                seen.add(name);
-                activeFormats.push(name);
+              if (symbology && !seen.has(symbology)) {
+                seen.add(symbology);
+                activeFormats.push(symbology);
               }
             }
           }

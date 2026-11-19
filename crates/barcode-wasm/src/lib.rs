@@ -1182,7 +1182,9 @@ pub fn decode_aztec_mask(img: &BitImage) -> Vec<barcode_core::DecodeResult> {
 
 impl WasmResult {
     fn of(r: barcode_core::DecodeResult) -> Self {
-        let symbology = format!("{:?}", r.symbology);
+        // Canonical lowercase names — the same vocabulary as `formats`,
+        // `supported_symbologies()` and the live scheduler (`checked`).
+        let symbology = r.symbology.name().to_string();
         let mut quad = [0f32; 8];
         for (i, p) in r.position.iter().enumerate() {
             quad[i * 2] = p.x;

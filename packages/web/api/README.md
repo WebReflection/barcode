@@ -213,16 +213,14 @@ Requirements seen in the wild:
   pin per-file hashes, regenerate the whole `dist/` together (it builds
   as one unit).
 
-### Symbology name casing
+### Symbology names
 
-Decode results carry the wasm's native title-cased names
-(`"Code128"`, `"DataMatrix"`); render input is lowercase-canonical
-(`"code128"`). `render(code)` accepts a whole result `Code` and works
-— render lowercases its input — so the only trap is hand-building a
-symbology string for `render({ symbology: ... })`. Rule: **decode
-gives you whatever the wasm says; render input should be lowercase**
-(other case is accepted and normalized, but the lowercase form is the
-one to write).
+One vocabulary everywhere: the canonical lowercase names used by the
+`formats` API and `supported_symbologies()` — `"qrcode"`, `"microqr"`,
+`"databarstk"`, `"databarltd"`, `"code128"`, ... Decode results carry
+the same names, so `render(code)` and
+`render({ symbology: code.symbology })` need no case juggling. (Render
+still normalizes hand-built input once, for convenience.)
 
 ### render(code | undefined, opts?) → Promise&lt;SVGSVGElement | null&gt;
 

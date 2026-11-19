@@ -79,7 +79,7 @@ function humanError(err) {
 
 /** @param {import("../main.d.ts").Code} code */
 function showResult(code) {
-  symbologyEl.textContent = code.symbology.replace(/([a-z])([A-Z])/g, "$1 $2");
+  symbologyEl.textContent = code.symbology;
   valueEl.textContent = code.text;
   resultSvgEl.replaceChildren();
   resultEl.style.display = "block";
