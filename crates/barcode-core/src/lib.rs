@@ -148,14 +148,13 @@ impl<'a> BitImage<'a> {
     /// the caller.
     pub fn rot180(&self) -> Vec<u8> {
         let bpr = self.bytes_per_row as usize;
-        let mut data = vec![0u8; bpr * self.height as usize];
-        for y in 0..self.height as usize {
-            for x in 0..self.width as usize {
-                if self.ink(x as u32, y as u32) {
-                    let mx = self.width as usize - 1 - x;
-                    let my = self.height as usize - 1 - y;
-                    data[my * bpr + (mx >> 3)] |= 1 << (mx & 7);
-                }
+        // 180° = mirror each row, then reverse the row order.
+        let mut data = self.mirrored_x();
+        let h = self.height as usize;
+        for y in 0..h / 2 {
+            let (a, b) = (y * bpr, (h - 1 - y) * bpr);
+            for i in 0..bpr {
+                data.swap(a + i, b + i);
             }
         }
         data
@@ -169,11 +168,24 @@ impl<'a> BitImage<'a> {
     /// decoder needs reverse-run support.
     pub fn mirrored_x(&self) -> Vec<u8> {
         let bpr = self.bytes_per_row as usize;
-        let mut data = vec![0u8; bpr * self.height as usize];
-        for y in 0..self.height as usize {
-            for x in 0..self.width as usize {
+        let h = self.height as usize;
+        let w = self.width as usize;
+        let nbytes = w.div_ceil(8);
+        let mut data = vec![0u8; bpr * h];
+        // The fast path needs whole bytes: reversing a trailing partial
+        // byte moves its padding holes into real pixel positions.
+        if w % 8 == 0 {
+            for y in 0..h {
+                let src = &self.data[y * bpr..y * bpr + nbytes];
+                let dst = &mut data[y * bpr..y * bpr + nbytes];
+                mirror_row(src, dst);
+            }
+            return data;
+        }
+        for y in 0..h {
+            for x in 0..w {
                 if self.ink(x as u32, y as u32) {
-                    let mx = self.width as usize - 1 - x;
+                    let mx = w - 1 - x;
                     data[y * bpr + (mx >> 3)] |= 1 << (mx & 7);
                 }
             }
@@ -236,6 +248,90 @@ impl<'a> BitImage<'a> {
     }
 }
 
+/// Reverse one packed row: `dst[i] = src[n-1-i].reverse_bits()`. Only used
+/// when the row width is a whole number of bytes, so the byte reversal
+/// and the bit reversal cannot move padding bits into pixel positions.
+///
+/// The wasm arm opts THIS function into SIMD (16 bytes at a time) instead
+/// of enabling `simd128` for the whole crate: a global target feature
+/// lets LLVM re-vectorize the branchy run scanners too, which measured
+/// slower than scalar. `#[target_feature]` keeps the opt-in local.
+#[inline]
+fn mirror_row(src: &[u8], dst: &mut [u8]) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // The SDK's browser floor is WebGPU-capable engines, all of which
+        // ship wasm SIMD; the opt-in is local to this function.
+        mirror_row_simd(src, dst);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    for i in 0..src.len() {
+        dst[src.len() - 1 - i] = src[i].reverse_bits();
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[target_feature(enable = "simd128")]
+fn mirror_row_simd(src: &[u8], dst: &mut [u8]) {
+    use core::arch::wasm32::v128;
+    let n = src.len();
+    let mut i = 0usize;
+    let mut j = n;
+    while j >= i + 16 {
+        // SAFETY: i and j-16 are in-bounds 16-byte blocks: the loop
+        // keeps i <= j-16 and j <= n == src.len() == dst.len().
+        let (ra, rb) = unsafe {
+            let a = bitrev16(core::ptr::read_unaligned(src.as_ptr().add(i) as *const v128));
+            let b = bitrev16(core::ptr::read_unaligned(src.as_ptr().add(j - 16) as *const v128));
+            // Reverse the byte order inside each 16-byte chunk as well:
+            // a byte-reversed chunk is the mirrored row chunk.
+            (u8x16_swizzle_reverse(a), u8x16_swizzle_reverse(b))
+        };
+        unsafe {
+            core::ptr::write_unaligned(dst.as_mut_ptr().add(i) as *mut v128, rb);
+            core::ptr::write_unaligned(dst.as_mut_ptr().add(j - 16) as *mut v128, ra);
+        }
+        i += 16;
+        j -= 16;
+    }
+    // The unpaired middle (fewer than 16 bytes) still maps by the global
+    // mirror index, not by an in-place swap.
+    for k in i..j {
+        dst[n - 1 - k] = src[k].reverse_bits();
+    }
+}
+
+/// Reverse the bits of every byte in a 16-byte vector.
+#[cfg(target_arch = "wasm32")]
+#[target_feature(enable = "simd128")]
+#[inline]
+fn bitrev16(v: core::arch::wasm32::v128) -> core::arch::wasm32::v128 {
+    use core::arch::wasm32::*;
+    // Swap nibbles, then pairs, then adjacent bits (the classic Hacker's
+    // Delight sequence), all 16 bytes at once.
+    let a = v128_or(
+        v128_and(u8x16_shl(v, 4), u8x16_splat(0xf0)),
+        v128_and(u8x16_shr(v, 4), u8x16_splat(0x0f)),
+    );
+    let b = v128_or(
+        v128_and(u8x16_shl(a, 2), u8x16_splat(0xcc)),
+        v128_and(u8x16_shr(a, 2), u8x16_splat(0x33)),
+    );
+    v128_or(
+        v128_and(u8x16_shl(b, 1), u8x16_splat(0xaa)),
+        v128_and(u8x16_shr(b, 1), u8x16_splat(0x55)),
+    )
+}
+
+/// Reverse the order of the 16 bytes in a vector.
+#[cfg(target_arch = "wasm32")]
+#[target_feature(enable = "simd128")]
+#[inline]
+fn u8x16_swizzle_reverse(v: core::arch::wasm32::v128) -> core::arch::wasm32::v128 {
+    use core::arch::wasm32::*;
+    i8x16_shuffle::<15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0>(v, v)
+}
+
 /// A symbology decoder. Implementations must be allocation-frugal on the hot
 /// path (reuse scratch buffers internally) and must never panic on hostile
 /// input: barcodes come from an untrusted camera pointed at the world.
@@ -261,6 +357,57 @@ mod tests {
         assert!(!img.ink(6, 0));
         assert!(img.ink(32, 1));
         assert!(!img.ink(32, 0));
+    }
+
+    /// Pixel-by-pixel reference implementations for the packed transforms.
+    fn reference_mirror(img: &BitImage) -> Vec<u8> {
+        let mut data = vec![0u8; img.bytes_per_row * img.height as usize];
+        for y in 0..img.height {
+            for x in 0..img.width {
+                if img.ink(x, y) {
+                    let mx = img.width - 1 - x;
+                    data[y as usize * img.bytes_per_row + (mx >> 3) as usize] |= 1 << (mx & 7);
+                }
+            }
+        }
+        data
+    }
+
+    fn reference_rot180(img: &BitImage) -> Vec<u8> {
+        let mut data = vec![0u8; img.bytes_per_row * img.height as usize];
+        for y in 0..img.height {
+            for x in 0..img.width {
+                if img.ink(x, y) {
+                    let (mx, my) = (img.width - 1 - x, img.height - 1 - y);
+                    data[my as usize * img.bytes_per_row + (mx >> 3) as usize] |= 1 << (mx & 7);
+                }
+            }
+        }
+        data
+    }
+
+    #[test]
+    fn packed_transforms_match_pixel_reference() {
+        // Whole-byte widths take the bit-parallel path; 13/33 keep the
+        // partial-byte fallback honest. Tall enough for 16-byte chunks.
+        for &(w, h) in &[(8u32, 1u32), (13, 3), (33, 5), (64, 16), (576, 9), (1056, 2)] {
+            let bpr = (w.div_ceil(8).div_ceil(4) * 4) as usize;
+            let mut data = vec![0u8; bpr * h as usize];
+            let mut seed = 0x9e3779b9u32 ^ w;
+            for y in 0..h as usize {
+                for x in 0..w {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    if seed & 0x40 != 0 {
+                        data[y * bpr + (x >> 3) as usize] |= 1 << (x & 7);
+                    }
+                }
+            }
+            let img = BitImage::new(w, h, &data);
+            assert_eq!(img.mirrored_x(), reference_mirror(&img), "mirror {w}x{h}");
+            assert_eq!(img.rot180(), reference_rot180(&img), "rot180 {w}x{h}");
+        }
     }
 
     #[test]
