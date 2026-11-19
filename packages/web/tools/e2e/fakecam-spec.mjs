@@ -6,7 +6,7 @@
 
 /** Tracked known failures: XFAIL, not a red suite. Keep reasons specific. */
 export const XFAIL = new Map([
-  ["inverted-aztec", "whole-scene inverted Aztec at the portrait mock's 920px: no read at 0.92/0.82/0.70 in either polarity; upright/diagonal Aztec read"],
+  ["inverted-aztec", "live maxSize 1056 loses the bullseye: the same inverted mask decodes at 2112 and an 850px native-ROI crop reads it. Decoder/polarity are fine; needs a live high-res ROI pass"],
 ]);
 export const CASES = [
   ["code39", "ABC-123"],
