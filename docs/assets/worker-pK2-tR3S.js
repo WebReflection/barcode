@@ -19,7 +19,7 @@ import { createBinarizer } from '../src/binarizer-factory.js';
 import { getWasmScanner, decodeFrame } from '../src/decoder.js';
 import { rotateDrawable } from '../src/source-rotate.js';
 import { cropDrawable, roiCandidates } from '../src/roi.js';
-import { ALL_FORMATS, cheapFormats, dueForFullSweep, is2DResult, markFullSweep, needsScheduling } from '../src/live-schedule.js';
+import { ALL_FORMATS, cheapFormats, dueForFullSweep, familyOf, is2DResult, markFullSweep, needsScheduling } from '../src/live-schedule.js';
 import {
   encode_fixture_opts,
   encode_fixture_raw_opts,
@@ -267,6 +267,8 @@ const handlers = {
       // 250ms of wall time; the cheap ones (QR/Micro/Aztec/DataBarStk)
       // run on every frame. Still images always get the full sweep.
       let activeFormats = formats;
+      /** Families actually decoded this frame: null = everything requested. @type {string[] | null} */
+      let checked = null;
       const scheduled = still !== true && needsScheduling(formats);
       if (scheduled) {
         full = dueForFullSweep(performance.now());
@@ -279,19 +281,22 @@ const handlers = {
           // agreeing read waited for the next scheduled full sweep (a
           // screen PDF417 measured 17.4s in Everything mode). The boost
           // keeps the 2D-first order — it only appends a family that was
-          // just observed.
+          // just observed. `familyOf` canonicalizes the Rust result name
+          // ("QRCodeMicro" -> "microqr"), which the wasm `formats` parser
+          // requires (it rejects "qrcodemicro").
           if (activeFormats.length) {
             const seen = new Set(activeFormats);
             for (const symbology of lastCandidates) {
-              const name = String(symbology).toLowerCase().replace(/[^a-z0-9]/g, '');
+              const name = familyOf(symbology);
               if (name && !seen.has(name)) {
                 seen.add(name);
                 activeFormats.push(name);
               }
             }
           }
+          checked = activeFormats;
           if (!activeFormats.length) {
-            return { type: 'result', codes: [], decodeMs: 0, partial: true, checked: [] };
+            return { type: 'result', codes: [], decodeMs: 0, partial: true, checked };
           }
         }
       }
@@ -389,13 +394,29 @@ const handlers = {
         // call (measured 630ms vs 543ms) — never split further.
         if (full && scheduled) {
           const cheapList = cheapFormats(activeFormats, !lastFullHad2D);
-          codes = decodeFrame(scanner, frame, cheapList, opts);
-          if (!codes.length) {
+          // `decodeFrame` treats an empty formats list as "everything":
+          // only run the cheap pass when it actually selected families.
+          if (cheapList.length) {
+            codes = decodeFrame(scanner, frame, cheapList, opts);
+            checked = cheapList;
+          }
+          // 2D-before-1D: a 1D hit can be noise from an exotic 2D symbol's
+          // texture. When the cheap pass included the linear tier and
+          // returned only linear results, the exotic tiers must still run
+          // before this frame can vote — the scheduling gate protects
+          // cheap frames, so full frames must keep the same order.
+          const linearOnly =
+            codes.length > 0 && codes.every((c) => !is2DResult(c.symbology));
+          if (!codes.length || linearOnly) {
             const ranCheap = new Set(cheapList.map((f) => String(f).toLowerCase()));
             const rest = (activeFormats ?? ALL_FORMATS).filter(
               (f) => !ranCheap.has(String(f).toLowerCase()),
             );
-            if (rest.length) codes = decodeFrame(scanner, frame, rest, opts);
+            // Families are disjoint, so this only ever appends: a linear
+            // hit must not be lost when the exotic tiers miss.
+            if (rest.length) codes = codes.concat(decodeFrame(scanner, frame, rest, opts));
+            // cheap + rest cover every requested family.
+            checked = null;
           }
         } else {
           codes = decodeFrame(scanner, frame, activeFormats, opts);
@@ -425,6 +446,8 @@ const handlers = {
               (c) => !seen.has(c.symbology + '\u0000' + c.text),
             ),
           );
+          // The alternate-threshold pass decodes every requested family.
+          checked = null;
         }
       }
       // Diagonal retry (roadmap item 4): a mask-level 45° rotation
@@ -495,17 +518,18 @@ const handlers = {
         decodeMs: Math.round(performance.now() - t0),
         frameW: frame.width,
         frameH: frame.height,
-        // This frame ran only the cheap 2D families (exotic-tier
-        // scheduling). The confirmation law must not treat it as evidence
-        // of absence — see `checked` for the per-family refinement.
+        // Backward-compatible flag: this was a cheap (scheduled) frame.
+        // The confirmation law must not treat it as evidence of absence —
+        // see `checked` for the per-family refinement.
         partial: !full,
-        // Families this frame actually decoded: null = everything
-        // requested ran (a full frame), an array = the scheduled subset.
-        // The confirmation law counts values from these families on
-        // partial frames instead of freezing every streak — a QR seen on
-        // a cheap frame is real evidence and may confirm on the next
-        // cheap frame, without waiting for a full sweep.
-        checked: full ? null : activeFormats,
+        // Families this frame actually decoded: null = every requested
+        // family ran, an array = the subset that ran. The confirmation
+        // law counts values from these families and freezes the rest — a
+        // QR seen on a cheap frame is real evidence and may confirm on
+        // the next cheap frame, without waiting for a full sweep. A
+        // cheap-first full frame that short-circuits on a hit therefore
+        // reports the cheap set, not `null`.
+        checked,
         // Presence signal for the auto-torch policy: 0 = no finders,
         // 1 = QR present but not decoding, 2 = decoded. Only meaningful
         // when the QR tier ran on this frame.

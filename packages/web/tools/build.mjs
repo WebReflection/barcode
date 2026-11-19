@@ -52,12 +52,16 @@ if (!existsSync(tsc)) {
 //
 // wasm-pack is a native binary; PATH above includes ~/.cargo/bin.
 //
-// NOTE: wasm SIMD (+simd128) was evaluated and REJECTED with data: the
-// autovectorized build measured 15-20% SLOWER on a modern arm64 phone
-// (full 17-symbology sweep 468 -> 548 ms, cheap tier 210 -> 287 ms,
-// paired interleaved A/B) — the branchy run-length decoders lose more
-// to v128 register pressure than they gain. Revisit only with explicit
-// `core::arch::wasm32` intrinsics, adding the flag then.
+// NOTE: wasm SIMD (+simd128) was evaluated and measured PERFORMANCE-
+// NEUTRAL, not slower, on a modern arm64 phone. The decisive A/B loads
+// both binaries in ONE page and interleaves calls on the same noisy
+// frame (alternating order, real v128 opcodes verified, size neutral):
+// full 17-symbology sweep and the cheap tier match within 1-3 ms in
+// every run. Isolated per-load timings are noisy enough to fake a 15-20%
+// delta, which is why the earlier "slower" reading did not reproduce.
+// Autovectorization buys nothing for these branchy run-length decoders,
+// so the flag stays off until explicit `core::arch::wasm32` intrinsics
+// offer a measurable win; adding it then is a one-line change here.
 try {
   run("wasm-pack", [
     "build", "../../crates/barcode-wasm",

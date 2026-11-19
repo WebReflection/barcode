@@ -16,6 +16,7 @@ import {
   trackCapabilities,
   waitForFocusSettle,
 } from "./camera.js";
+import { familyOf } from "./live-schedule.js";
 
 /** @typedef {import("./camera.js").CameraLens} CameraLens */
 /** @typedef {import("./camera.js").LensPreference} LensPreference */
@@ -610,17 +611,26 @@ export class Scanner {
    * @returns {DetectedCode[]}
    */
   #confirm(results, slow, checked = null) {
-    const norm = (/** @type {unknown} */ s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
-    const ran = checked == null ? null : new Set(checked.map(norm));
+    // Result symbologies (Rust debug names) and `checked` (canonical
+    // family names) share one vocabulary: "QRCodeMicro" -> "microqr",
+    // "DataBarStacked" -> "databarstk", "DataBarLimited" -> "databarltd".
+    const ran = checked == null ? null : new Set(checked.map(familyOf));
     const keyOf = (/** @type {DetectedCode} */ r) => r.symbology + "\u0000" + r.text;
     if (slow && results.length === 0) {
       // Over-budget frames carry stale evidence — but only when they
-      // found nothing: discard them and invalidate every streak. A slow
-      // frame CARRYING candidates still counts — a symbology that costs
-      // seconds on slow hardware would otherwise never confirm (the
-      // frame is stale by its own decode time, and the 2-frame law
+      // found nothing: discard them and invalidate the streaks whose
+      // family ran. A skipped family keeps its evidence (same rule the
+      // normal path uses); a full frame (`ran == null`) clears all. A
+      // slow frame CARRYING candidates still counts — a symbology that
+      // costs seconds on slow hardware would otherwise never confirm
+      // (the frame is stale by its own decode time, and the 2-frame law
       // keeps the accuracy guarantee).
-      this.#streaks.clear();
+      if (ran == null) this.#streaks.clear();
+      else {
+        for (const key of this.#streaks.keys()) {
+          if (ran.has(familyOf(key.split("\u0000")[0]))) this.#streaks.delete(key);
+        }
+      }
       return [];
     }
     const byKey = new Map(results.map((r) => [keyOf(r), r]));
@@ -628,11 +638,11 @@ export class Scanner {
     // actually ran this frame; a value whose family was skipped keeps it
     for (const key of this.#streaks.keys()) {
       if (byKey.has(key)) continue;
-      if (ran == null || ran.has(norm(key.split("\u0000")[0]))) this.#streaks.delete(key);
+      if (ran == null || ran.has(familyOf(key.split("\u0000")[0]))) this.#streaks.delete(key);
     }
     // present values count the frame when their family ran
     for (const [key] of byKey) {
-      if (ran != null && !ran.has(norm(key.split("\u0000")[0]))) continue;
+      if (ran != null && !ran.has(familyOf(key.split("\u0000")[0]))) continue;
       this.#streaks.set(key, (this.#streaks.get(key) ?? 0) + 1);
     }
     // results are ranked (centered first): the first value to have
@@ -767,7 +777,12 @@ export class Scanner {
         this.#opts.accuracy,
       );
       if (res?.error) throw new Error(res.error);
-      return { results: res?.results ?? [], qrPresence: res?.qrPresence, partial: res?.partial === true };
+      return {
+        results: res?.results ?? [],
+        qrPresence: res?.qrPresence,
+        partial: res?.partial === true,
+        checked: res?.checked ?? null,
+      };
     } finally {
       bitmap.close?.();
     }
