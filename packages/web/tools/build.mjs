@@ -30,10 +30,14 @@ const PATH = [
   process.env.PATH,
 ].filter(Boolean).join(delimiter);
 
-/** @param {string} file @param {string[]} args */
+/** @param {string} file @param {string[]} args @param {{ env?: Record<string, string | undefined> }} [opts] */
 const run = (file, args, opts = {}) => {
   console.log(`\n$ ${[file, ...args].join(" ")}`);
-  execFileSync(file, args, { cwd: root, stdio: "inherit", env: { ...process.env, PATH }, ...opts });
+  execFileSync(file, args, {
+    cwd: root,
+    stdio: "inherit",
+    env: { ...process.env, PATH, ...opts.env },
+  });
 };
 
 const tsc = resolve(root, "node_modules/typescript/bin/tsc");
@@ -47,6 +51,17 @@ if (!existsSync(tsc)) {
 // them or CI fails with "cannot find module".
 //
 // wasm-pack is a native binary; PATH above includes ~/.cargo/bin.
+//
+// NOTE: wasm SIMD (+simd128) was evaluated and measured PERFORMANCE-
+// NEUTRAL, not slower, on a modern arm64 phone. The decisive A/B loads
+// both binaries in ONE page and interleaves calls on the same noisy
+// frame (alternating order, real v128 opcodes verified, size neutral):
+// full 17-symbology sweep and the cheap tier match within 1-3 ms in
+// every run. Isolated per-load timings are noisy enough to fake a 15-20%
+// delta, which is why the earlier "slower" reading did not reproduce.
+// Autovectorization buys nothing for these branchy run-length decoders,
+// so the flag stays off until explicit `core::arch::wasm32` intrinsics
+// offer a measurable win; adding it then is a one-line change here.
 try {
   run("wasm-pack", [
     "build", "../../crates/barcode-wasm",
