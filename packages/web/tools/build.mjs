@@ -52,16 +52,27 @@ if (!existsSync(tsc)) {
 //
 // wasm-pack is a native binary; PATH above includes ~/.cargo/bin.
 //
-// NOTE: wasm SIMD (+simd128) was evaluated and measured PERFORMANCE-
-// NEUTRAL, not slower, on a modern arm64 phone. The decisive A/B loads
-// both binaries in ONE page and interleaves calls on the same noisy
-// frame (alternating order, real v128 opcodes verified, size neutral):
-// full 17-symbology sweep and the cheap tier match within 1-3 ms in
-// every run. Isolated per-load timings are noisy enough to fake a 15-20%
-// delta, which is why the earlier "slower" reading did not reproduce.
-// Autovectorization buys nothing for these branchy run-length decoders,
-// so the flag stays off until explicit `core::arch::wasm32` intrinsics
-// offer a measurable win; adding it then is a one-line change here.
+// NOTE: SIMD is opted in PER FUNCTION with `#[target_feature(enable =
+// "simd128")]`, not with a global `+simd128` target feature. The global
+// flag also re-vectorizes the branchy run scanners, and that measured
+// SLOWER end-to-end (EAN/UPC/Code39/Code93/Codabar each lost 20-25ms on
+// the phone while only Code 128 gained). Function-level opt-in keeps the
+// win without the regressions:
+// - barcode-core mirrors/180°-rotates packed rows 16 bytes at a time
+//   (bit reversal + byte shuffle) instead of per pixel;
+// - barcode-code128 runs the fuzzy closest-pattern search four patterns
+//   at a time with f32x4 (the 1D tier's dominant junk-frame cost);
+// - barcode-wasm expands the DataMatrix 2x fallback mask eight source
+//   bytes at a time (bit spread in i16x8 lanes).
+// Same-page interleaved A/B on an arm64 phone (ASUS AI2302, Android 15),
+// 576x1056 noisy live mask, alternating call order, min of 11 runs:
+// full 17-symbology sweep 1204 -> 1125 ms (-6.6%), all-1D tier 604 -> 525
+// ms (-13%), Code 128 alone 156 -> 76 ms (-51%); every other decoder and
+// PDF417/DataMatrix/QR stay within run-to-run noise. Their hot loops are
+// branchy run scanners, so autovectorization/global SIMD does not help.
+// Isolated per-load timings are noisy enough to fake a 15-20% delta.
+// Native builds keep the portable paths; the browser self-test gates cover
+// the wasm SIMD build on every CI run.
 try {
   run("wasm-pack", [
     "build", "../../crates/barcode-wasm",

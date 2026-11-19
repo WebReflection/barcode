@@ -50,6 +50,114 @@ const CHAR_AVG_VARIANCE: f32 = 0.55;
 const STOP_AVG_VARIANCE: f32 = 0.6;
 const ELEMENT_VARIANCE: f32 = 1.4;
 
+/// `PATTERNS` transposed for the SIMD closest-pattern search: element-major,
+/// padded to a multiple of the 4-lane vector. The padding patterns are
+/// unreachable (100 modules per element) and the index bound rejects them.
+#[cfg(target_arch = "wasm32")]
+const NPAD: usize = 108;
+
+#[cfg(target_arch = "wasm32")]
+const PATTERN_COLS: [[f32; NPAD]; 6] = {
+    let mut t = [[0.0f32; NPAD]; 6];
+    let mut p = 0;
+    while p < PATTERNS.len() {
+        let mut i = 0;
+        while i < 6 {
+            t[i][p] = PATTERNS[p][i] as f32;
+            i += 1;
+        }
+        p += 1;
+    }
+    let mut i = 0;
+    while i < 6 {
+        t[i][107] = 100.0;
+        i += 1;
+    }
+    t
+};
+
+/// The fuzzy fallback of [`Code128Decoder::char_value`]: closest table
+/// pattern by mean squared module error. SIMD is opted in at this function
+/// only (see the barcode-core mirror note): a global `simd128` target
+/// feature also re-vectorizes the branchy scan loops, measured slower.
+#[inline]
+fn closest_pattern(raw: &[f32; 6]) -> Option<(f32, u8)> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // The SDK's browser floor is WebGPU-capable engines, all of which
+        // ship wasm SIMD; the opt-in is local to this function.
+        closest_pattern_simd(raw)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    closest_pattern_scalar(raw)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn closest_pattern_scalar(raw: &[f32; 6]) -> Option<(f32, u8)> {
+    let mut best: Option<(f32, u8)> = None; // (mean squared error, value)
+    for (v, p) in PATTERNS.iter().enumerate() {
+        let mut err = 0.0f32;
+        let mut worst = 0.0f32;
+        for i in 0..6 {
+            let d = raw[i] - p[i] as f32;
+            err += d * d;
+            worst = worst.max(d.abs());
+        }
+        let mean = err / 6.0;
+        if mean <= CHAR_AVG_VARIANCE
+            && worst <= ELEMENT_VARIANCE
+            && best.map_or(true, |(b, _)| mean < b)
+        {
+            best = Some((mean, v as u8));
+        }
+    }
+    best
+}
+
+#[cfg(target_arch = "wasm32")]
+#[target_feature(enable = "simd128")]
+fn closest_pattern_simd(raw: &[f32; 6]) -> Option<(f32, u8)> {
+    use core::arch::wasm32::*;
+    let mut best: Option<(f32, u8)> = None;
+    let mut g = 0;
+    while g < NPAD {
+        let mut err = f32x4_splat(0.0);
+        let mut worst = f32x4_splat(0.0);
+        for i in 0..6 {
+            // SAFETY: g is a multiple of 4 and g+3 < NPAD.
+            let p = unsafe {
+                core::ptr::read_unaligned(PATTERN_COLS[i].as_ptr().add(g) as *const v128)
+            };
+            let d = f32x4_sub(f32x4_splat(raw[i]), p);
+            err = f32x4_add(err, f32x4_mul(d, d));
+            worst = f32x4_max(worst, f32x4_abs(d));
+        }
+        let mean = f32x4_mul(err, f32x4_splat(1.0 / 6.0));
+        let mut ms = [0.0f32; 4];
+        let mut ws = [0.0f32; 4];
+        // SAFETY: both arrays are exactly one 16-byte vector.
+        unsafe {
+            core::ptr::write_unaligned(ms.as_mut_ptr() as *mut v128, mean);
+            core::ptr::write_unaligned(ws.as_mut_ptr() as *mut v128, worst);
+        }
+        for lane in 0..4 {
+            let v = g + lane;
+            if v >= PATTERNS.len() {
+                break;
+            }
+            let m = ms[lane];
+            if m <= CHAR_AVG_VARIANCE
+                && ws[lane] <= ELEMENT_VARIANCE
+                && best.map_or(true, |(b, _)| m < b)
+            {
+                best = Some((m, v as u8));
+            }
+        }
+        g += 4;
+    }
+    best
+}
+
 struct Candidate {
     text: String,
     x_start: u32,
@@ -149,24 +257,7 @@ impl Code128Decoder {
         if raw.iter().any(|&v| v < 0.5 || v > 4.5) {
             return None;
         }
-        let mut best: Option<(f32, u8)> = None; // (mean squared error, value)
-        for (v, p) in PATTERNS.iter().enumerate() {
-            let mut err = 0.0f32;
-            let mut worst = 0.0f32;
-            for i in 0..6 {
-                let d = raw[i] - p[i] as f32;
-                err += d * d;
-                worst = worst.max(d.abs());
-            }
-            let mean = err / 6.0;
-            if mean <= CHAR_AVG_VARIANCE
-                && worst <= ELEMENT_VARIANCE
-                && best.map_or(true, |(b, _)| mean < b)
-            {
-                best = Some((mean, v as u8));
-            }
-        }
-        best.map(|(err, v)| (v, unit, false, err))
+        closest_pattern(&raw).map(|(err, v)| (v, unit, false, err))
     }
 
     /// The 7-run stop: 2,3,3,1,1,1,2 modules. Same closest-pattern

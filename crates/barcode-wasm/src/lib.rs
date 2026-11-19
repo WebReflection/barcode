@@ -854,6 +854,112 @@ impl BarcodeScanner {
     }
 }
 
+/// Spread the 8 bits of one byte to every other bit of a u16: each source
+/// pixel becomes a 2-pixel run. Half of the DataMatrix 2× upscale leg.
+#[inline]
+fn spread_byte2x(b: u8) -> u16 {
+    let mut x = b as u16;
+    x = (x | (x << 4)) & 0x0f0f;
+    x = (x | (x << 2)) & 0x3333;
+    (x | (x << 1)) & 0x5555
+}
+
+/// Nearest-neighbour 2× upscale of a packed bitmap: every source bit is a
+/// 2×2 destination block, every source row is written twice.
+#[inline]
+fn upscale2_packed(img: &BitImage) -> (usize, usize, Vec<u8>) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // The SDK's browser floor is WebGPU-capable engines, all of which
+        // ship wasm SIMD; the opt-in is local to this function.
+        upscale2_packed_simd(img)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    upscale2_packed_scalar(img)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[target_feature(enable = "simd128")]
+fn upscale2_packed_simd(img: &BitImage) -> (usize, usize, Vec<u8>) {
+    use core::arch::wasm32::*;
+    let w = img.width as usize;
+    if w % 8 != 0 {
+        return upscale2_packed_scalar(img);
+    }
+    let h = img.height as usize;
+    let (uw, uh) = (w * 2, h * 2);
+    let bpr = uw.div_ceil(8).div_ceil(4) * 4;
+    let mut data = vec![0u8; bpr * uh];
+    let wb = w / 8;
+    for y in 0..h {
+        let src = &img.data[y * img.bytes_per_row..y * img.bytes_per_row + wb];
+        let (r0, r1) = (2 * y * bpr, (2 * y + 1) * bpr);
+        let mut xb = 0usize;
+        while xb + 8 <= wb {
+            let mut lanes = [0u16; 8];
+            for (k, lane) in lanes.iter_mut().enumerate() {
+                *lane = src[xb + k] as u16;
+            }
+            // SAFETY: lanes is 16 bytes; the destination block is 16
+            // bytes and fits: xb*2 + 16 <= 2*wb = uw/8 <= bpr.
+            let x = unsafe { core::ptr::read_unaligned(lanes.as_ptr() as *const v128) };
+            let x = v128_and(v128_or(i16x8_shl(x, 4), x), i16x8_splat(0x0f0f));
+            let x = v128_and(v128_or(i16x8_shl(x, 2), x), i16x8_splat(0x3333));
+            let x = v128_and(v128_or(i16x8_shl(x, 1), x), i16x8_splat(0x5555));
+            let off = xb * 2;
+            unsafe {
+                core::ptr::write_unaligned(data.as_mut_ptr().add(r0 + off) as *mut v128, x);
+                core::ptr::write_unaligned(data.as_mut_ptr().add(r1 + off) as *mut v128, x);
+            }
+            xb += 8;
+        }
+        for i in xb..wb {
+            let v = spread_byte2x(src[i]).to_le_bytes();
+            let off = i * 2;
+            data[r0 + off] = v[0];
+            data[r0 + off + 1] = v[1];
+            data[r1 + off] = v[0];
+            data[r1 + off + 1] = v[1];
+        }
+    }
+    (uw, uh, data)
+}
+
+/// Portable arm (and the non-whole-byte fallback for the SIMD arm).
+fn upscale2_packed_scalar(img: &BitImage) -> (usize, usize, Vec<u8>) {
+    let w = img.width as usize;
+    let h = img.height as usize;
+    let (uw, uh) = (w * 2, h * 2);
+    let bpr = uw.div_ceil(8).div_ceil(4) * 4;
+    let mut data = vec![0u8; bpr * uh];
+    if w % 8 == 0 {
+        let wb = w / 8;
+        for y in 0..h {
+            let src = &img.data[y * img.bytes_per_row..y * img.bytes_per_row + wb];
+            let (r0, r1) = (2 * y * bpr, (2 * y + 1) * bpr);
+            for i in 0..wb {
+                let v = spread_byte2x(src[i]).to_le_bytes();
+                let off = i * 2;
+                data[r0 + off] = v[0];
+                data[r0 + off + 1] = v[1];
+                data[r1 + off] = v[0];
+                data[r1 + off + 1] = v[1];
+            }
+        }
+        return (uw, uh, data);
+    }
+    // Widths that are not whole bytes keep the direct contract mapping.
+    for y in 0..uh {
+        let sy = y / 2;
+        for x in 0..uw {
+            if img.ink((x / 2) as u32, sy as u32) {
+                data[y * bpr + (x >> 3)] |= 1 << (x & 7);
+            }
+        }
+    }
+    (uw, uh, data)
+}
+
 /// The Data Matrix tier: L-finder location + decode over the same 1bpp
 /// mask the other tiers consume (the GPU binarizer's Bradley rule matches
 /// the locator's own binarization, docs/STATUS.md). Public for native
@@ -941,16 +1047,7 @@ pub fn decode_datamatrix_mask_budget(img: &BitImage, exhaustive: bool, budget_ms
     if total >= 1_000_000 && img.width as u64 * img.height as u64 >= 500_000 {
         let (uw, uh) = ((img.width * 2) as usize, (img.height * 2) as usize);
         if uw * uh <= 9_000_000 {
-            let bpr = uw.div_ceil(8).div_ceil(4) * 4;
-            let mut data = vec![0u8; bpr * uh];
-            for y in 0..uh {
-                let sy = y / 2;
-                for x in 0..uw {
-                    if img.ink((x / 2) as u32, sy as u32) {
-                        data[y * bpr + (x >> 3)] |= 1 << (x & 7);
-                    }
-                }
-            }
+            let (_, _, data) = upscale2_packed(img);
             let big = BitImage::new(uw as u32, uh as u32, &data);
             let hits = decode_dm_at(&big, 0.5, exhaustive, total / 2);
             if !hits.is_empty() {
