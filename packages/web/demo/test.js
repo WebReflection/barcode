@@ -264,6 +264,11 @@ async function optionsPass() {
     { symbology: "pdf417", text: "OPTS", opts: { level: 6 } },
     { symbology: "pdf417", text: "HI", opts: { columns: 3 } },
     {
+      // GS1-128: FNC1 decodes to GS (0x1D); re-encoding a scan result must
+      // keep the separator instead of underflowing on the control byte.
+      symbology: "code128", text: "0112345678901231\u001d10ABC", opts: {},
+    },
+    {
       // binary payload → encode_fixture_raw_opts: QR byte mode at v6/EC H
       symbology: "qrcode", text: "", raw: Uint8Array.from([0, 255, 1, 128, 2]),
       opts: { ec: "H", mask: 3, version: 6 },

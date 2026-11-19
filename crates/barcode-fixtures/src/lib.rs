@@ -311,8 +311,39 @@ const C128: [&str; 107] = [
     "411131", "211412", "211214", "211232", "233111",
 ];
 
+/// Data values for text that needs more than code set B. Controls use set
+/// A, printable characters use set B, and GS (`0x1D`, the decoded form of
+/// FNC1) is emitted as FNC1 so a GS1-128 payload round-trips. FNC1 is
+/// valid in every code set and does not change it.
+fn code128_mixed(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len() + 8);
+    let mut set = b'B';
+    for &b in bytes {
+        match b {
+            0x1d => out.push(102), // FNC1 -> GS on decode
+            b if b < 32 => {
+                if set != b'A' {
+                    out.push(101); // CODE A (from B or C)
+                    set = b'A';
+                }
+                out.push(b + 64);
+            }
+            b if b <= 127 => {
+                if set != b'B' {
+                    out.push(100); // CODE B (from A or C)
+                    set = b'B';
+                }
+                out.push(b - 32);
+            }
+            b => panic!("char U+{b:04X} not encodable in Code 128"),
+        }
+    }
+    out
+}
+
 /// Encode `text` as Code 128 and render it at `module` px per unit.
-/// Code set C for all-digit, even-length text of 4+ digits; set B otherwise.
+/// Code set C for all-digit, even-length text of 4+ digits; set B for the
+/// printable fast path; mixed A/B values for controls and GS1 FNC1.
 pub fn encode_code128(text: &str, module: u32, height: u32) -> Canvas {
     let bytes = text.as_bytes();
     let use_c = bytes.len() >= 4
@@ -322,8 +353,11 @@ pub fn encode_code128(text: &str, module: u32, height: u32) -> Canvas {
     // values: start + data
     let (start, mut values): (u8, Vec<u8>) = if use_c {
         (105, bytes.chunks(2).map(|c| (c[0] - b'0') * 10 + (c[1] - b'0')).collect())
-    } else {
+    } else if bytes.iter().all(|&b| (32..=127).contains(&b)) {
+        // Fast path: set B alone covers printable ASCII (and DEL).
         (104, bytes.iter().map(|&b| b - b' ').collect())
+    } else {
+        (104, code128_mixed(bytes))
     };
     // check digit: (start + sum i*value_i) mod 103
     let check = ((start as usize

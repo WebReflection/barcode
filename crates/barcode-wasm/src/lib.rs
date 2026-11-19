@@ -2024,6 +2024,30 @@ mod upside_down_tests {
     }
 
     #[test]
+    fn code128_fixture_round_trips_every_control_byte() {
+        // Not one GS1 payload: every C0 control plus DEL must survive the
+        // fixture encoder -> scanner path, so the encoder cannot be
+        // special-cased to a single string. Chunked to stay inside the
+        // decoder's existing length heuristics (see the tracked issue for
+        // the separate short-symbol and >30-codeword limits).
+        let controls: Vec<char> = (0u8..=31).chain([127]).map(char::from).collect();
+        for chunk in controls.chunks(8) {
+            let mid: String = chunk.iter().collect();
+            let text = format!("A{mid}Z");
+            let canvas = barcode_fixtures::encode_code128(&text, 4, 80);
+            let bits = canvas.bits();
+            let img = BitImage::new(canvas.width, canvas.height, &bits);
+            let mut sc = BarcodeScanner::new();
+            let hits = sc.scan_tiered(&img, &Tiers::all(), false, 0);
+            assert!(
+                hits.iter().any(|r| r.text == text),
+                "control-byte round-trip {text:?}: got {:?}",
+                hits.iter().map(|r| (&r.symbology, &r.text)).collect::<Vec<_>>(),
+            );
+        }
+    }
+
+    #[test]
     fn databar_stacked_tier_upright_and_upside_down() {
         let v = 4006381333931u64;
         for &omni in &[false, true] {
@@ -2145,6 +2169,12 @@ mod upside_down_tests {
             (
                 "Code 128!".into(),
                 barcode_fixtures::encode_code128("Code 128!", 4, 80),
+            ),
+            (
+                // GS1-128: FNC1 decodes back to GS (0x1D), so the payload
+                // must survive a re-encode after a scan.
+                "0112345678901231\u{1d}10ABC".into(),
+                barcode_fixtures::encode_code128("0112345678901231\u{1d}10ABC", 4, 80),
             ),
             (
                 "CODE 93".into(),
