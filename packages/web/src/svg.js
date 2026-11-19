@@ -210,7 +210,12 @@ export function bitmapToSVG({ width, height, bytesPerRow, data }, value) {
   }
   if (prev) emit(prev, bandY0, height);
 
-  const label = escape(value);
+  // XML 1.0 forbids raw C0/C1 controls in an attribute. A GS1 payload
+  // carries GS (0x1D, FNC1) and would otherwise serialize into an SVG
+  // that browsers refuse to decode as an image. Keep the label valid.
+  const label = escape(
+    value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, " "),
+  );
   const markup =
     `<svg xmlns="http://www.w3.org/2000/svg" class="barcode-svg" viewBox="0 0 ${width} ${height}" ` +
     `width="${width}" height="${height}" role="img" aria-label="${label}">` +

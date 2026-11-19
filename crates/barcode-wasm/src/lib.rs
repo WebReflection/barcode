@@ -2147,6 +2147,12 @@ mod upside_down_tests {
                 barcode_fixtures::encode_code128("Code 128!", 4, 80),
             ),
             (
+                // GS1-128: FNC1 decodes back to GS (0x1D), so the payload
+                // must survive a re-encode after a scan.
+                "0112345678901231\u{1d}10ABC".into(),
+                barcode_fixtures::encode_code128("0112345678901231\u{1d}10ABC", 4, 80),
+            ),
+            (
                 "CODE 93".into(),
                 barcode_fixtures::encode_code93("CODE 93", 4, 80),
             ),
