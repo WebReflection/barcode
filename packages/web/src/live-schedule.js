@@ -31,7 +31,7 @@ export const CHEAP_2D = ['qrcode', 'microqr', 'aztec', 'databarstk'];
 export const ALL_FORMATS = [
   'qrcode', 'microqr', 'upca', 'datamatrix', 'aztec', 'pdf417', 'ean13',
   'ean8', 'upce', 'code39', 'code32', 'code93', 'code128', 'itf', 'codabar',
-  'databar', 'databarltd', 'databarstk',
+  'databar', 'databarltd', 'databarstk', 'databarexpanded',
 ];
 
 const EXPENSIVE = new Set(['datamatrix', 'pdf417']);
@@ -39,7 +39,7 @@ const EXPENSIVE = new Set(['datamatrix', 'pdf417']);
 /** The linear (1D) tier families. */
 export const LINEAR = [
   'upca', 'ean13', 'ean8', 'upce', 'code39', 'code32', 'code93', 'code128',
-  'itf', 'codabar', 'databar', 'databarltd',
+  'itf', 'codabar', 'databar', 'databarltd', 'databarexpanded',
 ];
 
 /** Families decoded by the 2D tier (DataBar Stacked is a stacked tier). */

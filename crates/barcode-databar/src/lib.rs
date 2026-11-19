@@ -199,6 +199,11 @@ fn gtin14_check(body: &[u8; 13]) -> u8 {
 }
 
 mod tables;
+mod expanded;
+mod expanded_ai;
+mod expanded_tables;
+
+pub use expanded::DataBarExpandedDecoder;
 
 /// Binary search over a generated `(KEYS, INDEX)` pair: eight module widths
 /// (1..=8) packed into one u32, most-significant nibble first. The tables

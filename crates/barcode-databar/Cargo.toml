@@ -1,6 +1,6 @@
 [package]
 name = "barcode-databar"
-description = "Clean-room GS1 DataBar decoder (Omnidirectional first; Limited/Expanded/stacked to follow), MIT licensed"
+description = "Clean-room GS1 DataBar decoder (Omnidirectional, Limited, Expanded, stacked), MIT licensed"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

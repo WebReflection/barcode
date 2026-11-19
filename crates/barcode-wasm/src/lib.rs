@@ -21,7 +21,7 @@ use barcode_code39::{Code39Decoder, code32_raw, code32_text};
 use barcode_core::{BitImage, Symbology, SymbologyDecoder};
 use barcode_ean13::Ean13Decoder;
 use barcode_itf::ItfDecoder;
-use barcode_databar::{DataBarLtdDecoder, DataBarOmniDecoder, DataBarStackedDecoder};
+use barcode_databar::{DataBarExpandedDecoder, DataBarLtdDecoder, DataBarOmniDecoder, DataBarStackedDecoder};
 use barcode_fixtures::Canvas;
 
 /// Milliseconds on the host clock. The still-path deadline needs WALL time:
@@ -68,6 +68,7 @@ pub struct BarcodeScanner {
     databar: DataBarOmniDecoder,
     databarltd: DataBarLtdDecoder,
     databarstk: DataBarStackedDecoder,
+    databarexpanded: DataBarExpandedDecoder,
     /// Polarity of the last successful read. Camera frames keep their
     /// polarity, and the confirmation re-check crops to the quad — that
     /// close-up of an inverted symbol is ~46% ink, below the full-frame
@@ -93,6 +94,7 @@ impl BarcodeScanner {
             databar: DataBarOmniDecoder::new(2),
             databarltd: DataBarLtdDecoder::new(2),
             databarstk: DataBarStackedDecoder::new(1),
+            databarexpanded: DataBarExpandedDecoder::new(2),
             inverted: false,
         }
     }
@@ -597,9 +599,10 @@ fn rotated_supersampled(img: &BitImage, deg: f64) -> Vec<u8> {
 /// The canonical symbology names, in a stable order. Results carry these
 /// (title-cased via the debug format); the `formats` API accepts the
 /// lowercase forms with "qr" accepted as an alias for "qrcode".
-pub const SYMBOLOGIES: [&str; 18] = [
+pub const SYMBOLOGIES: [&str; 19] = [
     "qrcode", "microqr", "upca", "datamatrix", "aztec", "pdf417", "ean13", "ean8", "upce", "code39",
     "code32", "code93", "code128", "itf", "codabar", "databar", "databarltd", "databarstk",
+    "databarexpanded",
 ];
 
 /// Which decoder tiers to run for one frame.
@@ -625,15 +628,16 @@ pub struct Tiers {
     pub databar: bool,
     pub databarltd: bool,
     pub databarstk: bool,
+    pub databarexpanded: bool,
 }
 
 impl Tiers {
     pub fn all() -> Tiers {
-        Tiers { qr: true, microqr: true, upca: true, datamatrix: true, aztec: true, pdf417: true, ean13: true, code39: true, code32: true, itf: true, code128: true, code93: true, codabar: true, ean8: true, upce: true, databar: true, databarltd: true, databarstk: true }
+        Tiers { qr: true, microqr: true, upca: true, datamatrix: true, aztec: true, pdf417: true, ean13: true, code39: true, code32: true, itf: true, code128: true, code93: true, codabar: true, ean8: true, upce: true, databar: true, databarltd: true, databarstk: true, databarexpanded: true }
     }
 
     fn any_linear(&self) -> bool {
-        self.ean13 || self.code39 || self.code32 || self.itf || self.code128 || self.code93 || self.codabar || self.ean8 || self.upce || self.databar || self.databarltd
+        self.ean13 || self.code39 || self.code32 || self.itf || self.code128 || self.code93 || self.codabar || self.ean8 || self.upce || self.databar || self.databarltd || self.databarexpanded
     }
 
 }
@@ -697,6 +701,9 @@ fn parse_formats(formats: &[String]) -> Result<Tiers, String> {
             "databar" | "databaromni" | "gs1databar" => t.databar = true,
             "databarltd" | "databarlimited" | "gs1databarlimited" => t.databarltd = true,
             "databarstk" | "databarstacked" | "databarstackomni" | "gs1databarstacked" => t.databarstk = true,
+            "databarexpanded" | "databarexp" | "gs1databarexpanded" | "rssexpanded" => {
+                t.databarexpanded = true
+            }
             other => {
                 return Err(format!(
                     "unknown symbology {other:?} — supported: {}",
@@ -747,13 +754,13 @@ fn apply_code32(out: Vec<barcode_core::DecodeResult>, tiers: &Tiers) -> Vec<barc
 /// into the original frame space. The mirror pass is only paid when the
 /// upright pass found nothing.
 fn decode_linear(
-    decoders: (&mut Ean13Decoder, &mut Code39Decoder, &mut ItfDecoder, &mut Code128Decoder, &mut Code93Decoder, &mut CodabarDecoder, &mut Ean8Decoder, &mut UpceDecoder, &mut DataBarOmniDecoder, &mut DataBarLtdDecoder),
+    decoders: (&mut Ean13Decoder, &mut Code39Decoder, &mut ItfDecoder, &mut Code128Decoder, &mut Code93Decoder, &mut CodabarDecoder, &mut Ean8Decoder, &mut UpceDecoder, &mut DataBarOmniDecoder, &mut DataBarLtdDecoder, &mut DataBarExpandedDecoder),
     img: &BitImage,
     tiers: &Tiers,
     allow_quarter: bool,
     still: bool,
 ) -> Vec<barcode_core::DecodeResult> {
-    let (ean13, code39, itf, code128, code93, codabar, ean8, upce, databar, databarltd) = decoders;
+    let (ean13, code39, itf, code128, code93, codabar, ean8, upce, databar, databarltd, databarexpanded) = decoders;
     let mut out: Vec<barcode_core::DecodeResult> = Vec::new();
     let mut active: Vec<&mut dyn barcode_core::SymbologyDecoder> = Vec::new();
     if tiers.ean13 { active.push(ean13); }
@@ -766,6 +773,7 @@ fn decode_linear(
     if tiers.upce { active.push(upce); }
     if tiers.databar { active.push(databar); }
     if tiers.databarltd { active.push(databarltd); }
+    if tiers.databarexpanded { active.push(databarexpanded); }
     for d in active.iter_mut().map(|d| &mut **d as &mut dyn barcode_core::SymbologyDecoder) {
         out.extend(d.decode(img));
     }
@@ -879,8 +887,8 @@ fn decode_stacked(
 impl BarcodeScanner {
     fn linear_decoders(
         &mut self,
-    ) -> (&mut Ean13Decoder, &mut Code39Decoder, &mut ItfDecoder, &mut Code128Decoder, &mut Code93Decoder, &mut CodabarDecoder, &mut Ean8Decoder, &mut UpceDecoder, &mut DataBarOmniDecoder, &mut DataBarLtdDecoder) {
-        (&mut self.ean13, &mut self.code39, &mut self.itf, &mut self.code128, &mut self.code93, &mut self.codabar, &mut self.ean8, &mut self.upce, &mut self.databar, &mut self.databarltd)
+    ) -> (&mut Ean13Decoder, &mut Code39Decoder, &mut ItfDecoder, &mut Code128Decoder, &mut Code93Decoder, &mut CodabarDecoder, &mut Ean8Decoder, &mut UpceDecoder, &mut DataBarOmniDecoder, &mut DataBarLtdDecoder, &mut DataBarExpandedDecoder) {
+        (&mut self.ean13, &mut self.code39, &mut self.itf, &mut self.code128, &mut self.code93, &mut self.codabar, &mut self.ean8, &mut self.upce, &mut self.databar, &mut self.databarltd, &mut self.databarexpanded)
     }
 }
 
@@ -2173,6 +2181,81 @@ mod upside_down_tests {
         assert!(sc3.scan_tiered(&img, &only, false, 0).iter().any(|r| r.text == want));
         let off = parse_formats(&["ean13".into()]).unwrap();
         assert!(sc3.scan_tiered(&img, &off, false, 0).is_empty());
+    }
+
+    /// Draw a packed module row into a canvas with a quiet zone.
+    fn expanded_canvas(mods: &str) -> barcode_fixtures::Canvas {
+        let scale = 3;
+        let margin = 6;
+        let mut canvas = barcode_fixtures::Canvas::new(
+            (mods.len() as u32 + 2 * margin) * scale,
+            3 * scale,
+        );
+        for (i, ch) in mods.chars().enumerate() {
+            if ch == '1' {
+                canvas.fill((margin + i as u32) * scale, 0, scale, 3 * scale);
+            }
+        }
+        canvas
+    }
+
+    #[test]
+    fn databar_expanded_tier_decodes_all_methods() {
+        // Real module rows: the compressed methods come from the public
+        // bardecode.com examples (zint does not emit those), the method 1
+        // and method 00 rows from zint.
+        let cases = [
+            (
+                "0100",
+                "10111001000001001101111111100001011100001001100010101111011100110001011110000001110010111000111011101111010111100011000111111000010101100001001111101",
+                "(01)90012345678908(3103)001750",
+            ),
+            (
+                "0111000",
+                "1001000100001110110111111110000101000110111000010010111100110111110101111110000111000101100001101110001111011010111100011111100001011000011010110000111001100110001001011111111001110001101111010000101",
+                "(01)90012345678908(3103)012233(11)991231",
+            ),
+            (
+                "01100",
+                "10110000010001011101111111100001010011100000101100101111001101111101011111100001110001011000011011100011110110101111000111111000010100111101110100001100011011100100010111111110011101",
+                "(01)90012345678908(3922)795",
+            ),
+            (
+                "01101",
+                "1000111101010000010111111110000101110100000110010010111100110111110101111110000111000101100001101110001111011010111100011111100001011100011001101100100111110001011101011111111001110001101111001011101",
+                "(01)90012345678908(3932)0401234",
+            ),
+            (
+                "method 1 + other AIs",
+                "01000011001011000110111111110000101111010000100100010000101111101110101111100000011000101100000110010111100001101100100011111100001011100011001000010100111011111101101011111111001110010111110110111101010111101111111000111100000010100011110010011101",
+                "(01)40063813339314(10)ABC(21)123",
+            ),
+            (
+                "method 00",
+                "010100000101000001101111111100001010000010000100110100111110001011101011110000000010111000011000110101",
+                "(21)12345",
+            ),
+        ];
+        for (name, mods, want) in cases {
+            let canvas = expanded_canvas(mods);
+            let bits = canvas.bits();
+            let img = BitImage::new(canvas.width, canvas.height, &bits);
+            let mut sc = BarcodeScanner::new();
+            let hits = sc.scan_tiered(&img, &Tiers::all(), false, 0);
+            assert!(
+                hits.iter().any(|r| {
+                    r.symbology == barcode_core::Symbology::DataBarExpanded && r.text == want
+                }),
+                "{name}: got {:?}",
+                hits.iter().map(|r| (&r.symbology, &r.text)).collect::<Vec<_>>(),
+            );
+
+            // The formats filter keeps the tier addressable and excludes it.
+            let only = parse_formats(&["databarexpanded".into()]).unwrap();
+            assert!(sc.scan_tiered(&img, &only, false, 0).iter().any(|r| r.text == want));
+            let off = parse_formats(&["ean13".into()]).unwrap();
+            assert!(sc.scan_tiered(&img, &off, false, 0).is_empty());
+        }
     }
 
     fn rot180(canvas: &barcode_fixtures::Canvas) -> Vec<u8> {
