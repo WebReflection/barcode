@@ -1,0 +1,31 @@
+name: docs guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  no-generated-docs:
+    # The maintainer's dedicated rebuild PR opts in with this label.
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'docs-rebuild') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reject generated docs in feature PRs
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed=$(git diff --name-only "$BASE" "$HEAD" -- docs/)
+          if [ -n "$changed" ]; then
+            echo "::error::Generated docs/ changes are not allowed in feature PRs."
+            echo "Rebuild docs after the logic lands, in a docs-rebuild PR (maintainer-only)."
+            echo "$changed"
+            exit 1
+          fi
+          echo "No generated docs/ changes."
