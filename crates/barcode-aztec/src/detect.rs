@@ -104,7 +104,14 @@ fn check_rings(runs: &[Run], m: usize, half: usize, s: f32) -> Option<()> {
             let ok = if o < half {
                 (l - s).abs() <= RUN_TOL * s
             } else {
-                l >= s && l <= cap * s
+                // Runs are integer pixels; the estimated scale is the core
+                // run's integer length. At a fractional module pitch (e.g.
+                // 8.8 px) the outer ring can be one pixel shorter than the
+                // core — a 35-vs-36 outer run rejected a clean symbol at
+                // the live 1056px mask while 1088px decoded. One pixel of
+                // slack is rounding, not a structure relaxation; the exact
+                // 5x5 core and the mode message still arbitrate.
+                l + 1.0 >= s && l <= cap * s
             };
             if !ok {
                 return None;
@@ -397,6 +404,25 @@ mod tests {
             }
         }
         f
+    }
+
+    /// A fractional module pitch quantizes each run independently: the
+    /// outer ring can be one pixel shorter than the core. That is exactly
+    /// the live 1056px inverted-Aztec miss (clean mask, 35px outer ring,
+    /// 36px core); the detector must accept it, while still rejecting a
+    /// genuinely short run.
+    #[test]
+    fn outer_ring_tolerates_one_pixel_rounding() {
+        let runs = |lens: &[usize]| -> Vec<Run> {
+            lens.iter()
+                .enumerate()
+                .map(|(i, &len)| Run { start: i * 40, len, dark: i % 2 == 0 })
+                .collect()
+        };
+        let nine = [35, 35, 35, 35, 36, 35, 35, 35, 35];
+        assert!(check_rings(&runs(&nine), 4, 4, 36.0).is_some());
+        let two_short = [35, 35, 35, 35, 36, 35, 35, 35, 33];
+        assert!(check_rings(&runs(&two_short), 4, 4, 36.0).is_none());
     }
 
     fn rot90(matrix: &[u8], size: usize) -> Vec<u8> {

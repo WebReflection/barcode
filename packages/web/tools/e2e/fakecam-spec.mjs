@@ -5,9 +5,7 @@
  */
 
 /** Tracked known failures: XFAIL, not a red suite. Keep reasons specific. */
-export const XFAIL = new Map([
-  ["inverted-aztec", "live maxSize 1056 loses the bullseye: the same inverted mask decodes at 2112 and an 850px native-ROI crop reads it. Decoder/polarity are fine; needs a live high-res ROI pass"],
-]);
+export const XFAIL = new Map([]);
 export const CASES = [
   ["code39", "ABC-123"],
   ["code128", "CODE128"],
