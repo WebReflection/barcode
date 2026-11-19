@@ -18,8 +18,8 @@ import { handshake } from './handshake.js';
 import { createBinarizer } from '../src/binarizer-factory.js';
 import { getWasmScanner, decodeFrame } from '../src/decoder.js';
 import { rotateDrawable } from '../src/source-rotate.js';
-import { cropDrawable, roiCandidates } from '../src/roi.js';
-import { ALL_FORMATS, cheapFormats, dueForFullSweep, is2DResult, markFullSweep, needsScheduling } from '../src/live-schedule.js';
+import { cropDrawable, linearRoiCandidates, otsuMask, roiCandidates } from '../src/roi.js';
+import { ALL_FORMATS, LINEAR, cheapFormats, dueForFullSweep, is2DResult, markFullSweep, needsScheduling } from '../src/live-schedule.js';
 import {
   encode_fixture_opts,
   encode_fixture_raw_opts,
@@ -113,7 +113,7 @@ let lastDiagonalAt = 0;
  * budget; photos of receipts/loyalty cards should not wait for it.
  */
 const LINEAR_FORMATS = new Set([
-  "upca", "ean13", "ean8", "upce", "code39", "code93", "code128",
+  "upca", "ean13", "ean8", "upce", "code39", "code32", "code93", "code128",
   "itf", "codabar", "databar", "databarltd",
 ]);
 const stillLinearFormats = (/** @type {string[] | undefined} */ formats) =>
@@ -210,30 +210,88 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
   const sourceW = bitmap.width;
   const sourceH = bitmap.height;
   if (!sourceW || !sourceH) return [];
-  const boxes = roiCandidates(frame, sourceW, sourceH, limit);
+  const wantsLinear =
+    !formats?.length || formats.some((f) => LINEAR.includes(String(f).toLowerCase()));
+  // Linear bands first: a wide bar strip is often not a "compact cluster"
+  // (it merges with the page/box around it, or loses to the text below).
+  const linear = wantsLinear
+    ? linearRoiCandidates(frame, sourceW, sourceH, limit).map((box) => ({ ...box, linear: true }))
+    : [];
+  /** @type {{ x: number, y: number, w: number, h: number, score: number, linear?: boolean }[]} */
+  const boxes = [];
+  for (const box of [...linear, ...roiCandidates(frame, sourceW, sourceH, limit)]) {
+    const overlap = boxes.some((p) => {
+      const ix = Math.max(0, Math.min(box.x + box.w, p.x + p.w) - Math.max(box.x, p.x));
+      const iy = Math.max(0, Math.min(box.y + box.h, p.y + p.h) - Math.max(box.y, p.y));
+      return ix * iy > 0.6 * Math.min(box.w * box.h, p.w * p.h);
+    });
+    if (!overlap) boxes.push(box);
+    // The caller's crop budget is the bound: extra candidates multiply
+    // the wasm sweep, and a junk frame produces no valid crop anyway.
+    if (boxes.length >= limit) break;
+  }
   if (!boxes.length) return [];
   bin.setThreshold?.(0.92);
   for (const box of boxes) {
     const left = deadline - performance.now();
     if (left <= 0) break;
     const crop = await cropDrawable(bitmap, box);
-    const f = await bin.process(crop.canvas);
     const roiOpts = opts.still === true
       ? { still: true, latency: Math.max(250, Math.min(opts.latency ?? 5000, left)) }
       : opts;
-    const hits = decodeFrame(scanner, f, formats, roiOpts);
-    if (hits.length) return mapRoiHits(hits, crop, f, frame, sourceW, sourceH);
+    /** @param {import('../src/gpu/binarizer.js').BinarizedFrame} mask */
+    const decodeCrop = (mask) => decodeFrame(scanner, mask, formats, roiOpts);
+    /**
+     * @param {DecodedCode[]} hits
+     * @param {import('../src/gpu/binarizer.js').BinarizedFrame} mask
+     * @param {{ x: number, y: number, width: number, height: number, map: (fw: number, fh: number, points: {x: number, y: number}[]) => {x: number, y: number}[] }} [mapper]
+     * @returns {DecodedCode[]}
+     */
+    const mapHits = (hits, mask, mapper = crop) =>
+      mapRoiHits(hits, mapper, mask, frame, sourceW, sourceH);
+
+    /** @type {{ width: number, height: number, data: Uint8Array, bytesPerRow: number }} */
+    let f = await bin.process(crop.canvas);
+    let hits = decodeCrop(f);
+    if (hits.length) return mapHits(hits, f);
     // White-on-black on a light page: the crop keeps a light margin, so the
     // full-frame ink heuristic cannot pick the inverted polarity. Flip the
     // (small) crop and let the decoders' own format/RS validation arbitrate.
-    const left2 = deadline - performance.now();
+    let left2 = deadline - performance.now();
     if (left2 <= 0) break;
-    const invOpts = roiOpts.still === true
+    let invOpts = roiOpts.still === true
       ? { ...roiOpts, latency: Math.max(250, Math.min(roiOpts.latency ?? 5000, left2)) }
       : roiOpts;
-    const flipped = f.data.map((/** @type {number} */ b) => ~b);
-    const invHits = decodeFrame(scanner, { ...f, data: flipped }, formats, invOpts);
-    if (invHits.length) return mapRoiHits(invHits, crop, f, frame, sourceW, sourceH);
+    let flipped = f.data.map((/** @type {number} */ b) => ~b);
+    let invHits = decodeFrame(scanner, { ...f, data: flipped }, formats, invOpts);
+    if (invHits.length) return mapHits(invHits, f);
+
+    // The local threshold floods thin spaces when the crop is a blurry bar
+    // strip. A global Otsu split over a 2x upscale keeps them white; this
+    // is the distant/out-of-focus 1D lever (a real Code 32 package
+    // measured 0 reads locally, reads at 2x Otsu).
+    if (!box.linear) continue;
+    left2 = deadline - performance.now();
+    if (left2 <= 0) break;
+    invOpts = roiOpts.still === true
+      ? { ...roiOpts, latency: Math.max(250, Math.min(roiOpts.latency ?? 5000, left2)) }
+      : roiOpts;
+    /** @param {number} fw @param {number} fh @param {{x: number, y: number}[]} points */
+    const scaledMap = (fw, fh, points) =>
+      points.map((p) => ({
+        x: crop.x + (p.x * crop.width) / fw,
+        y: crop.y + (p.y * crop.height) / fh,
+      }));
+    const scaled = { ...crop, map: scaledMap };
+    for (const scale of [2, 1]) {
+      if (deadline - performance.now() <= 0) break;
+      const otsu = otsuMask(crop.canvas, scale);
+      hits = decodeFrame(scanner, otsu, formats, invOpts);
+      if (hits.length) return mapHits(hits, otsu, scaled);
+      const otsuFlipped = otsu.data.map((/** @type {number} */ b) => ~b);
+      hits = decodeFrame(scanner, { ...otsu, data: otsuFlipped }, formats, invOpts);
+      if (hits.length) return mapHits(hits, otsu, scaled);
+    }
   }
   return [];
 };
