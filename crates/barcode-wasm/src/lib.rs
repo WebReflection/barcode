@@ -2024,6 +2024,25 @@ mod upside_down_tests {
     }
 
     #[test]
+    fn code128_fixture_decodes_short_payloads() {
+        // ISO/IEC 15417 permits one data codeword ("A") and two ("AB").
+        // The old gate required three and rejected those symbols even
+        // though the check digit validated.
+        for text in ["A", "AB", "1", "12"] {
+            let canvas = barcode_fixtures::encode_code128(text, 4, 80);
+            let bits = canvas.bits();
+            let img = BitImage::new(canvas.width, canvas.height, &bits);
+            let mut sc = BarcodeScanner::new();
+            let hits = sc.scan_tiered(&img, &Tiers::all(), false, 0);
+            assert!(
+                hits.iter().any(|r| r.text == text),
+                "short {text:?}: got {:?}",
+                hits.iter().map(|r| (&r.symbology, &r.text)).collect::<Vec<_>>(),
+            );
+        }
+    }
+
+    #[test]
     fn code128_fixture_round_trips_every_control_byte() {
         // Not one GS1 payload: every C0 control plus DEL must survive the
         // fixture encoder -> scanner path, so the encoder cannot be
