@@ -30,8 +30,9 @@ jobs:
           # Pin this. `latest` intermittently falls back to v0.9.1 (its
           # built-in default when the release lookup fails), which cannot
           # parse workspace-inherited manifests: "invalid type: map,
-          # expected a string for key `package.license`".
-          version: "0.15.1"
+          # expected a string for key `package.license`". Keep the `v`
+          # prefix: the action builds the release URL verbatim.
+          version: "v0.15.1"
 
       - name: Node
         uses: actions/setup-node@v4
@@ -93,8 +94,9 @@ jobs:
           # Pin this. `latest` intermittently falls back to v0.9.1 (its
           # built-in default when the release lookup fails), which cannot
           # parse workspace-inherited manifests: "invalid type: map,
-          # expected a string for key `package.license`".
-          version: "0.15.1"
+          # expected a string for key `package.license`". Keep the `v`
+          # prefix: the action builds the release URL verbatim.
+          version: "v0.15.1"
 
       - name: Node
         uses: actions/setup-node@v4
