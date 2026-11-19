@@ -114,7 +114,7 @@ let lastDiagonalAt = 0;
  */
 const LINEAR_FORMATS = new Set([
   "upca", "ean13", "ean8", "upce", "code39", "code32", "code93", "code128",
-  "itf", "codabar", "databar", "databarltd",
+  "itf", "codabar", "databar", "databarltd", "databarexpanded",
 ]);
 const stillLinearFormats = (/** @type {string[] | undefined} */ formats) =>
   formats == null

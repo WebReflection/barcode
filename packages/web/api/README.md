@@ -217,10 +217,14 @@ Requirements seen in the wild:
 
 One vocabulary everywhere: the canonical lowercase names used by the
 `formats` API and `supported_symbologies()` — `"qrcode"`, `"microqr"`,
-`"databarstk"`, `"databarltd"`, `"code128"`, ... Decode results carry
+`"databarstk"`, `"databarltd"`, `"databarexpanded"`, `"code128"`, ... Decode results carry
 the same names, so `render(code)` and
 `render({ symbology: code.symbology })` need no case juggling. (Render
 still normalizes hand-built input once, for convenience.)
+
+`databarexpanded` is decode-only in this release: `scan` returns it,
+but `render`/`createSVG` do not encode it yet (the fixture encoder is
+the next DataBar Expanded PR).
 
 ### render(code | undefined, opts?) → Promise&lt;SVGSVGElement | null&gt;
 
