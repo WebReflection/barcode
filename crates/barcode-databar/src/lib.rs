@@ -26,6 +26,8 @@ pub struct DataBarOmniDecoder {
     min_rows: usize,
     runs: Vec<(bool, u32)>,
     offsets: Vec<u32>,
+    /// prefix[i] = sum of run widths before i; makes a window sum O(1).
+    prefix: Vec<u32>,
     votes: std::collections::HashMap<String, (usize, u32, u32, u32, u32)>,
 }
 
@@ -35,6 +37,7 @@ impl DataBarOmniDecoder {
             min_rows: min_rows.max(1),
             runs: Vec::with_capacity(128),
             offsets: Vec::with_capacity(128),
+            prefix: Vec::with_capacity(129),
             votes: std::collections::HashMap::new(),
         }
     }
@@ -62,6 +65,13 @@ impl DataBarOmniDecoder {
             self.runs.push((cur, n));
             self.offsets.push(image.width - n);
         }
+        self.prefix.clear();
+        self.prefix.push(0);
+        let mut acc = 0u32;
+        for &(_, w) in &self.runs {
+            acc += w;
+            self.prefix.push(acc);
+        }
     }
 
     /// Normalize the 46-run window starting at `start` into module widths.
@@ -74,16 +84,26 @@ impl DataBarOmniDecoder {
         if start + N_RUNS > self.runs.len() || self.runs[start].0 {
             return None;
         }
-        for i in 1..N_RUNS {
-            if self.runs[start + i].0 != (i % 2 == 1) {
-                return None;
-            }
-        }
-        let s: u32 = (1..N_RUNS).map(|i| self.runs[start + i].1).sum();
+        // Runs alternate by construction (`scan_row` only pushes on a
+        // polarity change), so the paper start above already proves the
+        // whole window alternates. The old per-run polarity loop was dead
+        // work on every candidate.
+        let s = self.prefix[start + N_RUNS] - self.prefix[start + 1];
         if s < SYMBOL_MODULES {
             return None; // not even 1 px/module
         }
+        // Cheap rejection before quantizing all 45 runs, implied by the
+        // final `mods[f] == 1` check: the six fixed 1-module runs must
+        // round to exactly 1 module. This cannot reject a window the full
+        // path would accept; it only skips the float loop for almost all
+        // non-DataBar windows.
         let u = s as f32 / SYMBOL_MODULES as f32;
+        for &f in &FIXED_ONES {
+            let q = self.runs[start + f].1 as f32 / u;
+            if q < 0.5 || q >= 1.5 {
+                return None;
+            }
+        }
         let mut mods = [0u32; N_RUNS];
         mods[0] = 1;
         for i in 1..N_RUNS {
@@ -129,10 +149,10 @@ impl DataBarOmniDecoder {
             if self.runs.len() < N_RUNS {
                 continue;
             }
-            for start in 0..=(self.runs.len() - N_RUNS) {
-                if self.runs[start].0 {
-                    continue;
-                }
+            debug_assert!(!self.runs[0].0, "scan_row must seed a paper run");
+            // runs[0] is the leading paper run and polarity strictly
+            // alternates, so paper starts are exactly the even indices.
+            for start in (0..=(self.runs.len() - N_RUNS)).step_by(2) {
                 let Some(mods) = self.try_normalize(start) else {
                     continue;
                 };
@@ -180,20 +200,50 @@ fn gtin14_check(body: &[u8; 13]) -> u8 {
 
 mod tables;
 
-/// Segment residue lookups over the oracle-extracted tables. Linear scan is
-/// fine at these sizes (≤2841×8); revisit if decode hardening needs it.
+/// Binary search over a generated `(KEYS, INDEX)` pair: eight module widths
+/// (1..=8) packed into one u32, most-significant nibble first. The tables
+/// are sorted by key; `INDEX` holds the segment residue.
+fn sorted_index(keys: &[u32], index: &[u16], w: &[u32]) -> Option<u32> {
+    debug_assert_eq!(w.len(), 8);
+    let mut key = 0u32;
+    for &x in w {
+        if x > 15 {
+            return None; // not a module width; keeps keys collision-free
+        }
+        key = (key << 4) | x;
+    }
+    let mut lo = 0usize;
+    let mut hi = keys.len();
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if keys[mid] < key {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if lo < keys.len() && keys[lo] == key {
+        Some(index[lo] as u32)
+    } else {
+        None
+    }
+}
+
+/// Segment residue lookups over the oracle-extracted tables. The decoder
+/// only needs pattern -> residue, so the generated tables are sorted packed
+/// keys plus indices (binary search) instead of the encoder's width rows.
 /// `None` = pattern not in table (reject the candidate).
 fn s1_pair_value(w: &[u32]) -> Option<u32> {
-    tables::S1.iter().position(|row| row[..8].iter().copied().eq(w.iter().map(|&x| x as u8))).map(|i| i as u32)
+    sorted_index(&tables::S1_KEYS, &tables::S1_INDEX, w)
 }
 fn pair2_value(w: &[u32]) -> Option<u32> {
-    tables::PAIR2.iter().position(|row| row.iter().copied().eq(w.iter().map(|&x| x as u8))).map(|i| i as u32)
+    sorted_index(&tables::PAIR2_KEYS, &tables::PAIR2_INDEX, w)
 }
 fn pair3_value(w: &[u32]) -> Option<u32> {
-    tables::PAIR3.iter().position(|row| row.iter().copied().eq(w.iter().map(|&x| x as u8))).map(|i| i as u32)
+    sorted_index(&tables::PAIR3_KEYS, &tables::PAIR3_INDEX, w)
 }
 fn s2_pair_value(w: &[u32]) -> Option<u32> {
-    tables::S2.iter().position(|row| row[1..9].iter().copied().eq(w.iter().map(|&x| x as u8))).map(|i| i as u32)
+    sorted_index(&tables::S2_KEYS, &tables::S2_INDEX, w)
 }
 
 /// Optional-but-cheap spec validation: the finder triples must equal the
@@ -725,6 +775,8 @@ pub struct DataBarLtdDecoder {
     min_rows: usize,
     runs: Vec<(bool, u32)>,
     offsets: Vec<u32>,
+    /// prefix[i] = sum of run widths before i; makes a window sum O(1).
+    prefix: Vec<u32>,
     votes: std::collections::HashMap<String, (usize, u32, u32, u32, u32)>,
 }
 
@@ -734,6 +786,7 @@ impl DataBarLtdDecoder {
             min_rows: min_rows.max(1),
             runs: Vec::with_capacity(128),
             offsets: Vec::with_capacity(128),
+            prefix: Vec::with_capacity(129),
             votes: std::collections::HashMap::new(),
         }
     }
@@ -759,6 +812,13 @@ impl DataBarLtdDecoder {
             self.runs.push((cur, n));
             self.offsets.push(image.width - n);
         }
+        self.prefix.clear();
+        self.prefix.push(0);
+        let mut acc = 0u32;
+        for &(_, w) in &self.runs {
+            acc += w;
+            self.prefix.push(acc);
+        }
     }
 
     /// Normalize the 46-run window starting at `start` into module widths.
@@ -768,16 +828,21 @@ impl DataBarLtdDecoder {
         if start + 46 > self.runs.len() || self.runs[start].0 {
             return None;
         }
-        for i in 1..46 {
-            if self.runs[start + i].0 != (i % 2 == 1) {
-                return None;
-            }
-        }
-        let s: u32 = (1..46).map(|i| self.runs[start + i].1).sum();
+        // Runs alternate by construction; see the omni decoder. The window
+        // sum is a prefix-table difference, not a 45-run pass.
+        let s = self.prefix[start + 46] - self.prefix[start + 1];
         if s < LTD_SYMBOL_MODULES {
             return None;
         }
+        // Same implied prefilter: the five fixed 1-module runs must round
+        // to exactly 1 module (enforced again by the final check).
         let u = s as f32 / LTD_SYMBOL_MODULES as f32;
+        for &f in &LTD_FIXED_ONES {
+            let q = self.runs[start + f].1 as f32 / u;
+            if q < 0.5 || q >= 1.5 {
+                return None;
+            }
+        }
         let mut mods = [0u32; 46];
         mods[0] = 1;
         for i in 1..46 {
@@ -809,10 +874,9 @@ impl DataBarLtdDecoder {
             if self.runs.len() < 46 {
                 continue;
             }
-            for start in 0..=(self.runs.len() - 46) {
-                if self.runs[start].0 {
-                    continue;
-                }
+            debug_assert!(!self.runs[0].0, "scan_row must seed a paper run");
+            // Paper starts are the even indices (see the omni decoder).
+            for start in (0..=(self.runs.len() - 46)).step_by(2) {
                 let Some(mods) = self.try_normalize(start) else {
                     continue;
                 };
@@ -1056,6 +1120,44 @@ mod tests {
             let sum: usize = digits.iter().enumerate()
                 .map(|(i, &x)| x as usize * if i % 2 == 0 { 3 } else { 1 }).sum();
             assert_eq!(sum % 10, 0, "bad GTIN-14 check for v={v}: {}", got.text);
+        }
+    }
+
+    /// Every generated index table must be strictly sorted (binary search
+    /// relies on it) and map back to its own residue. Covers all 7416 rows.
+    #[test]
+    fn segment_index_tables_round_trip() {
+        for (keys, index) in [
+            (&tables::S1_KEYS[..], &tables::S1_INDEX[..]),
+            (&tables::PAIR2_KEYS[..], &tables::PAIR2_INDEX[..]),
+            (&tables::PAIR3_KEYS[..], &tables::PAIR3_INDEX[..]),
+            (&tables::S2_KEYS[..], &tables::S2_INDEX[..]),
+        ] {
+            assert_eq!(keys.len(), index.len());
+            assert!(keys.windows(2).all(|w| w[0] < w[1]), "keys must be sorted");
+            assert!(index.iter().all(|&i| (i as usize) < keys.len()));
+        }
+
+        let check = |v: u64| {
+            let runs = barcode_fixtures::databar_omni_runs(v);
+            let body = format!("{v:013}");
+            let want = format!(
+                "(01){body}{}",
+                gtin14_check(body.as_bytes().try_into().unwrap())
+            );
+            assert_eq!(decode_omni(&runs), Some(want), "residue round-trip for v={v}");
+        };
+        for i in 0..tables::S1_KEYS.len() as u64 {
+            check(i * 7_245_711_969);
+        }
+        for i in 0..tables::PAIR2_KEYS.len() as u64 {
+            check(i * 4_537_077);
+        }
+        for i in 0..tables::PAIR3_KEYS.len() as u64 {
+            check(i);
+        }
+        for i in 0..tables::S2_KEYS.len() as u64 {
+            check(i * 1597);
         }
     }
 

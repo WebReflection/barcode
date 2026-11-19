@@ -17,6 +17,12 @@ export const CASES = [
   ["upca", "036000291452"],
   ["ean8", "96385074"],
   ["upce", "042100005264"],
+  // DataBar decodes to the GS1 AI(01) + GTIN-14 form; the fixture text is
+  // also the expected result, and the encoder accepts that form through
+  // `encodableText` (the re-render path).
+  ["databar", "(01)40063813339314"],
+  ["databarltd", "(01)10000000000007"],
+  ["databarstk", "(01)40063813339314"],
   ["code93", "TEST93"],
   ["qrcode", "HELLO WORLD"],
   ["microqr", "12345"],

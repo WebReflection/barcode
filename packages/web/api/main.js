@@ -39,7 +39,7 @@
 import binding, { options as transfer } from '@webreflection/bindings/message-port';
 import { svg } from '@webreflection/utils/dom/content';
 import { Scanner } from '../src/scanner.js';
-import { bitmapToSVG } from '../src/svg.js';
+import { bitmapToSVG, encodableText } from '../src/svg.js';
 import { normalizeRenderOptions } from '../src/render-options.js';
 
 /** Workers that already crossed a handshake: a second session must not
@@ -572,9 +572,12 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
     // else a `raw` must be the UTF-8 of the intended text (as it always
     // is on scan results) — the text path is byte-identical then
     const useRaw = raw && (BINARY_RENDER.has(symbology) || !text);
+    // GS1 DataBar scan text is `(01)` + 14 digits; encoders take the
+    // 13-digit body (see encodableText).
+    const payload = encodableText(symbology, text);
     const fx = await utils.encode({
       symbology,
-      text,
+      text: payload,
       raw: useRaw ? raw : null,
       module,
       height: opts.height ?? 30 * module,
