@@ -81,8 +81,37 @@ fn cross_match(runs: &[Run], m: usize, half: usize) -> Option<(f32, f32)> {
     if !(MIN_SCALE..=MAX_SCALE).contains(&s) {
         return None;
     }
+    // Fit the pitch before validating ring lengths: a single run is an
+    // integer pixel count, so at a fractional pitch it is percent-level
+    // off and a strict per-run comparison would reject a clean bullseye.
+    let s = multi_module_scale(runs, m, half);
     check_rings(runs, m, half, s)?;
-    Some((runs[m].start as f32 + s / 2.0, s))
+    Some((runs[m].start as f32 + runs[m].len as f32 / 2.0, s))
+}
+
+/// Module pitch fitted from the bullseye ring boundaries.
+///
+/// A run is an integer pixel count. At a fractional pitch (a PDF rendered
+/// at 6.5 px/module, a screenshot at 8.7) every run rounds independently
+/// and a single-run estimate is percent-level short; across 40+ modules
+/// that error becomes several modules of drift and samples land on the
+/// wrong cell. Every white↔dark boundary *inside* the bullseye is exact
+/// (the merge risk is the outer edge), and their distances from the centre
+/// are known to half-module precision, so a least-squares fit over all of
+/// them cancels the rounding.
+fn multi_module_scale(runs: &[Run], m: usize, half: usize) -> f32 {
+    let centre = runs[m].start as f32 + runs[m].len as f32 / 2.0;
+    let mut num = 0.0f32;
+    let mut den = 0.0f32;
+    for k in 1..=half {
+        // Module k starts at +(k-0.5) pitches, module -k ends at -(k-0.5).
+        let x = k as f32 - 0.5;
+        let right = runs[m + k].start as f32 - centre;
+        let left = (runs[m - k].start + runs[m - k].len) as f32 - centre;
+        num += x * (right - left);
+        den += 2.0 * x * x;
+    }
+    if den > 0.0 { num / den } else { runs[m].len as f32 }
 }
 
 /// Ring parity/length check shared by the row and column passes.
@@ -180,7 +209,7 @@ fn column_verify(
     Some(Bullseye {
         x,
         y: core.start as f32 + core.len as f32 / 2.0,
-        scale: s,
+        scale: multi_module_scale(&runs, m, half),
         full,
     })
 }
@@ -548,6 +577,53 @@ mod tests {
         let f = render(&m(B_V2), 19, 2, 4); // below MIN_SCALE
         assert!(find_bullseyes(&f, f.len() / ((19 + 8) * 2), (19 + 8) * 2).is_empty());
         assert!(find_bullseyes(&vec![0u8; 400 * 300], 400, 300).is_empty());
+    }
+
+    /// Render at a fractional module pitch: each module's pixel span is
+    /// the rounded difference of its scaled edges, exactly what a PDF
+    /// rasterizer or a resized screenshot produces (6.5 px/module becomes
+    /// alternating 6/7 px runs).
+    fn render_fractional(matrix: &[u8], size: usize, pitch: f32, quiet: usize) -> (Vec<u8>, usize) {
+        let dim = ((size + 2 * quiet) as f32 * pitch).round() as usize;
+        let edge = |i: usize| ((i as f32) * pitch).round() as usize;
+        let mut f = vec![0u8; dim * dim];
+        for r in 0..size {
+            for c in 0..size {
+                if matrix[r * size + c] == 0 {
+                    continue;
+                }
+                for y in edge(r + quiet)..edge(r + quiet + 1) {
+                    for x in edge(c + quiet)..edge(c + quiet + 1) {
+                        f[y * dim + x] = 1;
+                    }
+                }
+            }
+        }
+        (f, dim)
+    }
+
+    /// Real-world symbols are rarely an integer number of pixels per
+    /// module: a ticket PDF rendered at 6.5 or a screenshot at 8.7
+    /// px/module used to fail every size/orientation guess because the
+    /// single-run scale estimate drifted several modules across the
+    /// symbol. The bullseye boundary fit must recover the true pitch and
+    /// the whole symbol must decode end to end.
+    #[test]
+    fn decodes_fractional_module_pitch() {
+        // 900 bytes selects the 87x87 symbol the real PDFs use.
+        let payload: Vec<u8> = (0u8..=255).cycle().take(900).collect();
+        let (spec, matrix) = crate::encode::encode(&payload).expect("encode");
+        let size = spec.rows as usize;
+        for pitch in [6.5f32, 8.7, 11.25] {
+            let (f, dim) = render_fractional(&matrix, size, pitch, 4);
+            let hits = crate::read_frame(&f, dim, dim);
+            assert_eq!(hits.len(), 1, "pitch {pitch}: {hits:?}");
+            assert_eq!(
+                crate::text::decode_text(&hits[0].stream),
+                payload,
+                "pitch {pitch}"
+            );
+        }
     }
 
     fn orient_of(matrix: &[u8], size: usize, scale: usize, quiet: usize, full: bool) -> Orientation {
