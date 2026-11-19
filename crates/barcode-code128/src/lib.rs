@@ -365,9 +365,10 @@ impl Code128Decoder {
             score += err;
             values.push(v);
             k += 6;
-            if values.len() > 30 {
-                return fallback.map(|(c, _)| c); // implausibly long
-            }
+            // No fixed codeword maximum: every character consumes six runs
+            // and `char_value` returns None when the row runs out, so the
+            // scan is already bounded by the image. The old `> 30` cap
+            // silently truncated valid long GS1-128 payloads.
         }
     }
 
@@ -575,6 +576,10 @@ mod tests {
             let canvas = barcode_fixtures::encode_code128(text, 4, 120);
             assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some(text), "{text}");
         }
+        // Longer than the old 30-value cap (~28 data codewords).
+        let long = "A".repeat(64);
+        let canvas = barcode_fixtures::encode_code128(&long, 3, 30);
+        assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some(long.as_str()));
     }
 
     #[test]
