@@ -11,6 +11,7 @@ export const XFAIL = new Map([
 export const CASES = [
   ["code39", "ABC-123"],
   ["code128", "CODE128"],
+  ["code32", "A938261563"],
   ["itf", "12345670"],
   ["codabar", "40156"],
   ["ean13", "4006381333931"],

@@ -13,7 +13,8 @@
 import { createBinarizer } from "./binarizer-factory.js";
 import { decodeFrame, getSupportedSymbologies, getWasmScanner } from "./decoder.js";
 import { rotateDrawable } from "./source-rotate.js";
-import { cropDrawable, roiCandidates } from "./roi.js";
+import { cropDrawable, linearRoiCandidates, otsuMask, roiCandidates } from "./roi.js";
+import { LINEAR } from "./live-schedule.js";
 
 /** The binarizer factory's common surface, GPU or CPU. */
 /** @typedef {{ process(video: HTMLVideoElement | HTMLCanvasElement | ImageBitmap | OffscreenCanvas): Promise<import("./gpu/binarizer.js").BinarizedFrame>, destroy(): void, kind: "gpu" | "cpu", setThreshold(t: number): void }} Binarizer */
@@ -99,7 +100,24 @@ async function decodeRoi(scanner, bin, bitmap, frame, formats, limit, deadline) 
   const sourceW = bitmap.width;
   const sourceH = bitmap.height;
   if (!sourceW || !sourceH) return [];
-  const boxes = roiCandidates(frame, sourceW, sourceH, limit);
+  const wantsLinear =
+    !formats?.length || formats.some((f) => LINEAR.includes(String(f).toLowerCase()));
+  const linear = wantsLinear
+    ? linearRoiCandidates(frame, sourceW, sourceH, limit).map((box) => ({ ...box, linear: true }))
+    : [];
+  /** @type {{ x: number, y: number, w: number, h: number, score: number, linear?: boolean }[]} */
+  const boxes = [];
+  for (const box of [...linear, ...roiCandidates(frame, sourceW, sourceH, limit)]) {
+    const overlap = boxes.some((p) => {
+      const ix = Math.max(0, Math.min(box.x + box.w, p.x + p.w) - Math.max(box.x, p.x));
+      const iy = Math.max(0, Math.min(box.y + box.h, p.y + p.h) - Math.max(box.y, p.y));
+      return ix * iy > 0.6 * Math.min(box.w * box.h, p.w * p.h);
+    });
+    if (!overlap) boxes.push(box);
+    // The caller's crop budget is the bound: extra candidates multiply
+    // the wasm sweep, and a junk frame produces no valid crop anyway.
+    if (boxes.length >= limit) break;
+  }
   if (!boxes.length) return [];
   bin.setThreshold?.(0.92);
   for (const box of boxes) {
@@ -116,6 +134,25 @@ async function decodeRoi(scanner, bin, bitmap, frame, formats, limit, deadline) 
     const flipped = f.data.map((/** @type {number} */ b) => ~b);
     const invHits = decodeFrame(scanner, { ...f, data: flipped }, formats);
     if (invHits.length) return mapRoiHits(invHits, crop, f, frame, sourceW, sourceH);
+    if (!box.linear || deadline - performance.now() <= 0) continue;
+    // Global Otsu over a 2x upscale preserves thin spaces that the local
+    // threshold floods in a blurry, tightly cropped bar strip.
+    /** @param {number} fw @param {number} fh @param {{x: number, y: number}[]} points */
+    const scaledMap = (fw, fh, points) =>
+      points.map((p) => ({
+        x: crop.x + (p.x * crop.width) / fw,
+        y: crop.y + (p.y * crop.height) / fh,
+      }));
+    const scaled = { ...crop, map: scaledMap };
+    for (const scale of [2, 1]) {
+      if (deadline - performance.now() <= 0) break;
+      const otsu = otsuMask(crop.canvas, scale);
+      const hits2 = decodeFrame(scanner, otsu, formats);
+      if (hits2.length) return mapRoiHits(hits2, scaled, otsu, frame, sourceW, sourceH);
+      const otsuFlipped = otsu.data.map((/** @type {number} */ b) => ~b);
+      const inv2 = decodeFrame(scanner, { ...otsu, data: otsuFlipped }, formats);
+      if (inv2.length) return mapRoiHits(inv2, scaled, otsu, frame, sourceW, sourceH);
+    }
   }
   return [];
 }

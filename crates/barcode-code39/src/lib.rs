@@ -29,6 +29,75 @@ const TABLE: [(&str, &str); 44] = [
     ("%", "357"), ("*", "146"),
 ];
 
+/// Code 32 (Italian Pharmacode) payload alphabet: digits plus the letters
+/// of the Code 39 set minus A/E/I/O, i.e. exactly 32 symbols. Six of them
+/// are one base-32 number (0..999_999_999); the ninth decimal digit is a
+/// checksum. The printed form is `A` + those nine digits (the AIC code).
+const CODE32_ALPHABET: &[u8; 32] = b"0123456789BCDFGHJKLMNPQRSTUVWXYZ";
+
+/// The Code 32 checksum over the first eight decimal digits: each digit is
+/// added together with twice its right neighbour, tens carry included.
+fn code32_checksum(digits: &[u8; 9]) -> u8 {
+    let mut sum = 0u32;
+    for i in (0..8).step_by(2) {
+        let doubled = 2 * u32::from(digits[i + 1] - b'0');
+        sum += u32::from(digits[i] - b'0') + doubled % 10 + u32::from(doubled >= 10);
+    }
+    (sum % 10) as u8
+}
+
+/// Interpret six raw Code 39 characters as a Code 32 payload. Returns the
+/// printed `A` + nine-digit AIC text only when the alphabet and the
+/// checksum both validate — a plain Code 39 symbol must pass through
+/// untouched, so this is deliberately strict.
+pub fn code32_text(raw: &str) -> Option<String> {
+    if raw.len() != 6 {
+        return None;
+    }
+    let mut value: u64 = 0;
+    for byte in raw.bytes() {
+        let Some(index) = CODE32_ALPHABET.iter().position(|&c| c == byte) else {
+            return None;
+        };
+        value = value * 32 + index as u64;
+    }
+    if value >= 1_000_000_000 {
+        return None;
+    }
+    let text = format!("{value:09}");
+    let digits: [u8; 9] = text.as_bytes().try_into().ok()?;
+    if code32_checksum(&digits) != digits[8] - b'0' {
+        return None;
+    }
+    Some(format!("A{text}"))
+}
+
+/// The reverse of [`code32_text`]: a printed AIC value (`A` + nine digits,
+/// checksum included) back to the six Code 39 characters to encode.
+pub fn code32_raw(aic: &str) -> Option<String> {
+    let bytes = aic.as_bytes();
+    if bytes.len() != 10
+        || bytes[0] != b'A'
+        || !bytes[1..].iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    let digits: [u8; 9] = bytes[1..].try_into().ok()?;
+    if code32_checksum(&digits) != digits[8] - b'0' {
+        return None;
+    }
+    let mut value: u64 = aic[1..].parse().ok()?;
+    let mut out = [0u8; 6];
+    for slot in out.iter_mut().rev() {
+        *slot = CODE32_ALPHABET[(value % 32) as usize];
+        value /= 32;
+    }
+    if value != 0 {
+        return None;
+    }
+    Some(String::from_utf8(out.to_vec()).unwrap())
+}
+
 struct Candidate {
     text: String,
     x_start: u32,
@@ -236,6 +305,24 @@ mod tests {
                     "narrow={narrow} ratio={ratio} text={text}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn code32_payloads() {
+        // Real specimen: the six raw Code 39 chars from an Italian medicine
+        // box, and the printed AIC value they carry.
+        assert_eq!(code32_text("VYTH1V").as_deref(), Some("A938261563"));
+        assert_eq!(code32_raw("A938261563").as_deref(), Some("VYTH1V"));
+        // The alphabet excludes A/E/I/O, and a bad check digit must fail.
+        assert_eq!(code32_text("VYTH1A"), None);
+        assert_eq!(code32_text("VYTH1W"), None);
+        assert_eq!(code32_text("A938261563"), None);
+        assert_eq!(code32_raw("A938261564"), None);
+        // Every valid payload round-trips through both directions.
+        for aic in ["A000000000", "A938261563", "A999999992"] {
+            let raw = code32_raw(aic).unwrap();
+            assert_eq!(code32_text(&raw).as_deref(), Some(aic), "{aic} -> {raw}");
         }
     }
 

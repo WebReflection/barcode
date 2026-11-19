@@ -66,7 +66,7 @@ an embedder can keep its own protocol on the same worker.
 ## Symbologies
 
 * **2D**: `qrcode`, `microqr`, `aztec`, `datamatrix`, `pdf417`
-* **1D**: `upca`, `ean13`, `ean8`, `upce`, `code39`, `code93`,
+* **1D**: `upca`, `ean13`, `ean8`, `upce`, `code39`, `code32`, `code93`,
   `code128`, `itf`, `codabar`, `databar`, `databarltd`, `databarstk`
 
 Session option `type` filters what decodes: `'qr'` (QR + Micro QR),

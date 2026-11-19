@@ -27,7 +27,8 @@ Decoded from a live camera or a still image, one code per frame:
 | EAN-8 | Micro QR (M1–M4, roll-aware sampling) |
 | UPC-E | Data Matrix (ECC200, square and rectangular/DMRE) |
 | Code 39 | Aztec (compact and full) |
-| Code 93 | PDF417 |
+| Code 32 (Italian Pharmacode) | PDF417 |
+| Code 93 | |
 | Code 128 / GS1-128 (FNC1) | |
 | ITF / Interleaved 2 of 5 | |
 | Codabar | |
