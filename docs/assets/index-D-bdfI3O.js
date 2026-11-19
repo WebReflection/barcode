@@ -1,0 +1,2 @@
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["./worker-Dh0kTwbL.js","./main-0Jw2l16R.js","./binarizer-factory-DxQQGM7z.js"])))=>i.map(i=>d[i]);
+import{_ as t}from"./preload-helper-Ct5FWWRu.js";const o=typeof WorkerGlobalScope<"u",{default:_}=o?await t(()=>import("./worker-Dh0kTwbL.js"),__vite__mapDeps([0,1,2]),import.meta.url):await t(()=>import("./main-0Jw2l16R.js").then(e=>e.m),[],import.meta.url);export{_ as default};
