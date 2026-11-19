@@ -1,18 +1,22 @@
 /**
  * Live-frame scheduling. The exotic 2D families (DataMatrix, PDF417)
- * measured ~250 ms each on a phone and are what makes "scan everything"
- * feel slow while the user is still aiming. Run them at most every
- * `FULL_INTERVAL_MS` of wall time; every other frame keeps the cheap
- * rotation-invariant families (QR, Micro QR, Aztec, DataBar stacked).
+ * measured ~250 ms each on a phone — 320/390 ms on a 920px frame — and
+ * are what makes "scan everything" feel slow while the user is still
+ * aiming. Run them at most every `FULL_INTERVAL_MS` of wall time; every
+ * other frame keeps the cheap rotation-invariant families (QR, Micro QR,
+ * Aztec, DataBar stacked).
  *
- * Wall time, not frame parity: a fresh scan (or a one-shot worker frame)
- * starts with a full sweep because the previous one is long past, while a
- * continuous hunt interleaves cheap frames between full sweeps.
+ * A scheduled FULL frame itself runs cheap-first (worker.js): the cheap
+ * tier decodes first and only a miss pays for the exotic remainder, so
+ * QR/1D hits confirm on cheap frames alone. When cheap frames are fast
+ * relative to the interval, several run between full sweeps; when a full
+ * sweep costs more than the interval (slow phones), every frame runs
+ * escalated and `markFullSweep` stretches the spacing automatically.
  *
- * The linear tier only runs on full frames — that preserves the "2D
- * before 1D" false-positive rule (a QR's texture goads loose 1D
- * symbologies into hits; 1D must only vote on frames where the whole 2D
- * tier already missed).
+ * The linear tier only runs when the last full sweep saw no 2D code —
+ * that preserves the "2D before 1D" false-positive rule (a QR's texture
+ * goads loose 1D symbologies into hits; 1D must only vote on frames
+ * where the whole 2D tier already missed).
  *
  * Still images never alternate: one shot, one full sweep.
  */

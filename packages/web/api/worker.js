@@ -19,7 +19,7 @@ import { createBinarizer } from '../src/binarizer-factory.js';
 import { getWasmScanner, decodeFrame } from '../src/decoder.js';
 import { rotateDrawable } from '../src/source-rotate.js';
 import { cropDrawable, roiCandidates } from '../src/roi.js';
-import { cheapFormats, dueForFullSweep, is2DResult, markFullSweep, needsScheduling } from '../src/live-schedule.js';
+import { ALL_FORMATS, cheapFormats, dueForFullSweep, is2DResult, markFullSweep, needsScheduling } from '../src/live-schedule.js';
 import {
   encode_fixture_opts,
   encode_fixture_raw_opts,
@@ -44,7 +44,7 @@ import {
  * }} DecodeRequest
  */
 
-/** @typedef {{ type: 'result', codes: DecodedCode[], decodeMs: number, partial?: boolean, qrPresence?: number, frameW?: number, frameH?: number } | { type: 'error', message: string }} DecodeResponse */
+/** @typedef {{ type: 'result', codes: DecodedCode[], decodeMs: number, partial?: boolean, checked?: string[] | null, qrPresence?: number, frameW?: number, frameH?: number } | { type: 'error', message: string }} DecodeResponse */
 
 /**
  * One re-encode request. `ec`/`mask`/`version` are QR (raw 2-bit EC
@@ -267,7 +267,8 @@ const handlers = {
       // 250ms of wall time; the cheap ones (QR/Micro/Aztec/DataBarStk)
       // run on every frame. Still images always get the full sweep.
       let activeFormats = formats;
-      if (still !== true && needsScheduling(formats)) {
+      const scheduled = still !== true && needsScheduling(formats);
+      if (scheduled) {
         full = dueForFullSweep(performance.now());
         if (!full) {
           // Cheap frames keep the linear tier alive unless the last full
@@ -290,7 +291,7 @@ const handlers = {
             }
           }
           if (!activeFormats.length) {
-            return { type: 'result', codes: [], decodeMs: 0 };
+            return { type: 'result', codes: [], decodeMs: 0, partial: true, checked: [] };
           }
         }
       }
@@ -377,7 +378,28 @@ const handlers = {
         }
       }
       if (!stillLinearHit) {
-        codes = decodeFrame(scanner, frame, activeFormats, opts);
+        // Cheap-first escalation: on a scheduled FULL frame, decode the
+        // cheap tier (QR/Micro/Aztec/DataBarStk + linear when the 2D gate
+        // allows) FIRST — QR/1D hits then confirm for a fraction of the
+        // full sweep's cost on slow phones (a 920px phone frame measured
+        // 104ms cheap vs 543ms all-17). Only a miss pays for the exotic
+        // remainder (DataMatrix, PDF417), in ONE combined call: family
+        // costs are additive within a call but two calls re-pay shared
+        // preprocessing, so cheap-then-exotic costs more than one union
+        // call (measured 630ms vs 543ms) — never split further.
+        if (full && scheduled) {
+          const cheapList = cheapFormats(activeFormats, !lastFullHad2D);
+          codes = decodeFrame(scanner, frame, cheapList, opts);
+          if (!codes.length) {
+            const ranCheap = new Set(cheapList.map((f) => String(f).toLowerCase()));
+            const rest = (activeFormats ?? ALL_FORMATS).filter(
+              (f) => !ranCheap.has(String(f).toLowerCase()),
+            );
+            if (rest.length) codes = decodeFrame(scanner, frame, rest, opts);
+          }
+        } else {
+          codes = decodeFrame(scanner, frame, activeFormats, opts);
+        }
         const firstMs = performance.now() - t0;
         // 'auto' = lazy second threshold when the first pass finds nothing.
         // On live camera frames that is the common case, and a second
@@ -475,8 +497,15 @@ const handlers = {
         frameH: frame.height,
         // This frame ran only the cheap 2D families (exotic-tier
         // scheduling). The confirmation law must not treat it as evidence
-        // of absence.
+        // of absence — see `checked` for the per-family refinement.
         partial: !full,
+        // Families this frame actually decoded: null = everything
+        // requested ran (a full frame), an array = the scheduled subset.
+        // The confirmation law counts values from these families on
+        // partial frames instead of freezing every streak — a QR seen on
+        // a cheap frame is real evidence and may confirm on the next
+        // cheap frame, without waiting for a full sweep.
+        checked: full ? null : activeFormats,
         // Presence signal for the auto-torch policy: 0 = no finders,
         // 1 = QR present but not decoding, 2 = decoded. Only meaningful
         // when the QR tier ran on this frame.

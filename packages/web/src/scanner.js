@@ -60,7 +60,7 @@ import {
  *   loudly, not scan nothing. This is a *decode-tier* selection only: it
  *   never changes capture behavior (lens/zoom/torch are camera options).
  * @property {(frame: import("./gpu/binarizer.js").BinarizedFrame) => void} [onFrame]
- * @property {(bitmap: ImageBitmap, formats?: string[], accuracy?: Accuracy) => Promise<{results: DetectedCode[], error?: string, elapsedMs?: number, qrPresence?: number, partial?: boolean}>} [decode]
+ * @property {(bitmap: ImageBitmap, formats?: string[], accuracy?: Accuracy) => Promise<{results: DetectedCode[], error?: string, elapsedMs?: number, qrPresence?: number, partial?: boolean, checked?: string[] | null}>} [decode]
  *   Injected decoder — used by the published artifact (exactly 3 files:
  *   main.js, worker.js, wasm.wasm; no fourth pipeline file). When absent,
  *   the internal pipeline worker is spawned (dev/demo default).
@@ -357,7 +357,7 @@ export class Scanner {
       // If this frame was a hinted close-up, map its results back to full
       // frame coordinates before anything consumes them.
       this.#mapFromHint(raw, msg);
-      const results = this.#confirm(raw, wallMs > (this.#opts.budget ?? 500), msg.partial === true);
+      const results = this.#confirm(raw, wallMs > (this.#opts.budget ?? 500), msg.checked ?? (msg.partial === true ? [] : null));
       this.#updateHint(raw, results, msg);      // The mask is transferred back (zero-copy) for observers.
       /** @type {import("./gpu/binarizer.js").BinarizedFrame | null} */
       let frame = null;
@@ -600,14 +600,18 @@ export class Scanner {
    * first does, and every frame after while it keeps agreeing.
    * @param {DetectedCode[]} results ranked best-first by the worker
    * @param {boolean} slow true when the frame's wall time exceeded the budget
-   * @param {boolean} [partial] true when the frame ran only the cheap 2D
-   *   families (exotic-tier scheduling): it cannot re-observe a value the
-   *   skipped tiers would have found, so it must neither add nor clear
-   *   streak evidence.
+   * @param {string[] | null} [checked] the families this frame actually
+   *   decoded: null = everything requested ran (a full frame); an array =
+   *   the scheduled subset that ran (a cheap frame). Values from families
+   *   that ran count normally — presence adds, absence clears — while
+   *   values from skipped families are frozen: their absence is no
+   *   evidence (the skipped tier may still hold them). `[]` therefore
+   *   freezes every streak, and `null` observes everything.
    * @returns {DetectedCode[]}
    */
-  #confirm(results, slow, partial = false) {
-    if (partial) return [];
+  #confirm(results, slow, checked = null) {
+    const norm = (/** @type {unknown} */ s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const ran = checked == null ? null : new Set(checked.map(norm));
     const keyOf = (/** @type {DetectedCode} */ r) => r.symbology + "\u0000" + r.text;
     if (slow && results.length === 0) {
       // Over-budget frames carry stale evidence — but only when they
@@ -620,11 +624,15 @@ export class Scanner {
       return [];
     }
     const byKey = new Map(results.map((r) => [keyOf(r), r]));
-    // missing values lose their streak; present values count the frame
+    // missing values lose their streak — but only when their family
+    // actually ran this frame; a value whose family was skipped keeps it
     for (const key of this.#streaks.keys()) {
-      if (!byKey.has(key)) this.#streaks.delete(key);
+      if (byKey.has(key)) continue;
+      if (ran == null || ran.has(norm(key.split("\u0000")[0]))) this.#streaks.delete(key);
     }
-    for (const key of byKey.keys()) {
+    // present values count the frame when their family ran
+    for (const [key] of byKey) {
+      if (ran != null && !ran.has(norm(key.split("\u0000")[0]))) continue;
       this.#streaks.set(key, (this.#streaks.get(key) ?? 0) + 1);
     }
     // results are ranked (centered first): the first value to have

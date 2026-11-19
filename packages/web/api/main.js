@@ -507,7 +507,7 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
             progressFill.style.width = '50%';
           return res?.type === 'error'
             ? { results: [], error: res.message }
-            : { results: res.codes ?? [], qrPresence: res.qrPresence, partial: res.partial === true, frameW: res.frameW, frameH: res.frameH };
+            : { results: res.codes ?? [], qrPresence: res.qrPresence, partial: res.partial === true, checked: res.checked ?? null, frameW: res.frameW, frameH: res.frameH };
         },
       });
       try {

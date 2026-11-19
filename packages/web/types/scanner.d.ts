@@ -149,6 +149,7 @@ export type ScannerOptions = {
         elapsedMs?: number;
         qrPresence?: number;
         partial?: boolean;
+        checked?: string[] | null;
     }>) | undefined;
     onResults?: ((results: DetectedCode[]) => void) | undefined;
     /**
