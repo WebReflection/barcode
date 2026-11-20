@@ -65,13 +65,7 @@ impl QrDecoder {
                 cands.push((*x, y as f32, *m));
             }
         }
-        if std::env::var("QR_DBG").is_ok() {
-            eprintln!("DBG row candidates {}", cands.len());
-        }
         let row_result = Self::cluster_and_confirm(cands, image, true);
-        if std::env::var("QR_DBG").is_ok() {
-            eprintln!("DBG row pass: {:?}", row_result.as_ref().map(|f| f.iter().map(|q| (q.x, q.y, q.module)).collect::<Vec<_>>()));
-        }
         if let found @ Some(_) = row_result {
             return found;
         }
@@ -260,9 +254,6 @@ impl QrDecoder {
         // along the cluster axis; that is the local scale across the scan.
         let m_axis = (span / 3.0).clamp(0.5 * m, 2.0 * m);
         let ok = Self::verify_finder_scales(img, &f, dx, dy, m_axis, m);
-        if std::env::var("QR_DBG").is_ok() {
-            eprintln!("DBG   set n={} c=({:.0},{:.0}) m={m:.2} verify={ok}", pts.len(), f.x, f.y);
-        }
         if ok {
             Some(f)
         } else {
@@ -278,11 +269,8 @@ impl QrDecoder {
     /// strip, then scan verify ALONG the streak — the strip fixes the
     /// finder's cross position and module size, and only the true center
     /// passes the structural probes.
-    fn confirm_cluster(img: &BitImage, pts: &[(f32, f32, f32)], dbg: bool) -> Option<Finder> {
+    fn confirm_cluster(img: &BitImage, pts: &[(f32, f32, f32)]) -> Option<Finder> {
         if let Some(f) = Self::confirm_set(img, pts) {
-            if dbg {
-                eprintln!("DBG   verify=true (direct)");
-            }
             return Some(f);
         }
         let n = pts.len();
@@ -324,12 +312,6 @@ impl QrDecoder {
                 break;
             }
         }
-        if dbg {
-            eprintln!(
-                "DBG   seeds n={n}: {:?}",
-                seeds.iter().map(|&s| (pts[s].0 as i32, pts[s].1 as i32, scored.iter().find(|&&(i, _)| i == s).map(|&(_, c)| c).unwrap_or(0))).collect::<Vec<_>>()
-            );
-        }
         for &seed in &seeds {
             // Mean-shift a 1.2m kernel onto the strip.
             let (mut kx, mut ky) = (pts[seed].0, pts[seed].1);
@@ -358,9 +340,6 @@ impl QrDecoder {
                 }
             }
             if kept.len() < 4 {
-                if dbg {
-                    eprintln!("DBG   seed ({:.0},{:.0}): kernel kept={} too small", pts[seed].0, pts[seed].1, kept.len());
-                }
                 continue;
             }
             let m = kept.iter().map(|p| p.2).sum::<f32>() / kept.len() as f32;
@@ -377,9 +356,6 @@ impl QrDecoder {
                     strong: kept.len(),
                 };
                 let ok = Self::verify_finder(img, &f, sdx, sdy);
-                if std::env::var("QR_DBG").is_ok() && kept.len() > 20 {
-                    eprintln!("DBG     t={t:.2} ({:.0},{:.0}) m={m:.2} verify={ok}", f.x, f.y);
-                }
                 if ok {
                     if run_start.is_none() {
                         run_start = Some(t);
@@ -406,12 +382,6 @@ impl QrDecoder {
                 module: m,
                 strong: kept.len(),
             };
-            if dbg {
-                eprintln!(
-                    "DBG   streak scan: kept={} m={m:.2} run=({rs:.2},{re:.2}) mid={mid:.2} at ({:.0},{:.0})",
-                    kept.len(), f.x, f.y
-                );
-            }
             return Some(f);
         }
         None
@@ -508,26 +478,13 @@ impl QrDecoder {
             groups.entry(root(&mut parent, i)).or_default().push(i);
         }
 
-        let dbg = std::env::var("QR_DBG").is_ok();
         let mut finders: Vec<Finder> = Vec::new();
         for idx in groups.values() {
             if idx.len() < 3 {
                 continue;
             }
             let pts: Vec<(f32, f32, f32)> = idx.iter().map(|&i| cands[i]).collect();
-            if dbg {
-                let xs: Vec<f32> = pts.iter().map(|p| p.0).collect();
-                let ys: Vec<f32> = pts.iter().map(|p| p.1).collect();
-                let m: f32 = pts.iter().map(|p| p.2).sum::<f32>() / pts.len() as f32;
-                let (_, _, _, span, resid) = Self::principal_axis(&xs, &ys);
-                eprintln!(
-                    "DBG cluster n={} m={m:.2} c=({:.0},{:.0}) span={span:.1} resid={resid:.2}",
-                    pts.len(),
-                    xs.iter().sum::<f32>() / xs.len() as f32,
-                    ys.iter().sum::<f32>() / ys.len() as f32,
-                );
-            }
-            if let Some(f) = Self::confirm_cluster(image, &pts, dbg) {
+            if let Some(f) = Self::confirm_cluster(image, &pts) {
                 finders.push(f);
             }
         }
@@ -589,32 +546,15 @@ pub(crate) fn locate_symbol(
     for perm in LABELINGS {
         let [tl, tr, bl] =
             [finders[perm[0]], finders[perm[1]], finders[perm[2]]];
-        let dbg = std::env::var("QR_DBG").is_ok();
         let Some(grid) = grid::Grid::from_finders(&tl, &tr, &bl) else {
-            if dbg {
-                eprintln!("locate: finders -> no grid for perm {perm:?}");
-            }
             continue;
         };
         let Some((ec, mask)) = grid::read_format(img, &grid) else {
-            if dbg {
-                eprintln!("locate: grid size {} -> format failed", grid.size);
-            }
             continue;
         };
         let Some(codewords) = codewords::read_codewords(img, &grid, ec, mask) else {
-            if dbg {
-                eprintln!("locate: ec {ec:?} mask {mask} -> codewords failed");
-            }
             continue;
         };
-        if dbg {
-            eprintln!(
-                "locate: size {} ec {ec:?} mask {mask} codewords {}",
-                grid.size,
-                codewords.len()
-            );
-        }
         return Some((grid, [tl, tr, bl], ec, mask, codewords));
     }
     // Phase 2: perspective. The finders exist but no affine labeling
@@ -871,15 +811,10 @@ fn perspective_homography(
     // finder-only homography carries the most residual. v2-v6 have one
     // (bottom-right), v7+ a grid of them. Each accepted bullseye is an
     // exact module-space correspondence, so re-fit with them included.
-    let mut found = 0usize;
     for (u, v) in alignment_centers(n) {
         if let Some((x, y)) = alignment_at(img, &h0, u, v) {
             pairs.push((u, v, x, y));
-            found += 1;
         }
-    }
-    if std::env::var("QR_DBG").is_ok() && found > 0 {
-        eprintln!("perspective: {found}/{} alignment patterns anchored", alignment_centers(n).len());
     }
     barcode_core::geometry::fit_homography(&pairs)
 }
@@ -915,19 +850,15 @@ fn locate_symbol_perspective(
                 continue;
             }
             let Some(h) = perspective_homography(img, &[tl, tr, bl], ax, ay, n) else {
-                if std::env::var("QR_DBG").is_ok() { eprintln!("perspective: perm {perm:?} n {n} -> no homography"); }
                 continue;
             };
             let grid = grid::Grid::from_homography(n, h);
             let Some((ec, mask)) = grid::read_format(img, &grid) else {
-                if std::env::var("QR_DBG").is_ok() { eprintln!("perspective: perm {perm:?} n {n} -> format failed"); }
                 continue;
             };
             let Some(codewords) = codewords::read_codewords(img, &grid, ec, mask) else {
-                if std::env::var("QR_DBG").is_ok() { eprintln!("perspective: perm {perm:?} n {n} -> codewords failed"); }
                 continue;
             };
-            if std::env::var("QR_DBG").is_ok() { eprintln!("perspective: perm {perm:?} n {n} ec {ec:?} mask {mask} -> OK"); }
             return Some((grid, [tl, tr, bl], ec, mask, codewords));
         }
     }
@@ -950,9 +881,6 @@ impl SymbologyDecoder for QrDecoder {
         let Some((grid, _labeled, _ec, _mask, codewords)) = locate_symbol(image, &finders) else {
             return Vec::new();
         };
-        if std::env::var("QR_DBG").is_ok() {
-            eprintln!("data ({} bytes): {:02x?}", codewords.len(), codewords);
-        }
         let version = (grid.size - 17) / 4;
         let Some(payload) = segments::parse_segments(version, &codewords) else {
             return Vec::new();

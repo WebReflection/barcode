@@ -36,36 +36,19 @@ pub use detect::{read_frame, read_frame_rectified};
 ///
 /// PDF417 carries `2^(ec_level+1)` EC codewords (2, 4, ... 512); any
 /// other count means the descriptor came from a wrong grid / row count.
-pub(crate) fn correct_stream(
-    mut stream: Vec<u16>,
-    erasures: &[usize],
-    label: &str,
-    dbg: bool,
-) -> Option<Vec<u16>> {
+pub(crate) fn correct_stream(mut stream: Vec<u16>, erasures: &[usize]) -> Option<Vec<u16>> {
     let desc = *stream.first()? as usize;
     if desc == 0 || desc >= stream.len() {
-        if dbg {
-            eprintln!("{label}: bad descriptor {desc} of {}", stream.len());
-        }
         return None;
     }
     let k = stream.len() - desc;
     if !matches!(k, 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512) {
-        if dbg {
-            eprintln!("{label}: implausible EC count {k} (desc {desc} of {})", stream.len());
-        }
         return None;
     }
     // A real symbol always carries some EC ink; an all-zero body is the
     // degenerate grid signature, never a codeword of a real message.
     if stream[1..].iter().all(|&c| c == 0) {
-        if dbg {
-            eprintln!("{label}: degenerate all-zero body (desc {desc})");
-        }
         return None;
-    }
-    if dbg {
-        eprintln!("{label}: stream {} desc {} k {} valid {}", stream.len(), desc, k, rs::rs_valid(&stream, k));
     }
     if !rs::rs_valid(&stream, k) {
         // Known positions first: each erasure costs one slot (up to k)
@@ -76,20 +59,10 @@ pub(crate) fn correct_stream(
         let fixed = rs::rs_correct_mixed(&stream, k, erasures)
             .or_else(|| rs::rs_correct(&stream, k));
         match fixed {
-            Some((fixed, fixes)) => {
-                if dbg {
-                    eprintln!(
-                        "{label}: RS corrected {} ({} known erasures)",
-                        fixes.len(),
-                        erasures.len()
-                    );
-                }
+            Some((fixed, _fixes)) => {
                 stream = fixed;
             }
             None => {
-                if dbg {
-                    eprintln!("{label}: RS uncorrectable");
-                }
                 return None;
             }
         }
@@ -99,16 +72,10 @@ pub(crate) fn correct_stream(
         // pre-correction value (which was nonzero by construction).
         let desc = stream[0] as usize;
         if desc == 0 || desc >= stream.len() {
-            if dbg {
-                eprintln!("{label}: corrected descriptor {desc} of {}", stream.len());
-            }
             return None;
         }
         let k = stream.len() - desc;
         if !matches!(k, 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512) {
-            if dbg {
-                eprintln!("{label}: corrected implausible EC count {k}");
-            }
             return None;
         }
     }
@@ -120,34 +87,19 @@ pub(crate) fn correct_stream(
 /// Returns `None` for anything the v0 (exact-matrix) path cannot read;
 /// detection comes later.
 pub fn decode_exact(dark: &[u8], w: usize, h: usize) -> Option<Vec<u8>> {
-    let dbg = std::env::var("PDF_DBG3").is_ok();
     let Some((raw, placeholders)) = stream::read_exact_tolerant_with_stats(dark, w, h) else {
-        if dbg {
-            eprintln!("exact {w}x{h}: read_exact none");
-        }
         return None;
     };
     // Mostly-unreadable grid: reject before RS. A genuine print carries a
     // few malformed codewords; >3/4 means the quad was not the symbol.
     if placeholders.len() * 4 > raw.len() * 3 {
-        if dbg {
-            eprintln!(
-                "exact {w}x{h}: {}/{} placeholder codewords",
-                placeholders.len(),
-                raw.len()
-            );
-        }
         return None;
     }
-    let Some(stream) = correct_stream(raw, &placeholders, "exact", dbg) else {
+    let Some(stream) = correct_stream(raw, &placeholders) else {
         return None;
     };
     let desc = stream[0] as usize;
-    let out = modes::interpret(stream::strip_pads(&stream[1..desc]));
-    if dbg {
-        eprintln!("exact {w}x{h}: interpret {}", if out.is_some() { "ok" } else { "failed" });
-    }
-    out
+    modes::interpret(stream::strip_pads(&stream[1..desc]))
 }
 
 #[cfg(test)]
@@ -168,7 +120,7 @@ mod tests {
     fn correct_stream_accepts_a_real_symbol() {
         let sym = crate::encode::encode_full(b"HELLO", 2).unwrap();
         let stream = crate::stream::read_exact(&sym.matrix, sym.width, sym.height).unwrap();
-        assert!(crate::correct_stream(stream, &[], "test", false).is_some());
+        assert!(crate::correct_stream(stream, &[]).is_some());
     }
 
     /// A junk grid's stream: all-zero body plus a spurious descriptor that
@@ -178,9 +130,9 @@ mod tests {
     fn correct_stream_rejects_degenerate_zero_body() {
         let mut stream = vec![0u16; 50];
         stream[0] = 18; // 50 - 18 = 32, a legal EC count
-        assert!(crate::correct_stream(stream, &[], "test", false).is_none());
+        assert!(crate::correct_stream(stream, &[]).is_none());
         // An all-zero stream is invalid even earlier (descriptor 0).
-        assert!(crate::correct_stream(vec![0u16; 50], &[], "test", false).is_none());
+        assert!(crate::correct_stream(vec![0u16; 50], &[]).is_none());
     }
 
     /// Spec 2.2.3 worked example: 3 rows, 3 cols, ECC 1 ->

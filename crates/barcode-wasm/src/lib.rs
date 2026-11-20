@@ -320,11 +320,7 @@ impl BarcodeScanner {
             } else {
                 (total_dm, 0)
             };
-            let ladder_dbg = std::env::var("DM_LADDER_DBG").is_ok();
             let mut two_d = self.scan_2d(img, tiers, still, primary);
-            if ladder_dbg {
-                eprintln!("ladder primary budget {primary} @{}ms -> {}", now_ms().saturating_sub(t0), two_d.len());
-            }
             let diagonal_sensitive = tiers.datamatrix || tiers.pdf417 || tiers.aztec;
             // Still: reserve the diagonal's slice before the ladder halves
             // the budget away (the last ladder steps get <1ms otherwise).
@@ -401,9 +397,6 @@ impl BarcodeScanner {
                         ..Default::default()
                     };
                     let mut hits = self.scan_2d(&rimg, &tilt_tiers, false, step);
-                    if ladder_dbg {
-                        eprintln!("ladder step {deg} budget {step} @{}ms -> {}", now_ms().saturating_sub(t0), hits.len());
-                    }
                     if !hits.is_empty() {
                         // quads are in rotated coords: map back by -deg
                         let (sin, cos) = (-deg).to_radians().sin_cos();
@@ -438,9 +431,6 @@ impl BarcodeScanner {
                 };
                 if budget > 0 {
                     let hits = self.scan_diagonal(img, tiers, budget);
-                    if ladder_dbg {
-                        eprintln!("ladder diagonal budget {budget} @{}ms -> {}", now_ms().saturating_sub(t0), hits.len());
-                    }
                     if !hits.is_empty() {
                         two_d = hits;
                     }
