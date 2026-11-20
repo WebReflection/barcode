@@ -40,6 +40,7 @@ const SUPPORTED = new Set([
   "databarltd",
   "databarstk",
   "databarstackomni",
+  "databarexpanded",
   "qr",
   "qrcode",
   "microqr",

@@ -1425,6 +1425,8 @@ pub fn databar_stacked_canvas(runs: &[u32; 46], module: u32, quiet: u32, omni: b
 
 pub mod oracle_matrices;
 
+pub mod databar_exp;
+mod databar_exp_tables;
 mod databar_tables;
 
 /// Segment width tables from the oracle sweeps (docs/databar-recon.md),
