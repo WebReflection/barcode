@@ -338,6 +338,8 @@ async function suiteRegression(browser, project) {
   const box = resolve(pkg, "test-codes/regression/gs1-datamatrix-box-2026-11-19.jpeg");
   const hard = resolve(pkg, "test-codes/regression/qr-hard-negative-2026-11-19.jpeg");
   const code32 = resolve(pkg, "test-codes/regression/code32-aic-2026-11-19.jpeg");
+  const pharma = resolve(pkg, "test-codes/regression/pharma-real-code-2026-11-20.jpeg");
+  const pharmaClose = resolve(pkg, "test-codes/regression/pharma-itf-close-2026-11-20.jpeg");
   if (!existsSync(code32)) {
     console.log(`SKIP  ${project.padEnd(8)} regression no fixture at ${code32}`);
     return;
@@ -405,6 +407,26 @@ async function suiteRegression(browser, project) {
       // EAN-13, so the linear fast-path must not hide the 2D tier.
       const { value } = await scanFixture(box, "?latency=20000");
       if (value !== GS1) throw new Error(`two-codes: got ${JSON.stringify(value)}`);
+    });
+  }
+
+  if (existsSync(pharma)) {
+    // The user's real-world requirement: default "everything", no format
+    // filter. The tiny ITF must also outrank the same-bars Code 128 false
+    // positive (`0BJVcB`) that used to confirm instead. ~4.4s locally.
+    await check("itf-pharma-all", async () => {
+      const { value } = await scanFixture(pharma, "?latency=20000");
+      if (value !== "0122508903") throw new Error(`itf: got ${JSON.stringify(value)}`);
+    });
+  }
+
+  if (existsSync(pharmaClose)) {
+    // Same stop-rule bug at native pitch: the label border shares the
+    // barcode's rows, so the old "stop must be the last ink" rule missed
+    // every frame.
+    await check("itf-pharma-close", async () => {
+      const { value } = await scanFixture(pharmaClose, "?type=itf&latency=10000");
+      if (value !== "0122508903") throw new Error(`itf close: got ${JSON.stringify(value)}`);
     });
   }
 
