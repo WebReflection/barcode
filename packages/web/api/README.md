@@ -212,6 +212,23 @@ files sit in one directory**:
 import barcode from "https://cdn.example/barcode-web@1.0.0/main.js";
 ```
 
+`new Worker(url)` only accepts a **same-origin** script, so a page that
+imports `main.js` from a CDN must hand `barcode()` a same-origin worker
+URL. A one-line shim next to the page is enough:
+
+    // worker-shim.js — same origin
+    import "https://cdn.example/barcode-web@1.0.0/worker.js";
+
+```js
+import barcode from "https://cdn.example/barcode-web@1.0.0/main.js";
+
+const { scan, render } = barcode({ worker: "./worker-shim.js" });
+```
+
+The shim imports the CDN worker statically at the top, so the MessagePort
+is still the worker's first message. This is exactly how the docs
+playground loads itself.
+
 Requirements seen in the wild:
 
 * `worker.js` / `main.js` must be served with a

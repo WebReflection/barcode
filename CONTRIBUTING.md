@@ -23,7 +23,10 @@ opt-in for a generated-docs PR; do not add it to feature work.
 
 ## Before opening a PR
 
-- `cargo test --workspace --release`
-- `npm run check` and `npm run build` in `packages/web`
+- `cargo test --workspace` (CI runs it with `--locked`; `--release` if you want
+  the optimized sweep)
+- `npm run check` in `packages/web`
+- `npm run build` in `packages/web` — it also regenerates `docs/`; that output is
+  generated, so never commit it in this PR (see above)
 - the relevant browser gate (`node tools/e2e/playwright.mjs --ci --browser chromium`
   for the full suite)

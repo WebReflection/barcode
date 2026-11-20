@@ -2,9 +2,10 @@
 
 <sup>**Social Media Photo by [Risto Kokkonen](https://unsplash.com/@risto_kokkonen) on [Unsplash](https://unsplash.com/)**</sup>
 
-WebGPU-accelerated barcode and QR scanning for the web, with encoding
-(rendering) for all 17 supported symbologies. Native JS + a Rust/WASM
-core — clean-room implementations, MIT throughout.
+WebGPU-accelerated barcode and QR scanning for the web: 19 canonical
+symbologies decoded, 18 rendered (GS1 DataBar Expanded is decode-only for
+now). Native JS + a Rust/WASM core — clean-room implementations, MIT
+throughout.
 
 **[Live demos →](https://webreflection.github.io/barcode/)** —
 [camera scan](https://webreflection.github.io/barcode/scan.html),
@@ -170,6 +171,19 @@ worker and its wasm and rewrite them to the emitted assets; an unbundled
 bundler that does neither can pass an explicit `worker` URL — and must
 then also ship `wasm.wasm` next to that worker.
 
+A page that imports `main.js` from a CDN must pass a **same-origin**
+`worker` URL: `new Worker()` rejects a cross-origin script. Keep a
+one-line shim next to the page and pass it:
+
+    // worker-shim.js
+    import "https://cdn.example/barcode-web@1.0.0/worker.js";
+
+```js
+import barcode from "https://cdn.example/barcode-web@1.0.0/main.js";
+
+const { scan, render } = barcode({ worker: "./worker-shim.js" });
+```
+
 ## Published payload
 
 The npm package is `README.md`, `LICENSE` and `dist/`:
@@ -186,13 +200,16 @@ dist/
 ```
 
 Serve the folder from any origin (import map, CDN, unpacked localhost);
-`wasm.wasm` resolves relatively to `worker.js`. The page entry never
-touches a worker; a worker imports `/worker` statically at the top.
+`wasm.wasm` resolves relatively to `worker.js`. The page entry imports no
+worker module; it spawns `./worker.js` by URL. A worker imports
+`/worker` statically at the top.
 
 ## Development
 
 ```sh
 # from the repo root, one command builds types + wasm + dist/
+# (it also regenerates docs/; that output is generated, never commit it
+# in a feature PR — the maintainer ships a docs-rebuild change)
 npm run build
 
 # the deployable demo (static folder, relative URLs, shared wasm)
@@ -206,8 +223,9 @@ npm run serve:docs          # http://<lan-ip>:8128
 npm run serve:docs:iphone   # https on :8443 for a real iPhone
 ```
 
-The repo tests run on Playwright in CI (Chromium + WebKit, fake camera)
-and keep the CDP tools for real phones:
+The repo tests run on Playwright in CI (Chromium per push, WebKit
+nightly; the fake camera needs no device) and keep the CDP tools for real
+phones:
 
 ```sh
 npm test                                   # chromium + webkit + iphone profile
