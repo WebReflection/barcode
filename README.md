@@ -35,18 +35,16 @@ decoder):
 | ITF / Interleaved 2 of 5 | |
 | Codabar | |
 | GS1 DataBar (Omni, Limited, Stacked, Stacked Omni) | |
-| GS1 DataBar Expanded (decode-only) | |
+| GS1 DataBar Expanded | |
 
 Inverted (white-on-black) codes are read on both paths: a code filling a
 dark scene, and a white-on-black code sitting on a **light** page (a
 screenshot or a photographed label with white margins).
 
-`render()` re-encodes a result as SVG for **18 of the 19** symbologies —
-every one except GS1 DataBar Expanded, which is decode-only until its
-fixture encoder lands — with QR v1–40 (explicit error-correction level /
-mask / version), Micro QR, Data Matrix (including explicit rectangular
-sizes), Aztec and PDF417 (explicit EC level). See
-`packages/web/README.md` for the options.
+`render()` re-encodes a result as SVG for **all 19** symbologies, with QR
+v1–40 (explicit error-correction level / mask / version), Micro QR, Data
+Matrix (including explicit rectangular sizes), Aztec and PDF417 (explicit
+EC level). See `packages/web/README.md` for the options.
 
 ## Usage
 
@@ -303,7 +301,6 @@ round-trip), `tests/roi.html` covers small codes in a 4096 px frame,
 ## Known limits / next
 
 - One code per scan (by design for now); multi-code scanning is future work.
-- GS1 DataBar Expanded is decode-only until its render/fixture encoder lands.
 - GPU contrast normalization (per-tile stretch) for dim/grey captures is not
   done yet.
 - Native Android/iOS bindings on top of the same Rust core.

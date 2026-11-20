@@ -250,9 +250,11 @@ the same names, so `render(code)` and
 `render({ symbology: code.symbology })` need no case juggling. (Render
 still normalizes hand-built input once, for convenience.)
 
-`databarexpanded` is decode-only in this release: `scan` returns it,
-but `render`/`createSVG` do not encode it yet (the fixture encoder is
-the next DataBar Expanded PR).
+`databarexpanded` renders the element string the decoder returns
+(`(AI)data...`): the encoder writes the general-purpose (method 00) field,
+so the symbol is longer than a zint-compacted one but every element string
+is representable. The mod-211 check character is computed from the measured
+symbol-character table.
 
 ### render(code | undefined, opts?) → Promise&lt;SVGSVGElement | null&gt;
 

@@ -3,9 +3,8 @@
 <sup>**Social Media Photo by [Risto Kokkonen](https://unsplash.com/@risto_kokkonen) on [Unsplash](https://unsplash.com/)**</sup>
 
 WebGPU-accelerated barcode and QR scanning for the web: 19 canonical
-symbologies decoded, 18 rendered (GS1 DataBar Expanded is decode-only for
-now). Native JS + a Rust/WASM core — clean-room implementations, MIT
-throughout.
+symbologies decoded and rendered. Native JS + a Rust/WASM core — clean-room
+implementations, MIT throughout.
 
 **[Live demos →](https://webreflection.github.io/barcode/)** —
 [camera scan](https://webreflection.github.io/barcode/scan.html),
@@ -68,7 +67,7 @@ an embedder can keep its own protocol on the same worker.
 * **2D**: `qrcode`, `microqr`, `aztec`, `datamatrix`, `pdf417`
 * **1D**: `upca`, `ean13`, `ean8`, `upce`, `code39`, `code32`, `code93`,
   `code128`, `itf`, `codabar`, `databar`, `databarltd`, `databarstk`,
-  `databarexpanded` (decode-only until its fixture encoder lands)
+  `databarexpanded`
 
 Session option `type` filters what decodes: `'qr'` (QR + Micro QR),
 `'barcode'` (the 1D set), an exact name, or an array of names.

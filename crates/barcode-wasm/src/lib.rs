@@ -1715,6 +1715,10 @@ fn encode_fixture_impl(
             let runs = barcode_fixtures::databar_omni_runs(v);
             barcode_fixtures::databar_stacked_canvas(&runs, module, 10 * module, true)
         }
+        "databarexpanded" | "databarexp" | "gs1databarexpanded" | "rssexpanded" => {
+            barcode_fixtures::databar_exp::encode_databarexpanded(text, module, height)
+                .map_err(|e| JsValue::from_str(&e))?
+        }
         // QR: EC M / mask 2 / smallest version by default; all three are
         // overridable. `height` is meaningless for 2D and ignored.
         "qr" | "qrcode" => barcode_fixtures::encode_qr_text_version(
@@ -2277,6 +2281,32 @@ mod upside_down_tests {
             assert!(sc.scan_tiered(&img, &only, false, 0).iter().any(|r| r.text == want));
             let off = parse_formats(&["ean13".into()]).unwrap();
             assert!(sc.scan_tiered(&img, &off, false, 0).is_empty());
+        }
+    }
+
+    #[test]
+    fn databar_expanded_encoder_roundtrips() {
+        let cases = [
+            "(21)12345",
+            "(10)ABC123",
+            "(90)abc",
+            "(21)0123456789",
+            "(01)90012345678908(3103)001750",
+            "(01)40063813339314(3103)001750(10)ABC123",
+            "(90)abcdefghijklmnopqrstuvwxyz",
+        ];
+        let only = parse_formats(&["databarexpanded".into()]).unwrap();
+        for text in cases {
+            let canvas =
+                barcode_fixtures::databar_exp::encode_databarexpanded(text, 3, 40).unwrap();
+            let img = BitImage::new(canvas.width, canvas.height, canvas.bits());
+            let mut sc = BarcodeScanner::new();
+            let hits = sc.scan_tiered(&img, &only, false, 0);
+            assert!(
+                hits.iter().any(|r| r.text == text),
+                "{text}: got {:?}",
+                hits.iter().map(|r| (&r.symbology, &r.text)).collect::<Vec<_>>(),
+            );
         }
     }
 

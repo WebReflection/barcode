@@ -22,6 +22,7 @@ export const CASES = [
   ["databar", "(01)40063813339314"],
   ["databarltd", "(01)10000000000007"],
   ["databarstk", "(01)40063813339314"],
+  ["databarexpanded", "(01)40063813339314(10)ABC"],
   ["code93", "TEST93"],
   ["qrcode", "HELLO WORLD"],
   ["microqr", "12345"],
