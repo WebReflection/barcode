@@ -250,6 +250,70 @@ async function suiteFakecam(browser, project) {
       note: ok ? JSON.stringify(got) : xfail ?? (note || status),
     });
   }
+  // Default UI gesture: a two-finger pinch must drive the CAMERA track's
+  // zoom (the decoder reads stream pixels; a CSS scale would not), and
+  // `touch-action: none` keeps the page at scale 1. The fake camera
+  // advertises a zoom capability for this check (`?fakezoom=1`). The
+  // fixture is a QR but only aztec is requested, so nothing confirms and
+  // the dialog stays up for the measurement.
+  {
+    const t0 = Date.now();
+    let ok = false;
+    let note = "";
+    try {
+      const e2e = encodeURIComponent("qrcode:PINCH-ZOOM");
+      await page.goto(
+        `${ORIGIN}/scan.html?formats=aztec&fakezoom=1&e2e=${e2e}&_=${Date.now()}`,
+        { waitUntil: "load" },
+      );
+      await page.waitForSelector("#start", { timeout: 30_000 });
+      await page.click("#start");
+      await page.waitForFunction(
+        () => {
+          const v = document.querySelector("dialog.barcode-ui video");
+          return !!v && v.videoWidth > 0;
+        },
+        null,
+        { timeout: 15_000 },
+      );
+      ok = await page.evaluate(() => {
+        const track = document.querySelector("dialog.barcode-ui video")
+          ?.srcObject?.getVideoTracks?.()[0];
+        const stage = document.querySelector("dialog.barcode-ui .barcode-ui-stage");
+        if (!track || !stage) return false;
+        const before = track.getSettings().zoom;
+        const r = stage.getBoundingClientRect();
+        const cx = r.x + r.width / 2;
+        const cy = r.y + r.height / 2;
+        const fire = (/** @type {string} */ type, /** @type {number} */ pointerId, /** @type {number} */ x, /** @type {number} */ y) =>
+          stage.dispatchEvent(new PointerEvent(type, {
+            pointerId, pointerType: "touch", bubbles: true, cancelable: true,
+            clientX: x, clientY: y, isPrimary: pointerId === 1,
+          }));
+        fire("pointerdown", 1, cx - 30, cy);
+        fire("pointerdown", 2, cx + 30, cy);
+        fire("pointermove", 1, cx - 75, cy);
+        fire("pointermove", 2, cx + 75, cy);
+        fire("pointerup", 1, cx - 75, cy);
+        fire("pointerup", 2, cx + 75, cy);
+        // setZoom is async: wait for the applied constraint.
+        return new Promise((resolve) => {
+          const deadline = performance.now() + 2000;
+          const poll = () => {
+            const zoom = track.getSettings().zoom;
+            if (zoom > before) resolve(visualViewport.scale === 1);
+            else if (performance.now() > deadline) resolve(false);
+            else setTimeout(poll, 50);
+          };
+          poll();
+        });
+      });
+      if (!ok) note = "pinch did not raise the track zoom (or the page zoomed)";
+    } catch (err) {
+      note = String(err?.message ?? err).split("\n")[0];
+    }
+    record({ project, suite: "fakecam", name: "pinch-zoom", ok, ms: Date.now() - t0, note: ok ? "" : note });
+  }
   await context.close();
 }
 

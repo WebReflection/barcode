@@ -51,6 +51,9 @@ export const CASES = [
 // Runs as a classic script before the page's modules register.
 export const MOCK = `
 (function () {
+  // fakezoom=1: advertise a zoom capability on the canvas track so the
+  // default UI's pinch handler is covered without camera hardware.
+  const fakezoom = new URLSearchParams(location.search).get("fakezoom") === "1";
   let q = new URLSearchParams(location.search).get("e2e");
   if (!q) return;
   // tiny<NPX>-<symbology>:<text> — draw the specimen at NPX across
@@ -173,6 +176,26 @@ export const MOCK = `
     const stream = canvas.captureStream(15);
     const timer = setInterval(draw, 66); // keep frames flowing at ~15fps
     stream.getVideoTracks().forEach((t) => t.addEventListener("ended", () => clearInterval(timer)));
+    if (fakezoom) {
+      // A real canvas track has no zoom constraint. Patch THIS instance so
+      // Scanner.zoomTo()/currentZoom() see the same contract a phone
+      // exposes; frames themselves are unchanged (this gate is only about
+      // the gesture -> camera wiring, not optics).
+      const track = stream.getVideoTracks()[0];
+      const caps = track.getCapabilities?.() ?? {};
+      const settings = track.getSettings.bind(track);
+      let zoom = 1;
+      Object.defineProperties(track, {
+        getCapabilities: { value: () => ({ ...caps, zoom: { min: 1, max: 8, step: 0.1 } }) },
+        getSettings: { value: () => ({ ...settings(), zoom }) },
+        applyConstraints: {
+          value: async (/** @type {any} */ constraints) => {
+            const next = constraints?.advanced?.find((/** @type {any} */ c) => c.zoom != null)?.zoom;
+            if (next != null) zoom = Math.min(8, Math.max(1, next));
+          },
+        },
+      });
+    }
     return stream;
   };
 })();

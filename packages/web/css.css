@@ -18,6 +18,10 @@ dialog.barcode-ui {
   gap: 14px;
   background: var(--barcode-ui-backdrop, rgba(8, 10, 12, .82));
   color-scheme: dark;
+  /* The viewfinder owns gestures: a two-finger pinch is the camera's zoom,
+     never the page's (see the pinch handler in api/main.js). */
+  touch-action: none;
+  overscroll-behavior: contain;
 }
 dialog.barcode-ui[open] { display: flex; }
 dialog.barcode-ui::backdrop {
@@ -31,6 +35,10 @@ dialog.barcode-ui::backdrop {
   overflow: hidden;
   background: #000;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, .08);
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 .barcode-ui-stage video {
   display: block; width: 100%; height: 100%;
