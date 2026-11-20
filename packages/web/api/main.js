@@ -233,17 +233,10 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
   handled.add(w);
   const { port1, port2 } = new MessageChannel;
   const utils = /** @type {Bindings} */ (binding(port1, {}));
-  // The worker says `barcode:ready` once its module graph is evaluated and
-  // the port capture is installed; only then hand the port over. (A port
-  // posted in the same tick as `new Worker` can be lost to the fetch of
-  // the worker's module graph — measured: render() never resolved.)
-  /** @param {MessageEvent} event */
-  const connect = (event) => {
-    if (event.data?.type !== "barcode:ready") return;
-    w.removeEventListener("message", connect);
-    w.postMessage(null, { transfer: [port2] });
-  };
-  w.addEventListener("message", connect);
+  // The worker binds this port on the first message it receives. The
+  // worker entry must import the SDK statically at the top: a lazily
+  // imported worker module may miss the port, and that is not recoverable.
+  w.postMessage(null, { transfer: [port2] });
 
   // Session-level defaults every scan inherits; per-scan options win.
   const sessionType = type;

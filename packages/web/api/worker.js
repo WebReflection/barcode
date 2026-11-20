@@ -810,13 +810,11 @@ const localHandlers = () => ({
 });
 
 /**
- * The bootstrap: tell the page this worker is listening, capture its
- * MessagePort once, then bind. The ready message is needed because a
- * worker's module graph is fetched asynchronously: a port posted in the
- * same tick as `new Worker(...)` can be dispatched before this module
- * evaluates. The page only posts after `barcode:ready`, so the capture
- * listener below always exists first. Port-less messages (an embedder's
- * own protocol on the same worker) pass through untouched.
+ * The bootstrap binds exactly once, on the page's FIRST message: the
+ * MessagePort. This file must be the worker entry (or be imported
+ * statically at the top of it) so the capture below exists before that
+ * message can be dispatched. Port-less messages from an embedder sharing
+ * the worker pass through untouched.
  */
 /** @type {MessagePort | null} */
 let captured = null;
@@ -832,7 +830,6 @@ const capture = (event) => {
   for (const resolve of waiting.splice(0)) resolve(port);
 };
 addEventListener("message", capture);
-postMessage({ type: "barcode:ready" });
 
 export default (captured
   ? Promise.resolve(captured)

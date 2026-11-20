@@ -4,7 +4,7 @@ The published package is `README.md` + `LICENSE` + one `dist/` folder.
 The entries are:
 
   * `dist/index.js` — thread-aware default entry: on a page it loads
-    `main.js`, in a worker it loads `worker.js`
+    `main.js`; in a worker import `worker.js` at the top
   * `dist/main.js` — ESM, main thread (`barcode()` → `scan`/`render`)
   * `dist/worker.js` — ESM, the bound worker (binarizer + wasm)
   * `dist/wasm.wasm` — the WASM binary module for barcode en/decoding
@@ -26,7 +26,7 @@ This styling should probably be also configurable as part of the options to `sca
 
 The build writes one `dist/` payload:
 
-1. **index.js**: thread-aware default entry (`main.js` on a page, `worker.js` in a worker).
+1. **index.js**: default entry for pages (`main.js`); in a worker it throws and tells you to import `worker.js` statically at the top.
 2. **main.js**: the main-thread ESM entry, with `scan()` and `render()` delegating to the worker via `@webreflection/bindings`.
 3. **worker.js**: the ESM worker entry, initializing the WASM module and exposing the barcode utilities through the same bindings.
 4. **wasm.wasm**: the compiled WebAssembly binary.
@@ -86,8 +86,10 @@ const { scan, render, worker } = barcode({
 });
 ```
 
-The session boots instantly — worker spawned, MessagePort crossed, wasm
-warming up — so the first scan arrives to a live decoder. The module
+The session boots instantly — worker spawned, MessagePort posted as the
+worker's first message, wasm warming up — so the first scan arrives to a
+live decoder. The worker entry must be a static top-of-file import: a
+lazy import cannot guarantee the port. The module
 owns the worker for the whole session: **abort never terminates it**,
 and terminating `worker` yourself ends the session (make a new one).
 

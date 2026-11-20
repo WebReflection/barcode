@@ -1,7 +1,7 @@
-// A real module Worker importing the thread-aware default entry. Its
-// default export must be the bootstrap promise; the page binds it with
-// barcode({ worker }) and then calls render/scan on the same worker.
-import entry from "../api/index.js";
+// A consumer's module Worker: the SDK worker entry is imported STATICALLY
+// at the top, so the MessagePort is its first message. The page binds it
+// with barcode({ worker }) and then calls render/scan on the same worker.
+import entry from "../api/worker.js";
 
 const bootstrap = /** @type {Promise<{ decode: Function, encode: Function }>} */ (
   /** @type {unknown} */ (entry)

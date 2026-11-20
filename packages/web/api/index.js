@@ -1,30 +1,18 @@
 /**
- * Thread-aware default entry — the `@webreflection/barcode` specifier.
+ * The default entry — for pages.
  *
- * One import works in both contexts:
- *
- *   // main thread: the default is barcode(options) → { scan, render, worker }
  *   import barcode from '@webreflection/barcode';
  *   const { scan, render } = barcode();
  *
- *   // dedicated/shared worker: the default is the bootstrap promise
- *   // (non-blocking by design — the listener is installed synchronously;
- *   // the promise resolves when the main thread hands over its port)
- *   import bootstrap from '@webreflection/barcode';
- *
- * The detection runs BEFORE anything DOM-ish is imported: on a worker we
- * only load `worker.js`, so the SDK never evaluates main-thread code there.
- * `WorkerGlobalScope` is exposed in dedicated/shared/service workers and
- * undefined on the main thread, so this never touches `window`.
- *
- * Use the explicit entries when a static import is preferable:
- *   '@webreflection/barcode/main'   main thread only
- *   '@webreflection/barcode/worker' worker only
+ * In a worker, import '@webreflection/barcode/worker' STATICALLY at the
+ * top instead. The MessagePort handshake is the first message the page
+ * sends to that worker; a module imported lazily (after an await) cannot
+ * install the capture in time, so the channel is not guaranteed.
  */
-const inWorker = typeof WorkerGlobalScope !== "undefined";
+if (typeof WorkerGlobalScope !== "undefined") {
+  throw new Error(
+    "@webreflection/barcode: in a worker import '@webreflection/barcode/worker' statically at the top — the MessagePort must be the first message.",
+  );
+}
 
-const { default: entry } = inWorker
-  ? await import("./worker.js")
-  : await import("./main.js");
-
-export default entry;
+export { default } from "./main.js";

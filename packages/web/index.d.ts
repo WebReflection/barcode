@@ -1,20 +1,10 @@
-// Types for the thread-aware default entry (`@webreflection/barcode`).
+// Types for the default entry (`@webreflection/barcode`) — pages only.
 //
-// The runtime default depends on where the module is imported:
-//   - main thread → the barcode() session factory (see ./main.d.ts)
-//   - worker      → the bootstrap promise (see ./worker.d.ts)
-//
-// TypeScript cannot see the runtime context, so the honest type is the
-// union. Import '@webreflection/barcode/main' or
-// '@webreflection/barcode/worker' for a precise type.
+// In a worker, import '@webreflection/barcode/worker' statically at the
+// top: the MessagePort must be the first message that worker receives.
 
-declare const entry:
-  | typeof import("./main.js").default
-  | Promise<unknown>;
+export { default } from "./main.js";
 
-export default entry;
-
-// Type-only: no runtime named exports exist on this entry.
 export type {
   Barcode,
   BarcodeOptions,

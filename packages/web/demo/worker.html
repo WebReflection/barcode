@@ -32,10 +32,10 @@
 <a class="docs-back" href="./index.html">← API demos</a>
 <h1>Worker API, three ways</h1>
 <p class="lede">
-  One session, one worker. These buttons prove the explicit
-  <code>@webreflection/barcode/worker</code> entry, the thread-aware
-  <code>@webreflection/barcode</code> entry inside a real module Worker,
-  and the main-thread default.
+  One session, one worker. These buttons prove the page entry, the
+  explicit <code>@webreflection/barcode/worker</code> entry spawned by the
+  page, and that same worker entry statically imported at the top of your
+  own module Worker.
 </p>
 
 <section>
@@ -53,10 +53,11 @@
 </section>
 
 <section>
-  <h2>3 · Auto entry inside a worker</h2>
-  <p>A module Worker that imports <code>@webreflection/barcode</code>; its
-  default is the bootstrap promise. The page binds it with
-  <code>barcode({ worker })</code> and uses it immediately.</p>
+  <h2>3 · Worker entry, imported at the top</h2>
+  <p>A module Worker that imports <code>@webreflection/barcode/worker</code>
+  statically at the top; its default is the bootstrap promise, resolved by
+  the page's first message (the MessagePort). The page binds it with
+  <code>barcode({ worker })</code>.</p>
   <div class="actions"><button class="primary" id="auto-worker">Run round-trip</button></div>
 </section>
 

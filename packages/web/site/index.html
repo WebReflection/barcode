@@ -60,7 +60,7 @@
       <a class="card" href="./worker.html">
         <span class="card-kicker">worker</span>
         <h3>Use the worker entry</h3>
-        <p>The explicit <code>/worker</code> entry and the auto entry inside a real module Worker, handed to <code>barcode({ worker })</code>.</p>
+        <p>The explicit <code>/worker</code> entry — spawned by the page or statically imported at the top of your own module Worker — handed to <code>barcode({ worker })</code>.</p>
         <code>barcode({ worker })</code>
       </a>
       <a class="card" href="./test.html">
@@ -83,7 +83,7 @@
     <table class="api-table">
       <thead><tr><th>import</th><th>context</th><th>default</th></tr></thead>
       <tbody>
-        <tr><td data-label="import"><span><code>@webreflection/barcode</code></span></td><td data-label="context"><span>auto</span></td><td data-label="default"><span>page → <code>barcode()</code>; worker → bootstrap promise</span></td></tr>
+        <tr><td data-label="import"><span><code>@webreflection/barcode</code></span></td><td data-label="context"><span>page</span></td><td data-label="default"><span><code>barcode(options)</code></span></td></tr>
         <tr><td data-label="import"><span><code>@webreflection/barcode/main</code></span></td><td data-label="context"><span>page</span></td><td data-label="default"><span><code>barcode(options)</code></span></td></tr>
         <tr><td data-label="import"><span><code>@webreflection/barcode/worker</code></span></td><td data-label="context"><span>worker</span></td><td data-label="default"><span>bootstrap promise</span></td></tr>
         <tr><td data-label="import"><span><code>@webreflection/barcode/css</code></span></td><td data-label="context"><span>page</span></td><td data-label="default"><span>optional default scan UI</span></td></tr>

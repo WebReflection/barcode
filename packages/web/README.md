@@ -34,28 +34,27 @@ if (code) {
 
 | import | context | default export |
 | --- | --- | --- |
-| `@webreflection/barcode` | auto | on a page: `barcode(options)` → `{ scan, render, worker }`; in a worker: the bootstrap promise |
-| `@webreflection/barcode/main` | main thread | `barcode(options)` (always) |
-| `@webreflection/barcode/worker` | worker | bootstrap promise (always) |
+| `@webreflection/barcode` | page | `barcode(options)` → `{ scan, render, worker }` |
+| `@webreflection/barcode/main` | page | `barcode(options)` (always) |
+| `@webreflection/barcode/worker` | worker | bootstrap promise |
 
-The auto entry detects the context before importing anything DOM-ish:
-a worker only evaluates `worker.js`, so main-thread code never runs
-there. In a worker the default is a **non-blocking promise**: the
-message listener is installed synchronously; the promise resolves when
-the page hands over its port.
+**The worker entry must be imported statically at the top of the worker
+script** (or be the worker script itself — also when it comes from a
+CDN). The page's first message is the MessagePort; a module that is
+imported lazily, after an `await`, cannot guarantee the channel and is
+not supported. Importing the root entry in a worker throws with that
+instruction.
 
-It uses top-level await (the branch must be chosen before the default
-export exists). Browsers support that; a bundler targeting below ES2022
-(Vite's default `build.target`) should either raise the target to
-`es2022` or import the explicit `/main` / `/worker` entry, which needs no
-top-level await.
+The worker default is a **non-blocking promise**: the message listener is
+installed synchronously when the module evaluates; the promise resolves
+when the page hands over its port.
 
 ```js
-// a worker that wants the SDK alongside its own protocol
-import bootstrap from '@webreflection/barcode';
+// your worker (top of the file — static, not awaited)
+import bootstrap from '@webreflection/barcode/worker';
 const { decode, encode } = await bootstrap;
 
-// a page, explicit entry (precise types; no runtime branching)
+// a page, explicit entry
 import barcode from '@webreflection/barcode/main';
 ```
 
@@ -150,9 +149,9 @@ Style via CSS custom properties — set them on the SVG (it carries class
 
 `worker` accepts a string/URL (spawns a dedicated module Worker), or an
 already-created `Worker` used as-is. Either way `Barcode.worker` is the
-live Worker instance. The worker says `barcode:ready` once its module
-graph is evaluated; the page then hands over the MessagePort. Calls made
-before the port crosses are queued on the channel.
+live Worker instance. `barcode()` posts the MessagePort as the worker's
+first message; calls made before the port crosses are queued on the
+channel. The worker entry must import the SDK statically at the top.
 
 `@webreflection/barcode/worker` is the script the session loads. It can
 also be imported on top of your own worker (its default export is the
@@ -184,8 +183,8 @@ dist/
 ```
 
 Serve the folder from any origin (import map, CDN, unpacked localhost);
-`wasm.wasm` resolves relatively to `worker.js`. The module never touches
-`window`; the auto entry avoids loading main-thread code in a worker.
+`wasm.wasm` resolves relatively to `worker.js`. The page entry never
+touches a worker; a worker imports `/worker` statically at the top.
 
 ## Development
 
