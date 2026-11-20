@@ -11,12 +11,10 @@ core — clean-room implementations, MIT throughout.
 [your own video / mount](https://webreflection.github.io/barcode/live.html),
 [still image](https://webreflection.github.io/barcode/still.html),
 [render playground](https://webreflection.github.io/barcode/render.html),
-[worker API](https://webreflection.github.io/barcode/worker.html),
-[self-test](https://webreflection.github.io/barcode/test.html) and
-[transports](https://webreflection.github.io/barcode/contract-test.html).
+[worker API](https://webreflection.github.io/barcode/worker.html).
 
 ```js
-import barcode from '@webreflection/barcode';
+import barcode from '@webreflection/barcode/main';
 import '@webreflection/barcode/css'; // optional: the default scan UI
 
 const { scan, render } = barcode();
@@ -30,32 +28,34 @@ if (code) {
 }
 ```
 
-## Three entries, one package
+## Two explicit entries
 
 | import | context | default export |
 | --- | --- | --- |
-| `@webreflection/barcode` | page | `barcode(options)` → `{ scan, render, worker }` |
-| `@webreflection/barcode/main` | page | `barcode(options)` (always) |
+| `@webreflection/barcode/main` | page | `barcode(options)` → `{ scan, render, worker }` |
 | `@webreflection/barcode/worker` | worker | bootstrap promise |
+
+There is **no bare package entry**: an entry that guesses the context has
+to import the worker lazily, and a lazily imported worker cannot
+guarantee the MessagePort channel.
 
 **The worker entry must be imported statically at the top of the worker
 script** (or be the worker script itself — also when it comes from a
 CDN). The page's first message is the MessagePort; a module that is
 imported lazily, after an `await`, cannot guarantee the channel and is
-not supported. Importing the root entry in a worker throws with that
-instruction.
+not supported.
 
 The worker default is a **non-blocking promise**: the message listener is
 installed synchronously when the module evaluates; the promise resolves
 when the page hands over its port.
 
 ```js
+// a page
+import barcode from '@webreflection/barcode/main';
+
 // your worker (top of the file — static, not awaited)
 import bootstrap from '@webreflection/barcode/worker';
 const { decode, encode } = await bootstrap;
-
-// a page, explicit entry
-import barcode from '@webreflection/barcode/main';
 ```
 
 The worker script is strict-once: it binds the first port-carrying
@@ -172,8 +172,7 @@ The npm package is `README.md`, `LICENSE` and `dist/`:
 
 ```
 dist/
-  index.js     thread-aware default entry
-  main.js      main-thread SDK (scan/render/camera/dialog)
+  main.js      page entry: barcode() → { scan, render, worker }
   worker.js    bound worker (binarizer + wasm decode/encode)
   wasm.wasm    the binary (resolved next to worker.js)
   css.css      optional default-UI stylesheet

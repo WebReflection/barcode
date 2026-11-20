@@ -24,22 +24,12 @@
     "scanner",
     "camera"
   ],
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "files": [
     "./dist",
     "./README.md",
     "./LICENSE"
   ],
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    },
-    "./index": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    },
     "./main": {
       "types": "./dist/main.d.ts",
       "default": "./dist/main.js"

@@ -64,22 +64,8 @@ try {
     if (stopped !== undefined) throw new Error("aborted scan → " + JSON.stringify(stopped));
   });
 
-  // 2. thread-aware default entry on the MAIN thread: barcode()
-  const { default: autoEntry } = await import("../dist/index.js");
-  const auto = /** @type {typeof import("../dist/main.js").default} */ (autoEntry);
-  await check("index.js: main thread default is barcode()", () => {
-    if (typeof auto !== "function") throw new Error(`typeof ${typeof auto}`);
-  });
-  const autoSession = auto({});
-  const autoSvg = await autoSession.render({ symbology: "qrcode", text: "AUTO-ENTRY-1" });
-  const autoCode = await autoSession.scan({ image: await rasterize(autoSvg) });
-  await check("index.js: main thread render + scan", () => {
-    if (autoCode?.text !== "AUTO-ENTRY-1") throw new Error("scan → " + JSON.stringify(autoCode));
-  });
-
-  // 3. thread-aware default entry INSIDE a worker: bootstrap promise.
-  // A real file (not a blob): relative ./worker.js must resolve next to
-  // index.js, which a blob URL cannot do.
+  // 2. the SDK worker entry imported STATICALLY at the top of a consumer
+  // worker (the contract): its default is the bootstrap promise.
   const worker = new Worker(new URL("./auto-worker-test.js", import.meta.url), {
     type: "module",
   });
@@ -91,7 +77,7 @@ try {
   worker.addEventListener("error", (event) => {
     log("worker error: " + event.message);
   });
-  const workerSession = auto({ worker });
+  const workerSession = barcode({ worker });
   const workerSvg = await withTimeout(
     workerSession.render({ symbology: "qrcode", text: "AUTO-ENTRY-W" }),
     15_000,
@@ -102,11 +88,11 @@ try {
     15_000,
     "worker scan",
   );
-  await check("index.js: worker default + handshake", () => {
+  await check("worker entry: bound from the consumer worker", () => {
     if (workerSession.worker !== worker) throw new Error("not the caller worker");
     if (workerCode?.text !== "AUTO-ENTRY-W") throw new Error("scan → " + JSON.stringify(workerCode));
   });
-  await check("index.js: worker default is a promise", async () => {
+  await check("worker entry: default is a promise", async () => {
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
       const bad = workerMessages.find((m) => m?.error);

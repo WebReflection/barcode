@@ -32,16 +32,16 @@
 <a class="docs-back" href="./index.html">← API demos</a>
 <h1>Worker API, three ways</h1>
 <p class="lede">
-  One session, one worker. These buttons prove the page entry, the
-  explicit <code>@webreflection/barcode/worker</code> entry spawned by the
-  page, and that same worker entry statically imported at the top of your
-  own module Worker.
+  One session, one worker, two explicit entries. These buttons prove the
+  page entry, the <code>@webreflection/barcode/worker</code> entry spawned
+  by the page, and that same worker entry statically imported at the top
+  of your own module Worker.
 </p>
 
 <section>
-  <h2>1 · Auto entry on the main thread</h2>
-  <p><code>import barcode from '@webreflection/barcode'</code> must give the
-  session factory here, never the worker bootstrap.</p>
+  <h2>1 · Page entry</h2>
+  <p><code>import barcode from '@webreflection/barcode/main'</code> gives the
+  session factory. There is no bare package entry.</p>
   <div class="actions"><button class="primary" id="auto-main">Check</button></div>
 </section>
 

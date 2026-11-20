@@ -1,6 +1,7 @@
 /**
- * Worker API demo. The auto entry is imported in both contexts; the
- * explicit /worker entry is spawned as a file URL.
+ * Worker API demo: the page entry, the explicit /worker entry spawned by
+ * the page, and /worker imported statically at the top of a consumer
+ * worker (the contract for a guaranteed MessagePort channel).
  */
 import barcode from "../api/main.js";
 
@@ -45,7 +46,7 @@ async function rasterize(svg) {
 $$("auto-main").addEventListener("click", async () => {
   clear();
   try {
-    const { default: entry } = await import("../api/index.js");
+    const { default: entry } = await import("../api/main.js");
     if (typeof entry === "function") log("main-thread default is barcode()", "pass");
     else log(`main-thread default is ${typeof entry}`, "fail");
   } catch (err) {
