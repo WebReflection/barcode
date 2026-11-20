@@ -76,8 +76,8 @@ Session option `type` filters what decodes: `'qr'` (QR + Micro QR),
 ## The session
 
 One `barcode(options)` per page/SPA. It returns `{ scan, render, worker }`
-and boots instantly — the worker spawns, the handshake crosses, and wasm
-warms up before your first scan. The session owns its worker for its
+and boots instantly — the worker spawns, its MessagePort crosses, and
+wasm warms up before your first scan. The session owns its worker for its
 whole lifetime: **abort never terminates it**. Handing the same worker
 to a second session throws (`duplicated worker`).
 
@@ -150,21 +150,22 @@ Style via CSS custom properties — set them on the SVG (it carries class
 
 `worker` accepts a string/URL (spawns a dedicated module Worker), or an
 already-created `Worker` used as-is. Either way `Barcode.worker` is the
-live Worker instance. The handshake is deterministic: the page sends a
-port-less `barcode:ping`, the worker answers `barcode:ready`, then the
-MessagePort crosses. Ports posted before the worker is bound are safe.
+live Worker instance. The worker says `barcode:ready` once its module
+graph is evaluated; the page then hands over the MessagePort. Calls made
+before the port crosses are queued on the channel.
 
 `@webreflection/barcode/worker` is the script the session loads. It can
 also be imported on top of your own worker (its default export is the
 bootstrap promise).
 
-With a bundler, the default `barcode()` just works when it understands
-`new URL("./worker.js", import.meta.url)` / `new URL("./wasm.wasm", ...)`
-(Vite, Rollup, webpack 5 asset modules): the emitted worker and wasm are
-linked automatically. For an unbundled `dist/` (CDN, import map, static
-folder) they sit beside `main.js` and resolve the same way. A bundler that
-does neither can pass an explicit worker URL, optionally with
-`?wasm=<url>` pointing at the wasm asset it copied.
+The default worker is `new URL("./worker.js", import.meta.url)`, and the
+worker resolves its wasm as `new URL("wasm.wasm", import.meta.url)`: both
+are ordinary JavaScript, no query/fragment protocol. Bundlers that
+understand those URLs (Vite, Rollup, webpack 5 asset modules) emit the
+worker and its wasm and rewrite them to the emitted assets; an unbundled
+`dist/` (CDN, import map, static folder) resolves them as siblings. A
+bundler that does neither can pass an explicit `worker` URL — and must
+then also ship `wasm.wasm` next to that worker.
 
 ## Published payload
 

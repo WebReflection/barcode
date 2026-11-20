@@ -86,7 +86,7 @@ const { scan, render, worker } = barcode({
 });
 ```
 
-The session boots instantly — worker spawned, handshake crossed, wasm
+The session boots instantly — worker spawned, MessagePort crossed, wasm
 warming up — so the first scan arrives to a live decoder. The module
 owns the worker for the whole session: **abort never terminates it**,
 and terminating `worker` yourself ends the session (make a new one).
@@ -98,7 +98,7 @@ Transport notes (all verified in `demo/contract-test.html` via
   Worker is the whole story: one process, bound once, off the main
   thread. SharedWorkers/iframes/MessagePorts are intentionally out of
   scope for v1 (a SharedWorker binds one process across tabs, which
-  the bind-exactly-once handshake cannot serve; pass a plain Worker
+  the bind-exactly-once bootstrap cannot serve; pass a plain Worker
   per page instead). Anything else throws a TypeError.
 * Public types ship as `main.d.ts` / `worker.d.ts` (referenced from
   `package.json` exports) — the consumer-facing truth for the frozen

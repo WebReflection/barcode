@@ -3,18 +3,16 @@
 // text — raw module bitmap out). Strictly serial: the main thread sends
 // one frame only after the previous answer, so no request ids exist.
 //
-// The bootstrap: the first port-carrying message is the handshake and
-// the listener is gone right after (bind exactly once); messages
-// without ports pass through untouched — embedders keep their protocol.
+// The bootstrap: the first port-carrying message is the page's
+// MessagePort (captured below); the listener is gone right after
+// (bind exactly once); messages without ports pass through untouched —
+// embedders keep their protocol.
 //
 // Latency laws travel per-request: live frames default to the 500ms
 // camera law, still images to 5000ms — both configurable per decode.
 // Results are ranked: most centered first, larger symbol as tiebreak.
 
 import binding, { options } from '@webreflection/bindings/message-port';
-// Captures the main thread's port (and answers its readiness ping),
-// independent of how long the wasm/GPU module graph takes to evaluate.
-import { handshake } from './handshake.js';
 import { createBinarizer } from '../src/binarizer-factory.js';
 import { CpuBinarizer } from '../src/cpu-binarizer.js';
 import { getWasmScanner, decodeFrame } from '../src/decoder.js';
@@ -812,8 +810,31 @@ const localHandlers = () => ({
 });
 
 /**
- * The bootstrap binds exactly once: the first port-carrying message is
- * the handshake (captured by ./handshake.js as early as possible), then
- * the listener is gone. Embedders' port-less messages pass through.
+ * The bootstrap: tell the page this worker is listening, capture its
+ * MessagePort once, then bind. The ready message is needed because a
+ * worker's module graph is fetched asynchronously: a port posted in the
+ * same tick as `new Worker(...)` can be dispatched before this module
+ * evaluates. The page only posts after `barcode:ready`, so the capture
+ * listener below always exists first. Port-less messages (an embedder's
+ * own protocol on the same worker) pass through untouched.
  */
-export default handshake().then((port) => binding(port, localHandlers()));
+/** @type {MessagePort | null} */
+let captured = null;
+/** @type {((port: MessagePort) => void)[]} */
+const waiting = [];
+/** @param {MessageEvent} event */
+const capture = (event) => {
+  const port = event.ports?.[0];
+  if (!port) return;
+  event.stopImmediatePropagation();
+  removeEventListener("message", capture);
+  captured = port;
+  for (const resolve of waiting.splice(0)) resolve(port);
+};
+addEventListener("message", capture);
+postMessage({ type: "barcode:ready" });
+
+export default (captured
+  ? Promise.resolve(captured)
+  : new Promise((resolve) => waiting.push(resolve))
+).then((port) => binding(port, localHandlers()));

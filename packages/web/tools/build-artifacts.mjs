@@ -113,14 +113,13 @@ await esbuild.build({
 });
 
 // main.js — the SDK. No wasm glue: decode is injected through the worker.
-// `__BARCODE_DIST__` marks the published bundle; it makes the default
-// worker URL carry the adjacent wasm URL so consumer bundlers emit it.
+// The default worker is `new URL('./worker.js', import.meta.url)`, i.e. the
+// sibling file: serve/copy dist/ as-is, no URL plumbing in the API.
 await esbuild.build({
   ...common,
   entryPoints: [resolve(root, "api/main.js")],
   outfile: resolve(dist, "main.js"),
   plugins: [raw],
-  define: { __BARCODE_DIST__: '"dist"' },
 });
 
 // index.js — thread detection + runtime dynamic import. Copied, not bundled.
