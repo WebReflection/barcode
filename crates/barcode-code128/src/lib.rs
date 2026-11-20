@@ -5,7 +5,10 @@
 //! + stop (7 runs: 2,3,3,1,1,1,2). The unit is re-estimated per character
 //! from that character's own 6 run widths (sum/11), so no global calibration
 //! is needed. The check digit is mandatory — noise and mid-symbol starts
-//! survive it only with probability ~1/103.
+//! survive it only with probability ~1/103. The structural gate is the
+//! ISO/IEC 15417 quiet zone: a start must be preceded by >= 10 modules of
+//! white (see [`QUIET_MODULES`]), so a start pattern found *inside* another
+//! symbol's bars is rejected before the checksum is even consulted.
 
 use std::collections::HashMap;
 
@@ -49,6 +52,15 @@ const STOP7: [u8; 7] = [2, 3, 3, 1, 1, 1, 2];
 const CHAR_AVG_VARIANCE: f32 = 0.55;
 const STOP_AVG_VARIANCE: f32 = 0.6;
 const ELEMENT_VARIANCE: f32 = 1.4;
+
+/// ISO/IEC 15417 requires a quiet zone of at least 10 modules before the
+/// start and after the stop. The left one is also the structural gate the
+/// mod-103 checksum cannot be: a start pattern *inside* another symbol's
+/// bars (ITF/Code 39) has a narrow inter-element space before it, and a
+/// 1-in-103 checksum coincidence on consecutive rows used to confirm
+/// values like `:52620` on a pharma box holding only Code 32 + DataMatrix
+/// + ITF-10. Half a module of tolerance for print/crop smear.
+const QUIET_MODULES: f32 = 9.5;
 
 /// `PATTERNS` transposed for the SIMD closest-pattern search: element-major,
 /// padded to a multiple of the 4-lane vector. The padding patterns are
@@ -224,7 +236,8 @@ impl Code128Decoder {
     /// `ELEMENT_VARIANCE`. This is what a degraded print needs: one
     /// widened bar must not invalidate an otherwise certain character.
     /// The mandatory mod-103 check digit (and the scanner's `min_rows`
-    /// corroboration) is the false-positive gate.
+    /// corroboration) confirms the read; the quiet zone in `try_from` is
+    /// what keeps a valid-looking window inside another symbol out.
     fn char_value(&self, k: usize) -> Option<(u8, f32, bool, f32)> {
         if k + 6 > self.runs.len() {
             return None;
@@ -308,8 +321,18 @@ impl Code128Decoder {
 
     /// Decode a symbol whose first bar run is at `start`.
     fn try_from(&self, start: usize) -> Option<Candidate> {
-        let (first, _, mut exact, first_err) = self.char_value(start)?;
+        let (first, unit, mut exact, first_err) = self.char_value(start)?;
         if !matches!(first, 103..=105) {
+            return None;
+        }
+        // ISO/IEC 15417 quiet zone: the start must be preceded by white
+        // space, not by another symbol's bar. Without this, any 1D row with
+        // the right transition rhythm can supply a start pattern and the
+        // 1/103 checksum decides; `pharma-box` decoded `:52620` that way.
+        if start == 0
+            || self.runs[start - 1].0
+            || (self.runs[start - 1].1 as f32) < QUIET_MODULES * unit
+        {
             return None;
         }
         let _set = match first {
@@ -596,6 +619,42 @@ mod tests {
         // The start value 104's first element is a 2-module bar.
         worn.clear(quiet + 2 * 6 - 4, 0, 4, 30);
         assert_eq!(decode_canvas(&worn, 2).as_deref(), Some("AB12-x9"));
+    }
+
+    /// Shift a canvas left by `cut` pixels (simulates a crop that trims the
+    /// quiet zone), keeping the symbol untouched.
+    fn crop_left(src: &barcode_fixtures::Canvas, cut: u32) -> barcode_fixtures::Canvas {
+        let bytes_per_row = src.bits().len() / src.height as usize;
+        let ink = |x: u32, y: u32| {
+            src.bits()[y as usize * bytes_per_row + (x >> 3) as usize] >> (x & 7) & 1 == 1
+        };
+        let mut out = barcode_fixtures::Canvas::new(src.width - cut, src.height);
+        for y in 0..src.height {
+            for x in cut..src.width {
+                if ink(x, y) {
+                    out.fill(x - cut, y, 1, 1);
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn rejects_a_start_without_the_left_quiet_zone() {
+        // ISO/IEC 15417: a start must be preceded by >= 10 modules of
+        // white. This is the structural gate for the pharma-box false
+        // positive (`:52620`): a start pattern inside another symbol's bars.
+        let clean = barcode_fixtures::encode_code128("AB12-x9", 4, 60);
+        let quiet = 10 * 4;
+        let tight = crop_left(&clean, quiet);
+        assert_eq!(decode_canvas(&tight, 2), None, "no quiet zone at all");
+
+        let narrow = crop_left(&clean, quiet - 3 * 4);
+        assert_eq!(decode_canvas(&narrow, 2), None, "3-module quiet zone");
+
+        // The encoder's own 10-module quiet zone is accepted with the half
+        // module of smear tolerance.
+        assert_eq!(decode_canvas(&clean, 2).as_deref(), Some("AB12-x9"));
     }
 
     #[test]
