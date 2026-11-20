@@ -40,9 +40,8 @@ export function listVideoInputs(): Promise<MediaDeviceInfo[]>;
 export function listBackLenses(): Promise<CameraLens[]>;
 /**
  * Open the rear camera. Resolution: prefer explicit deviceId, then the
- * lens keyword heuristic, then facingMode (ideal, not exact — iOS Safari
- * 16.4+ returns the virtual camera for facingMode, which is fine as a
- * fallback since adaptive zoom reaches every lens through it).
+ * best rear lens for scanning (continuous AF + close focus, capability
+ * probed), then facingMode as the last resort.
  * @param {OpenCameraOptions} [opts]
  * @returns {Promise<MediaStream>}
  */

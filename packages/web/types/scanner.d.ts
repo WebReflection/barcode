@@ -30,13 +30,24 @@ export class Scanner {
      */
     overrideTorch(on: boolean): Promise<boolean>;
     hasTorch(): boolean;
+    /** Whether the camera track exposes its own zoom constraint. */
+    hasZoom(): boolean;
+    /**
+     * The effective zoom: the camera constraint when supported, otherwise
+     * the digital center crop. Never null — the default UI's pinch and
+     * slider both drive this.
+     */
+    get zoomFactor(): number;
     /** @param {boolean} on @returns {Promise<boolean>} */
     setTorch(on: boolean): Promise<boolean>;
     /** The camera's current zoom factor, or null when the track has none. */
     get zoom(): number | null;
     /**
-     * Set the camera zoom factor. A manual zoom stands the adaptive policy
-     * down for the session — the user wins, always.
+     * Set the zoom factor. Uses the camera track's own `zoom` constraint
+     * when it has one; otherwise crops the center of the source (1–4x) so
+     * the binarizer keeps the code's modules instead of downscaling them
+     * with the whole frame. A manual zoom stands the adaptive policy down
+     * for the session — the user wins, always.
      *
      * `settle` waits for autofocus to stop moving after the change (the
      * programmatic default). Continuous gestures pass false: a 2s settle
@@ -44,7 +55,8 @@ export class Scanner {
      *
      * @param {number} factor
      * @param {boolean} [settle]
-     * @returns {Promise<number | null>}
+     * @returns {Promise<number | null>} the applied track value, the
+     *   digital factor, or null when the scanner is not running.
      */
     zoomTo(factor: number, settle?: boolean): Promise<number | null>;
     /**
