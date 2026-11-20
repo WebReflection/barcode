@@ -179,11 +179,13 @@ Data Matrix and Aztec.
 Real phone photos, replayed through the published bundle (`still` =
 `scan({ image })`, `live` = the same photo through a fake camera +
 `scan({ video })`). The personal corpus currently has **30 still photos
-and 17 live replays**; the latest still run is **29/30**, and the one
-miss (`receipt-qr-112247`) is a pre-existing QR case that fails
-identically on the same `dist/` build. It covers product
-EAN-13/UPC/EAN-8, ISBN, a shipping-slip ITF, a vertical invoice Code 128,
-loyalty cards, receipt QRs and DataMatrix (square and DMRE), VIVA QR.
+and 17 live replays**; the latest still run is **30/30** and the live run
+is **16/17**, with one tracked xfail: `viva-dm-115212` is a ~2px/module
+Data Matrix in a full 12MP frame, below what the 1056px live frame can
+resolve (the still pass and the center-square crop both read it). The
+corpus covers product EAN-13/UPC/EAN-8, ISBN, a shipping-slip ITF, a
+vertical invoice Code 128, loyalty cards, receipt QRs, DataMatrix (square
+and DMRE), VIVA QR, and 12 Lufthansa/DB Bahn Aztec boarding passes.
 
 Live reads on the phone are typically a few hundred milliseconds; the
 still corpus is bounded by the still budget. The previously tracked
@@ -301,9 +303,11 @@ round-trip), `tests/roi.html` covers small codes in a 4096 px frame,
 ## Known limits / next
 
 - One code per scan (by design for now); multi-code scanning is future work.
-- `databarexpanded` rendering always writes the general-purpose (method 00)
-  field, so every element string is representable but the symbol is longer
-  than a compressed encodation (such as zint emits).
+- `databarexpanded` rendering picks the compressed encodation whenever the
+  element string matches one of the standard's AI-(01) families (AI 01 +
+  general purpose, `310x`/`320x` weight, `392x`/`393x` price, `310x`/`320x`
+  + date); any other element string falls back to the general-purpose
+  (method 00) field, which is valid for all AIs but longer.
 - GPU contrast normalization (per-tile stretch) for dim/grey captures is not
   done yet.
 - Native Android/iOS bindings on top of the same Rust core.
