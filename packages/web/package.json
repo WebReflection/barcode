@@ -53,6 +53,7 @@
     "artifacts": "node tools/build-artifacts.mjs",
     "test": "node tools/e2e/playwright.mjs",
     "test:ci": "node tools/e2e/playwright.mjs --ci",
+    "test:live": "node tools/e2e/live.mjs",
     "test:phone": "node tools/e2e/fakecam.mjs --all --port 9222",
     "test:field": "node tools/e2e/field.mjs --port 9225",
     "test:field:live": "node tools/e2e/field.mjs --port 9225 --mode live",

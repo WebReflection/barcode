@@ -21,6 +21,21 @@ CI enforces this with the **docs guard** workflow: a PR that touches `docs/` fai
 unless it carries the `docs-rebuild` label. The label is the maintainer's explicit
 opt-in for a generated-docs PR; do not add it to feature work.
 
+## After a release
+
+Publishing is the maintainer's action. Once npm reports the new version, run
+the published-artifact smoke from `packages/web`:
+
+```sh
+npm run test:live
+```
+
+It checks npm `dist-tags.latest`, the four jsDelivr `dist/` files, the
+deployed Pages badge and worker shim, and renders one symbol through the CDN
+build in headless Chromium. The same check runs nightly in the `live`
+workflow; a red run right after a publish is usually propagation, so re-run
+before investigating.
+
 ## Before opening a PR
 
 - `cargo test --workspace` (CI runs it with `--locked`; `--release` if you want
