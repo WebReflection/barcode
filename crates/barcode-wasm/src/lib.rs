@@ -239,8 +239,16 @@ impl BarcodeScanner {
         } else {
             still_budget_ms
         };
+        let started = now_ms();
         let out = self.scan_polarity(img, tiers, still, first_budget);
         if !out.is_empty() || !suspicious {
+            return out;
+        }
+        // A still's fixed per-polarity costs (rotation/locator setup) are
+        // not charged to the sample budget. When the first polarity has
+        // already spent the caller's deadline, the inverted retry is a
+        // second full sweep after the budget — skip it.
+        if still && now_ms().saturating_sub(started) >= still_budget_ms {
             return out;
         }
         let out = self.scan_polarity(&inv, tiers, still, still_budget_ms - first_budget);
@@ -715,6 +723,7 @@ fn parse_formats(formats: &[String]) -> Result<Tiers, String> {
     Ok(t)
 }
 
+
 /// The canonical symbology list for capability reporting.
 #[wasm_bindgen]
 pub fn supported_symbologies() -> Vec<String> {
@@ -1025,14 +1034,26 @@ pub fn decode_datamatrix_mask_budget(img: &BitImage, exhaustive: bool, budget_ms
     const SAMPLES_PER_MS: u64 = 7_700;
     let total = budget_ms * SAMPLES_PER_MS;
     // Big masks: the exhaustive pitch sweep on a junk-rich frame costs
-    // seconds — the downscaled copies decode them in tens of ms.
-    let base = if img.width as u64 * img.height as u64 > 1_200_000 {
+    // seconds (a 1080p still measured 40s) — the downscaled copies decode
+    // them in tens of ms, and the 2x upscale last resort covers small
+    // symbols on big frames. Still images keep the small-mask native pass.
+    let big = img.width as u64 * img.height as u64 > 1_200_000;
+    // The native reference sweep is the only leg that can see a small code
+    // on a big still: the box downgrades crush a ~100px symbol and the 2x
+    // upscale lands the grid wrong. Its sample counter charges failed
+    // pitch/angle attempts, not wall time (a real 18x18 GS1 DataMatrix
+    // needed ~30M counted but decoded in 35ms), so a big still's native
+    // pass gets a working floor; the caller's wall deadline bounds it and
+    // the corner list is capped for junk-rich frames.
+    let native = if big && exhaustive {
+        total.max(6_000 * SAMPLES_PER_MS)
+    } else {
+        total
+    };
+    let base = if big && !exhaustive {
         Vec::new()
     } else {
-        // `exhaustive` = the reference sweep may back up the fast locator
-        // on this mask (still images). Live frames pass false: the fast
-        // leg-derived locator only, then the downscaled legs below.
-        decode_dm_at(img, 1.0, exhaustive, total)
+        decode_dm_at(img, 1.0, exhaustive, native)
     };
     if !base.is_empty() {
         return base;
@@ -1087,7 +1108,10 @@ pub fn decode_datamatrix_mask_budget(img: &BitImage, exhaustive: bool, budget_ms
         if uw * uh <= 9_000_000 {
             let (_, _, data) = upscale2_packed(img);
             let big = BitImage::new(uw as u32, uh as u32, &data);
-            let hits = decode_dm_at(&big, 0.5, exhaustive, total / 2);
+            // Fast locator only: the upscaled mask is the biggest one in
+            // the ladder and the reference sweep's fixed per-corner costs
+            // are not sample-charged (measured 15s on a 1080p still).
+            let hits = decode_dm_at(&big, 0.5, false, total / 2);
             if !hits.is_empty() {
                 return hits;
             }
@@ -1159,13 +1183,21 @@ fn decode_dm_at(img: &BitImage, f: f32, exhaustive: bool, budget: u64) -> Vec<ba
             .collect::<Vec<_>>()
     };
     let hits = verified(locs);
-    if hits.is_empty() && f < 2.0 {
+    if hits.is_empty() && f < 2.0 && exhaustive {
         // Budgeted reference fallback. The unbudgeted `locate_binary`
         // (6x SAMPLE_BUDGET) was the 1.2s live footgun; an explicit
         // allowance keeps the still path exhaustive and the live path
         // bounded. Small masks (fixture canvases) are cheap here — the
-        // sample budget never exceeds their pixel count.
-        return verified(barcode_dm::locator::locate_binary_budget(&map, budget));
+        // sample budget never exceeds their pixel count. Big masks cap
+        // the corner list instead: the fixed per-corner costs are not
+        // charged to the sample budget, and 1080p junk measured 40s.
+        const NATIVE_CORNERS: usize = 12;
+        let big = w as u64 * h as u64 > 1_200_000;
+        return verified(barcode_dm::locator::locate_binary_budget_corners(
+            &map,
+            budget,
+            if big { NATIVE_CORNERS } else { usize::MAX },
+        ));
     }
     hits
 }

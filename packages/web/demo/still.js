@@ -9,6 +9,11 @@ import workerUrl from "../api/worker.js?worker&url";
 
 const { scan, render } = barcode({ worker: workerUrl });
 
+/** ?type=datamatrix (or any canonical name / comma list) pins the scan. */
+const type = new URLSearchParams(location.search).get("type");
+/** ?latency=ms overrides the still budget (regression/debug runs). */
+const latency = Number(new URLSearchParams(location.search).get("latency")) || undefined;
+
 const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.getElementById(id));
 const drop = $("drop");
 const fileInput = /** @type {HTMLInputElement} */ (document.getElementById("file"));
@@ -52,7 +57,11 @@ async function runScan(input, t0 = performance.now()) {
   status("Scanning…");
   resetResult();
   try {
-    const code = await scan({ image: input });
+    const code = await scan({
+      image: input,
+      ...(type ? { type: type.split(",").map((name) => name.trim()).filter(Boolean) } : {}),
+      ...(latency ? { latency } : {}),
+    });
     const ms = Math.round(performance.now() - t0);
     if (!code) {
       status(`No code found (${ms}ms). Try a sharper or larger image.`, "error");

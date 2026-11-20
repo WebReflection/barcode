@@ -60,6 +60,8 @@ pub struct Corner {
 const LOCAL_RADIUS: usize = 24; // local-mean window radius
 const DARK_RATIO: f32 = 0.85; // dark iff luma < ratio * local mean
 const MIN_RUN: usize = 15; // min dark run length to seed a bar
+/// White slits narrower than this are print damage, not module gaps.
+const BRIDGE_GAP: usize = 2;
 const MIN_STROKE: i32 = 32; // min stroke length in px (8-row DMRE leg at pitch 4)
 const MAX_THICKNESS: i32 = 30; // max stroke thickness in px
 const END_TOL: i32 = 8; // stroke-end / stroke-band pairing slack (px)
@@ -106,21 +108,35 @@ pub struct Bar {
 }
 
 fn dark_runs(at: impl Fn(usize) -> bool, n: usize) -> Vec<(usize, usize)> {
-    let mut out = Vec::new();
+    let mut raw = Vec::new();
     let mut start = None;
     for i in 0..=n {
         let d = i < n && at(i);
         match (d, start) {
             (true, None) => start = Some(i),
             (false, Some(s)) => {
-                if i - s >= MIN_RUN {
-                    out.push((s, i));
-                }
+                raw.push((s, i));
                 start = None;
             }
             _ => {}
         }
     }
+    // Bridge sub-module white slits before the length filter: a crease or
+    // a print defect can cut a solid finder leg into fragments that each
+    // fall under MIN_RUN (a real GS1 DataMatrix reported 3..24px pieces
+    // of a ~100px leg, each pair separated by a 2px crease). The module
+    // grid cannot bridge, because its white gaps are one pitch or more.
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    for (s, e) in raw {
+        if let Some(last) = out.last_mut() {
+            if s - last.1 <= BRIDGE_GAP {
+                last.1 = e;
+                continue;
+            }
+        }
+        out.push((s, e));
+    }
+    out.retain(|(s, e)| e - s >= MIN_RUN);
     out
 }
 
@@ -247,8 +263,68 @@ pub fn debug_corners(map: &BinaryMap) -> Vec<Corner> {
     find_corners(map)
 }
 
+
+/// Join collinear fragments of the same stroke.
+///
+/// A crease, a highlight or a print defect can cut a solid finder leg into
+/// pieces that each fall under [`MIN_STROKE`] (a real GS1 DataMatrix at
+/// pitch 4.2 reported a 92px horizontal leg and a 29px vertical one, so no
+/// corner formed at all). Fragments of one stroke share their cross-axis
+/// band, match in thickness, and are separated along the stroke by less
+/// than one module — the module grid cannot chain, because its dark gaps
+/// are one pitch or more (pitch >= [`PITCH_MIN`]).
+fn merge_collinear(bars: Vec<Bar>, vertical: bool) -> Vec<Bar> {
+    let mut bars = bars;
+    bars.sort_unstable_by_key(|b| if vertical { b.y0 } else { b.x0 });
+    let mut out: Vec<Bar> = Vec::new();
+    for bar in bars {
+        let mut merged = false;
+        for prev in out.iter_mut().rev() {
+            let (a0, a1, b0, b1) = if vertical {
+                (prev.y0, prev.y1, bar.y0, bar.y1)
+            } else {
+                (prev.x0, prev.x1, bar.x0, bar.x1)
+            };
+            let (c0, c1, d0, d1) = if vertical {
+                (prev.x0, prev.x1, bar.x0, bar.x1)
+            } else {
+                (prev.y0, prev.y1, bar.y0, bar.y1)
+            };
+            // Same stroke band and thickness: the fragments overlap
+            // across the stroke.
+            let overlap = c1.min(d1) - c0.max(d0);
+            let min_th = (c1 - c0).min(d1 - d0);
+            if overlap * 2 < min_th || (c1 - c0 - (d1 - d0)).abs() > 1 {
+                continue;
+            }
+            // Along the stroke: touching or separated by damage, never by
+            // a module gap (one pitch).
+            if b0.max(a0) - b1.min(a1) > 3 {
+                continue;
+            }
+            if vertical {
+                prev.y0 = prev.y0.min(bar.y0);
+                prev.y1 = prev.y1.max(bar.y1);
+                prev.x0 = prev.x0.min(bar.x0);
+                prev.x1 = prev.x1.max(bar.x1);
+            } else {
+                prev.x0 = prev.x0.min(bar.x0);
+                prev.x1 = prev.x1.max(bar.x1);
+                prev.y0 = prev.y0.min(bar.y0);
+                prev.y1 = prev.y1.max(bar.y1);
+            }
+            merged = true;
+            break;
+        }
+        if !merged {
+            out.push(bar);
+        }
+    }
+    out
+}
+
 fn filtered_bars(map: &BinaryMap, vertical: bool) -> Vec<Bar> {
-    collect_bars(map, vertical)
+    merge_collinear(collect_bars(map, vertical), vertical)
         .into_iter()
         .filter(|b| {
             let (len, th) = if vertical {
@@ -653,13 +729,42 @@ pub fn locate_binary(map: &BinaryMap) -> Vec<Location> {
 
 /// Reference locate with an explicit sample allowance.
 pub fn locate_binary_budget(map: &BinaryMap, budget: u64) -> Vec<Location> {
+    locate_binary_budget_corners(map, budget, usize::MAX)
+}
+
+/// Reference locate bounded to the `limit` best-ordered corners.
+///
+/// The sample allowance does not charge a corner's fixed costs (grid
+/// setup, the L probe), and a junk-rich 1080p mask carries hundreds of
+/// corners: one still frame measured 40s even though its counter stayed
+/// inside the budget. Native-resolution stills therefore cap the corner
+/// list; the downscale legs remain for symbols ranked beyond it.
+pub fn locate_binary_budget_corners(map: &BinaryMap, budget: u64, limit: usize) -> Vec<Location> {
     let mut corners = find_corners(map);
-    corners.sort_by(|a, b| (b.hlen + b.vlen).cmp(&(a.hlen + a.vlen)));
+    // Same ordering lesson as the fast path: consistency first (legs that
+    // agree on a legal spec), leg length second. Ordering by raw leg
+    // length lets long UI bands burn the whole allowance before the true
+    // corner — one GS1 DataMatrix sat behind 59 corners and needed a 5s
+    // budget where consistency-first finds it in ~200ms.
+    corners.sort_by(|a, b| {
+        let ra = best_spec_ratio(a);
+        let rb = best_spec_ratio(b);
+        ra.partial_cmp(&rb)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then((b.hlen + b.vlen).cmp(&(a.hlen + a.vlen)))
+    });
     let mut out: Vec<Location> = Vec::new();
     let mut budget = budget;
-    for c in &corners {
+    let dbg = std::env::var("DM_DBG").is_ok();
+    for (ci, c) in corners.iter().take(limit).enumerate() {
         if budget == 0 {
             break;
+        }
+        if dbg {
+            eprintln!(
+                "ref corner {ci} ({},{}) ratio={:.6} hl={} vl={} th={}",
+                c.x, c.y, best_spec_ratio(c), c.hlen, c.vlen, c.hth
+            );
         }
         let mut found = try_corner(map, c, &mut budget);
         // Erasure last resort (item 6b): the same sweep, but modules whose

@@ -302,3 +302,48 @@ fn collect_bars_survives_nonsquare_maps() {
     let map_t = BinaryMap { w: h, h: w, dark: dark.iter().map(|&d| !d).collect() };
     let _ = locate_binary(&map_t);
 }
+
+/// A crease or print defect can cut the solid finder leg into fragments
+/// that each fall under `MIN_RUN`/`MIN_STROKE`. The real GS1 DataMatrix
+/// this came from (18x18 at ~5px/module) reported 6..29px pieces of an
+/// 88px leg, so no finder-L corner formed and the symbol never decoded.
+/// The sub-module run bridge and the collinear merge must reassemble it.
+#[test]
+fn reassembles_a_creased_finder_leg() {
+    use barcode_dm::encode::encode;
+    use barcode_dm::locator::locate_binary;
+
+    let payload = b"HELLO";
+    let enc = encode(payload).expect("encode");
+    let (spec, matrix) = (enc.spec, enc.matrix);
+    let (rows, cols) = (spec.rows as usize, spec.cols as usize);
+    let pitch = 5usize;
+    let (w, h) = (cols * pitch + 40, rows * pitch + 40);
+    let mut luma = vec![255u8; w * h];
+    for r in 0..rows {
+        for c in 0..cols {
+            if matrix[r * cols + c] == 0 {
+                continue;
+            }
+            for y in 0..pitch {
+                for x in 0..pitch {
+                    luma[(20 + r * pitch + y) * w + 20 + c * pitch + x] = 0;
+                }
+            }
+        }
+    }
+    // The standard finder L is the left column + bottom row. Cut a 2px
+    // slit into the bottom leg, one module in from its corner.
+    for y in (20 + (rows - 1) * pitch + 1)..(20 + (rows - 1) * pitch + 3) {
+        for x in (20 + 2 * pitch)..(20 + 7 * pitch) {
+            luma[y * w + x] = 255;
+        }
+    }
+    let frame = Frame { w, h, luma: &luma };
+    let map = binarize(&frame);
+    let hits = locate_binary(&map);
+    assert!(
+        hits.iter().any(|l| l.decoded.payload.as_deref() == Some(payload)),
+        "no decode from {w}x{h} creased symbol"
+    );
+}
