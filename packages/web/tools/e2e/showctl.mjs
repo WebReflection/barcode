@@ -5,7 +5,7 @@
  */
 const [state = "maximize", port = "9223"] = process.argv.slice(2);
 const targets = await (await fetch(`http://localhost:${port}/json`)).json();
-const target = targets.find((t) => t.type === "page" && t.url.includes("/show.html"));
+const target = targets.find((t) => t.type === "page" && t.url.includes("/tests/show.html"));
 if (!target) { console.error("no show.html page on :" + port); process.exit(1); }
 const ws = new WebSocket(target.webSocketDebuggerUrl);
 let id = 0;

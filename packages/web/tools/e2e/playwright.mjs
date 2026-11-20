@@ -11,9 +11,9 @@
  *   node tools/e2e/playwright.mjs --field         # local real-photo corpus
  *   node tools/e2e/playwright.mjs --only qrcode   # one fake-camera case
  *
- * It starts Vite itself (source pages: /test.html, /contract-test.html,
+ * It starts Vite itself (source pages: /@fs/tests/test.html, contract-test,
  * /scan.html) plus a static server for the built /dist payload
- * (/demo/artifact-test.html), so no external Chrome/CDP setup is needed.
+ * (/tests/artifact-test.html), so no external Chrome/CDP setup is needed.
  *
  * Projects:
  *   chromium  desktop Chromium (Blink)
@@ -76,6 +76,8 @@ if (!PROJECTS.length) {
 const vite = await createViteServer({ logLevel: "error", server: { port: 5173 } });
 await vite.listen();
 const ORIGIN = vite.resolvedUrls.local[0].replace(/\/$/, "");
+// Internal harness pages live outside the dev root; Vite serves them via @fs.
+const TESTS_FS = `${ORIGIN}/@fs${pkg}/tests`;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -130,14 +132,14 @@ async function waitTitle(page, pass, fail, timeout) {
 /** The synthetic round-trip harness. */
 async function suiteSelftest(page, project) {
   /** @type {[string, string, string][]} */
-  const cases = [["gpu-or-cpu", `${ORIGIN}/test.html`, "TESTS PASS"]];
+  const cases = [["gpu-or-cpu", `${TESTS_FS}/test.html`, "TESTS PASS"]];
   if (process.env.CI && project !== "chromium") {
     // The software binarizer's 31-case suite takes minutes on WebKitGTK;
     // Chromium covers that path explicitly, WebKit still covers the
     // default binarizer (and every other gate).
     console.log(`SKIP  ${project.padEnd(8)} selftest  cpu (CI: Chromium covers the explicit CPU path)`);
   } else {
-    cases.push(["cpu", `${ORIGIN}/test.html?bin=cpu`, "TESTS PASS"]);
+    cases.push(["cpu", `${TESTS_FS}/test.html?bin=cpu`, "TESTS PASS"]);
   }
   for (const [name, url, pass] of cases) {
     const t0 = Date.now();
@@ -151,7 +153,7 @@ async function suiteSelftest(page, project) {
 /** Worker transports / render-raw / duplicate binding. */
 async function suiteContract(page, project) {
   const t0 = Date.now();
-  await page.goto(`${ORIGIN}/contract-test.html`, { waitUntil: "load" });
+  await page.goto(`${TESTS_FS}/contract-test.html`, { waitUntil: "load" });
   const title = await waitTitle(page, "TESTS PASS", "TESTS FAILED", 120_000);
   const checks = await page.evaluate(() =>
     [...document.querySelectorAll("table tr")].map((tr) => [...tr.children].map((td) => td.textContent)),
@@ -169,7 +171,7 @@ async function suiteArtifact(browser, project) {
   const context = await browser.newContext(project.context);
   const page = await context.newPage();
   const t0 = Date.now();
-  await page.goto(`${STATIC}/packages/web/demo/artifact-test.html`, { waitUntil: "load" });
+  await page.goto(`${STATIC}/packages/web/tests/artifact-test.html`, { waitUntil: "load" });
   const title = await waitTitle(page, "ARTIFACT PASS", "ARTIFACT FAIL", 60_000);
   const result = await page.evaluate(() => globalThis.__RESULT);
   record({ project: project.name, suite: "artifact", name: "dist/ static", ok: title === "ARTIFACT PASS", ms: Date.now() - t0, note: result ?? "" });
@@ -208,7 +210,7 @@ async function suiteFakecam(browser, project) {
       .replace(/^diagonal-/, "")
       .replace(/^tiny\d+-/, "");
     const max = s.startsWith("tiny") ? "&max=1056" : "";
-    const url = `${ORIGIN}/scan.html?formats=${encodeURIComponent(format)}&e2e=${encodeURIComponent(`${s}:${t}`)}${max}&_=${Date.now()}`;
+    const url = `${TESTS_FS}/scan-fakecam.html?formats=${encodeURIComponent(format)}&e2e=${encodeURIComponent(`${s}:${t}`)}${max}&_=${Date.now()}`;
     const t0 = Date.now();
     let got = null;
     let status = "";
@@ -263,7 +265,7 @@ async function suiteFakecam(browser, project) {
     try {
       const e2e = encodeURIComponent("qrcode:PINCH-ZOOM");
       await page.goto(
-        `${ORIGIN}/scan.html?formats=aztec&fakezoom=1&e2e=${e2e}&_=${Date.now()}`,
+        `${TESTS_FS}/scan-fakecam.html?formats=aztec&fakezoom=1&e2e=${e2e}&_=${Date.now()}`,
         { waitUntil: "load" },
       );
       await page.waitForSelector("#start", { timeout: 30_000 });
@@ -342,7 +344,7 @@ async function suiteDocs(browser, project) {
     const title = await page.title();
     if (!title.includes("@webreflection/barcode")) throw new Error(`title: ${title}`);
     const links = await page.locator("a.card").count();
-    if (links < 6) throw new Error(`only ${links} demo cards`);
+    if (links < 5) throw new Error(`only ${links} playground cards`);
   });
 
   await check("render round-trip", async () => {
@@ -383,16 +385,6 @@ async function suiteDocs(browser, project) {
     );
   });
 
-  if (project === "chromium") {
-    await check("bundled self-test", async () => {
-      await page.goto(`${STATIC}/docs/test.html`, { waitUntil: "load" });
-      const title = await waitTitle(page, "TESTS PASS", "TESTS FAILED", 240_000);
-      if (title !== "TESTS PASS") {
-        const summary = await page.locator("#summary").textContent();
-        throw new Error(summary ?? "self-test failed");
-      }
-    });
-  }
 
   await context.close();
 }
@@ -517,7 +509,7 @@ async function suiteField(browser, project) {
   const context = await browser.newContext(project.context);
   const page = await context.newPage();
   const t0 = Date.now();
-  const url = `${ORIGIN}/field.html?corpus=/@fs${corpus}&mode=still`;
+  const url = `${TESTS_FS}/field.html?corpus=/@fs${corpus}&mode=still`;
   await page.goto(url, { waitUntil: "load" });
   const title = await waitTitle(page, "TESTS PASS", "TESTS FAILED", 600_000);
   const table = await page.evaluate(() =>

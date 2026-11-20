@@ -2,17 +2,17 @@
 /**
  * Build the public GitHub Pages site into `docs/`:
  *
- *   docs/index.html   landing page + link to every live demo
+ *   docs/index.html   landing page + link to every public playground page
  *   docs/scan.html    camera scan
+ *   docs/live.html    bring your own video / mount
  *   docs/still.html   scan({ image })
  *   docs/render.html  render(result, opts) playground
  *   docs/worker.html  worker entry + auto entry in a worker
- *   docs/test.html    synthetic self-test
- *   docs/contract*.html  worker transports
  *   docs/assets/      hashed JS/CSS/wasm emitted by Vite
  *
- * Source pages stay in demo/ (the same ones the dev server and e2e gates
- * use); the landing page and its stylesheet stay in site/. Internal
+ * Public playground pages stay in demo/; the internal harness (self-test,
+ * contract, artifact, fake-camera pages, diagnostics) lives in tests/ and
+ * is never built here. The landing + stylesheet stay in site/. Internal
  * engineering notes live in notes/ (gitignored) and are never in docs/.
  *
  * Usage: node tools/build-docs.mjs
@@ -38,8 +38,6 @@ for (const name of [
   "still.html",
   "render.html",
   "worker.html",
-  "test.html",
-  "contract-test.html",
   "favicon.ico",
   ".nojekyll",
 ]) {
@@ -71,4 +69,4 @@ execFileSync(process.execPath, [vite, "build", "--config", "vite.docs.config.js"
   stdio: "inherit",
 });
 
-console.log(`docs/: index.html (v${version}) + 7 live demo pages + assets/`);
+console.log(`docs/: index.html (v${version}) + 5 playground pages + assets/`);

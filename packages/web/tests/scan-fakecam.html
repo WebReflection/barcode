@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Barcode Scanner</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100svh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; padding: 24px;
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+      background: #101418; color: #e8e6e1; gap: 16px;
+    }
+    h1 { font-size: 18px; font-weight: 600; margin: 0; color: #9ab; }
+    #start {
+      font-size: 20px; font-weight: 600; padding: 18px 48px;
+      border-radius: 14px; border: none; cursor: pointer;
+      background: #2f6fed; color: #fff;
+    }
+    #start:disabled { opacity: 0.5; cursor: default; }
+    #status { font-size: 14px; color: #8a9; min-height: 20px; text-align: center; max-width: 420px; }
+    #status.error { color: #ff7b6b; }
+    #result {
+      display: none; text-align: center; padding: 20px 28px;
+      border-radius: 14px; background: #1a2330; border: 1px solid #2f6fed;
+      max-width: 420px; word-break: break-all;
+    }
+    #result .symbology { font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: #6a8; margin-bottom: 8px; }
+    #result .value { font-size: 22px; font-weight: 700; font-family: ui-monospace, monospace; }
+    #result-svg { margin-top: 14px; }
+    /* The SVG self-styles (white paper / black ink via CSS-var fallbacks);
+       size it to the card and let the aspect ratio follow the symbology. */
+    #result-svg svg { width: 100%; max-width: 360px; height: auto; display: block; margin: 0 auto; border-radius: 4px; }
+    #again { display: none; margin-top: 12px; font-size: 14px; padding: 10px 24px;
+      border-radius: 10px; border: 1px solid #3a5; background: none; color: #8c8; cursor: pointer; }
+  .docs-back{display:inline-flex;margin:10px 0;padding:5px 11px;border:1px solid #2a3948;border-radius:999px;color:#93a4b5;background:#151d26;font:500 13px/1.4 ui-sans-serif,system-ui,sans-serif;text-decoration:none}.docs-back:hover{color:#e8edf2;border-color:#5b9dff}
+</style>
+</head>
+<body>
+  <h1>Barcode Scanner</h1>
+  <button id="start">Scan a barcode</button>
+  <div id="status"></div>
+  <div id="result">
+    <div class="symbology" id="symbology"></div>
+    <div class="value" id="value"></div>
+    <div id="result-svg"></div>
+    <button id="again">Scan again</button>
+  </div>
+  <script type="module" src="./scan-fakecam.js"></script>
+</body>
+</html>
