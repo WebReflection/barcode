@@ -215,6 +215,8 @@ export class Scanner {
   /** The hint the most recent grab used (for position mapping). */
   /** @type {{ x: number, y: number, w: number, h: number, format: string | null, frames: number } | null} */
   #lastGrab = null;
+  /** Digital crop factor used when the track exposes no native zoom. */
+  #digitalZoom = 1;
 
   /** @param {ScannerOptions} opts */
   constructor(opts) {
@@ -381,7 +383,7 @@ export class Scanner {
         frameMs: dt,
         frameW: frame?.width ?? 0,
         frameH: frame?.height ?? 0,
-        zoom: currentZoom(this.#track()),
+        zoom: this.zoomFactor,
         dropped: this.#dropped,
       });
     } catch (err) {
@@ -689,6 +691,12 @@ export class Scanner {
    * @param {{ frameW?: number, frameH?: number }} msg
    */
   #updateHint(raw, results, msg) {
+    // A digital crop is centered by definition; a hint crop would fight
+    // it and its mask->video math assumes the full square.
+    if (this.#digitalZoom > 1) {
+      this.#hint = null;
+      return;
+    }
     if (results.length) {
       this.#hint = null;
       return;
@@ -744,16 +752,27 @@ export class Scanner {
       if (hint.frames === 0) this.#hint = null;
       return createImageBitmap(video, hint.x, hint.y, hint.w, hint.h);
     }
-    if (this.#opts.crop !== "square") return createImageBitmap(video);
-    const s = Math.min(video.videoWidth, video.videoHeight);
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    const zoom = Math.max(1, this.#digitalZoom);
+    if (this.#opts.crop !== "square") {
+      if (zoom === 1) return createImageBitmap(video);
+      const w = vw / zoom;
+      const h = vh / zoom;
+      const x = (vw - w) / 2;
+      const y = (vh - h) / 2;
+      this.#lastGrab = { x, y, w, h, format: null, frames: 0 };
+      return createImageBitmap(video, x, y, w, h);
+    }
+    const s = Math.min(vw, vh);
     if (!s) return createImageBitmap(video);
-    return createImageBitmap(
-      video,
-      (video.videoWidth - s) / 2,
-      (video.videoHeight - s) / 2,
-      s,
-      s,
-    );
+    // Digital zoom is a center crop, not a scale: the binarizer's
+    // maxSize can no longer downscale the code's own modules away.
+    const side = s / zoom;
+    const x = (vw - side) / 2;
+    const y = (vh - side) / 2;
+    if (zoom > 1) this.#lastGrab = { x, y, w: side, h: side, format: null, frames: 0 };
+    return createImageBitmap(video, x, y, side, side);
   }
 
   /**
@@ -886,6 +905,21 @@ export class Scanner {
     return this.#running ? trackCapabilities(this.#track()).torch === true : false;
   }
 
+  /** Whether the camera track exposes its own zoom constraint. */
+  hasZoom() {
+    return this.#running ? !!trackCapabilities(this.#track()).zoom : false;
+  }
+
+  /**
+   * The effective zoom: the camera constraint when supported, otherwise
+   * the digital center crop. Never null — the default UI's pinch and
+   * slider both drive this.
+   */
+  get zoomFactor() {
+    if (!this.#running) return 1;
+    return currentZoom(this.#track()) ?? this.#digitalZoom;
+  }
+
   /** @param {boolean} on @returns {Promise<boolean>} */
   async setTorch(on) {
     return this.#running ? setTorch(this.#track(), on) : false;
@@ -897,8 +931,11 @@ export class Scanner {
   }
 
   /**
-   * Set the camera zoom factor. A manual zoom stands the adaptive policy
-   * down for the session — the user wins, always.
+   * Set the zoom factor. Uses the camera track's own `zoom` constraint
+   * when it has one; otherwise crops the center of the source (1–4x) so
+   * the binarizer keeps the code's modules instead of downscaling them
+   * with the whole frame. A manual zoom stands the adaptive policy down
+   * for the session — the user wins, always.
    *
    * `settle` waits for autofocus to stop moving after the change (the
    * programmatic default). Continuous gestures pass false: a 2s settle
@@ -906,13 +943,33 @@ export class Scanner {
    *
    * @param {number} factor
    * @param {boolean} [settle]
-   * @returns {Promise<number | null>}
+   * @returns {Promise<number | null>} the applied track value, the
+   *   digital factor, or null when the scanner is not running.
    */
   async zoomTo(factor, settle = true) {
     this.#zoomTouched = true;
-    const r = this.#running ? await setZoom(this.#track(), factor) : null;
-    if (r !== null && settle && this.#running) await waitForFocusSettle(this.#track());
-    return r;
+    if (!this.#running) return null;
+    const track = this.#track();
+    /** @type {number | null} */
+    let applied = null;
+    try {
+      applied = await setZoom(track, factor);
+    } catch {
+      applied = null;
+    }
+    if (applied !== null) {
+      // Native camera zoom: the digital crop is only the fallback.
+      this.#digitalZoom = 1;
+      if (settle) await waitForFocusSettle(track);
+      return applied;
+    }
+    // No track zoom (Android WebView, desktop webcams): crop the center
+    // of the source. It cannot invent pixels, but it stops the binarizer
+    // from downscaling the code's modules with the whole frame.
+    const z = Math.min(4, Math.max(1, factor));
+    this.#digitalZoom = z;
+    this.#hint = null;
+    return z;
   }
 
   /**

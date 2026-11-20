@@ -12,14 +12,16 @@ with no attribution baggage. zxing/zint are used only as black-box oracles
 while developing.
 
 **[Live demos →](https://webreflection.github.io/barcode/)** — camera scan,
-still-image scan, render playground, worker API, self-test and transports,
+still-image scan, render playground, worker API, bring-your-own video,
 one click each.
 
 ![The demo reading a QR code: symbology, value and the code re-rendered as SVG](docs/demo-scan.png)
 
 ## Formats
 
-Decoded from a live camera or a still image, one code per frame:
+Decoded from a live camera or a still image, one code per frame — 19
+canonical symbologies (EAN-13 and UPC-A are separate names sharing one
+decoder):
 
 | 1D | 2D |
 | --- | --- |
@@ -33,15 +35,18 @@ Decoded from a live camera or a still image, one code per frame:
 | ITF / Interleaved 2 of 5 | |
 | Codabar | |
 | GS1 DataBar (Omni, Limited, Stacked, Stacked Omni) | |
+| GS1 DataBar Expanded (decode-only) | |
 
 Inverted (white-on-black) codes are read on both paths: a code filling a
 dark scene, and a white-on-black code sitting on a **light** page (a
 screenshot or a photographed label with white margins).
 
-`render()` re-encodes a result as SVG for every 1D family plus QR
-(v1–40, explicit error-correction level / mask / version), Micro QR,
-Data Matrix (including explicit rectangular sizes), Aztec and PDF417
-(explicit EC level). See `packages/web/README.md` for the options.
+`render()` re-encodes a result as SVG for **18 of the 19** symbologies —
+every one except GS1 DataBar Expanded, which is decode-only until its
+fixture encoder lands — with QR v1–40 (explicit error-correction level /
+mask / version), Micro QR, Data Matrix (including explicit rectangular
+sizes), Aztec and PDF417 (explicit EC level). See
+`packages/web/README.md` for the options.
 
 ## Usage
 
@@ -49,14 +54,15 @@ Data Matrix (including explicit rectangular sizes), Aztec and PDF417
 pnpm add @webreflection/barcode
 ```
 
-Three entries, one package: `@webreflection/barcode` auto-detects the
-context (main-thread `barcode()` on a page, the bootstrap promise in a
-worker), while `@webreflection/barcode/main` and
-`@webreflection/barcode/worker` are the explicit, always-one-context
-variants.
+Two entries, one package: `@webreflection/barcode/main` for the page
+(`barcode()` → `{ scan, render, worker }`) and
+`@webreflection/barcode/worker` for a worker (the bootstrap promise).
+There is **no bare package entry**: an entry that guessed the context
+would have to import the worker lazily, and a lazily imported worker
+cannot guarantee the MessagePort channel.
 
 ```js
-import barcode from "@webreflection/barcode";
+import barcode from "@webreflection/barcode/main";
 import "@webreflection/barcode/css"; // optional: the default scan dialog
 
 // One session per page/SPA: it owns the worker for its lifetime.
@@ -72,6 +78,12 @@ if (code) {
 }
 ```
 
+```js
+// your worker — static at the top of the file, never awaited
+import bootstrap from "@webreflection/barcode/worker";
+const { decode, encode } = await bootstrap;
+```
+
 `scan({ image })` takes a canvas, `ImageBitmap`, `HTMLImageElement`, `SVG`,
 `Blob`/`File` or `OffscreenCanvas`; `scan()` takes the camera. Either way it
 resolves **once** with the best `Code` (most centered first) or `undefined`
@@ -85,26 +97,51 @@ no bundler step for consumers:
 
 | file | role |
 | --- | --- |
-| `dist/index.js` | thread-aware default entry: page → `main.js`, worker → `worker.js` |
-| `dist/main.js` | main-thread entry: `barcode()` → `{ scan, render, worker }` |
-| `dist/worker.js` | the bound worker: binarizer + wasm decode/encode |
+| `dist/main.js` | page entry: `barcode()` → `{ scan, render, worker }` |
+| `dist/worker.js` | worker entry: binarizer + wasm decode/encode |
 | `dist/wasm.wasm` | the Rust decoder core (fetched by `worker.js` relative to itself) |
 | `dist/css.css` | optional default dialog styles (CSS custom properties) |
-| `dist/*.d.ts` | consumer types for all three entries |
+| `dist/*.d.ts` | consumer types for the two entries |
 
-Relative imports resolve against `dist/index.js` / `dist/main.js`, so plain
-static hosting, import maps and CDNs all work. The whole build — types,
-wasm, artifacts, and optionally the demo — is one command at the repo root:
+`main.js` spawns `./worker.js`, and `worker.js` fetches `wasm.wasm`;
+both resolve relative to the file that owns them, so plain static
+hosting, import maps and CDNs all work **when the files stay side by
+side**. A CDN worker needs the one-line same-origin shim below (a
+`Worker` script cannot be cross-origin). The whole build — types, wasm,
+artifacts, and the docs site — is one command at the repo root:
 
 ```sh
 npm run build              # → packages/web/dist (npm payload)
 npm run build:demo         # → packages/web/demo-dist (deployable demo)
 ```
 
-The worker handshake is ping/ready: the page sends a port-less
-`barcode:ping`, the worker answers `barcode:ready`, then the MessagePort
-crosses. That makes `new Worker(...)` + `barcode({ worker })` in the same
-tick reliable even while wasm/GPU modules are still evaluating.
+The worker contract is **one message**: the page posts the MessagePort
+as the worker's *first* message; the worker captures it, removes the
+listener, and binds exactly once. There is no ping/ready round-trip, no
+retry and no timeout. The worker entry must import the SDK statically at
+the top of its file, so the capture listener exists before the port can
+be dispatched. Port-less messages pass through untouched, so an embedder
+keeps its own protocol on the same worker.
+
+### Loading from a CDN without a bundler
+
+`new Worker(url)` only accepts a **same-origin** script, so a page that
+imports `main.js` from a CDN must spawn a one-line same-origin shim:
+
+```js
+// worker-shim.js — same origin, one line
+import "https://cdn.jsdelivr.net/npm/@webreflection/barcode@0.2.1/dist/worker.js";
+```
+
+```js
+import barcode from "https://cdn.jsdelivr.net/npm/@webreflection/barcode@0.2.1/dist/main.js";
+
+const { scan, render } = barcode({ worker: "./worker-shim.js" });
+```
+
+That is exactly how the live playground loads itself: the committed
+`docs/` pins the published version and ships the one-line shim, so the
+demos exercise the npm artifact rather than a second build.
 
 ## Architecture
 
@@ -143,16 +180,17 @@ Data Matrix and Aztec.
 
 Real phone photos, replayed through the published bundle (`still` =
 `scan({ image })`, `live` = the same photo through a fake camera +
-`scan({ video })`), **17/18 PASS + 1 XFAIL** still and **16/17 PASS + 1
-XFAIL** live. Everything except the one tracked case reads in 114–378 ms
-live: product EAN-13/UPC/EAN-8, ISBN, a shipping-slip ITF, a vertical
-invoice Code 128, loyalty cards, receipt QRs and DataMatrix (square and
-DMRE), VIVA QR.
+`scan({ video })`). The personal corpus currently has **30 still photos
+and 17 live replays**; the latest still run is **29/30**, and the one
+miss (`receipt-qr-112247`) is a pre-existing QR case that fails
+identically on the same `dist/` build. It covers product
+EAN-13/UPC/EAN-8, ISBN, a shipping-slip ITF, a vertical invoice Code 128,
+loyalty cards, receipt QRs and DataMatrix (square and DMRE), VIVA QR.
 
-The tracked XFAIL is a tiny DataMatrix in a whole 12 MP page: the app reads
-it when aimed at it, and a center crop of the same photo reads it, but
-replaying the entire page as one frame is below the still binarizer's
-resolving power. It is not how the app is used.
+Live reads on the phone are typically a few hundred milliseconds; the
+still corpus is bounded by the still budget. The previously tracked
+full-frame Data Matrix (`viva-dm-115212-centered`) now passes through the
+native-resolution ROI pass.
 
 Personal fixtures stay local: `packages/web/test-codes/field/` (photos +
 `corpus.json`) is gitignored. The gate *skips* when it is absent.
@@ -165,10 +203,15 @@ cd packages/web && pnpm install && pnpm dev   # http://localhost:5173
 
 Node 24+ is required (CI tracks the latest LTS via `lts/*`).
 
-Open `/scan.html` — the public-API demo: one `barcode()` session, one
-worker, `scan()` then `render()`; its default is everything — or
-`/test.html` (the self-test harness). `/demo.html` is the diagnostic dev
-page (fps, binarized mask, lens selector).
+Open `/` for the playground index, or `/scan.html` — the public-API demo:
+one `barcode()` session, one worker, `scan()` then `render()`; its default
+is everything. The other public pages are `/live.html`, `/still.html`,
+`/render.html` and `/worker.html`.
+
+The internal harness (self-test, contract, artifact, diagnostics, fake
+camera) lives in `tests/`, outside the dev server root. The dev server
+serves it through `/@fs/...`; the CDP tools default to those URLs
+(`node tools/run-tests.mjs` opens `tests/test.html`).
 
 To build a demo that deploys anywhere (a static folder, relative URLs, one
 shared wasm — no bundler at serve time):
@@ -183,10 +226,14 @@ The public site in `docs/` is the same thing plus a landing page and one
 demo per API surface:
 
 ```sh
-npm run build:docs      # → docs/ (index, scan, still, render, worker, test, contract)
+npm run build:docs      # → docs/ (index, scan, live, still, render, worker)
 npm run serve:docs      # http://<lan-ip>:8128
 npm run serve:docs:iphone  # https on :8443 for a real iPhone
 ```
+
+The committed `docs/` loads the exact published version from jsDelivr with
+the one-line same-origin worker shim above, so the deployed demos exercise
+the npm artifact rather than a second build.
 
 GitHub Pages serves the committed `docs/` folder: Settings → Pages →
 Deploy from a branch → `main` / `/docs` (the built-in
@@ -217,7 +264,9 @@ the OS-level camera permission:
 
 CI runs the page suites with Playwright (the fake-camera mock needs no
 physical device). Per push/PR the gate is **Chromium only** (a couple of
-minutes); WebKit/Safari-engine runs nightly and on manual dispatch:
+minutes); WebKit/Safari-engine runs nightly and on manual dispatch. A
+native `cargo test --workspace --locked` job (plus
+`cargo check --workspace --examples --locked`) runs alongside it.
 
 ```sh
 npm test                          # chromium + webkit + iphone profile
@@ -231,32 +280,30 @@ The CDP tools remain the authority for real phones:
 ```sh
 cargo test --workspace
 cd packages/web
-node tools/run-tests.mjs 9222 http://localhost:5173/test.html            # 31/31
-node tools/run-tests.mjs 9222 "http://localhost:5173/test.html?bin=cpu" # 31/31
-node tools/run-contract.mjs 9222 http://localhost:5173/contract-test.html
-node tools/e2e/fakecam.mjs --all --port 9222          # Android, adb forward 9222
-node tools/e2e/field.mjs --port 9222 [--mode live]    # real photos, local corpus
+node tools/run-tests.mjs 9222                          # tests/test.html
+node tools/run-tests.mjs 9222 "http://localhost:5173/@fs$PWD/tests/test.html?bin=cpu"
+node tools/run-contract.mjs 9222                       # tests/contract-test.html
+node tools/e2e/fakecam.mjs --all --port 9222           # Android, adb forward 9222
+node tools/e2e/field.mjs --port 9222 [--mode live]     # real photos, local corpus
 ```
 
 `npm run test:phone` / `test:field` are shortcuts for the Android and
 real-photo gates.
 
-`roi.html`, `diagonal.html`, `tilt.html` and `harden.html` use the same
-`run-tests.mjs` driver with their own URL (e.g.
-`node tools/run-tests.mjs 9222 http://localhost:5173/roi.html`). The
-fake-camera e2e accepts `E2E_ORIGIN` to run against a built demo instead of
-the dev server.
+`tests/roi.html`, `tests/diagonal.html`, `tests/tilt.html` and
+`tests/harden.html` use the same `run-tests.mjs` driver with their own URL
+(e.g. `.../@fs$PWD/tests/roi.html`). The fake-camera e2e accepts
+`E2E_ORIGIN` to run against a built demo instead of the dev server.
 
-`test.html` is the synthetic round-trip harness (decode + SVG round-trip),
-`roi.html` covers small codes in a 4096 px frame, `diagonal.html` covers
-45°/135° rotation, `tilt.html` covers ±4°/8° roll and `harden.html` the
-synthetic blur/noise/defocus sweep.
+`tests/test.html` is the synthetic round-trip harness (decode + SVG
+round-trip), `tests/roi.html` covers small codes in a 4096 px frame,
+`tests/diagonal.html` covers 45°/135° rotation, `tests/tilt.html` covers
+±4°/8° roll and `tests/harden.html` the synthetic blur/noise/defocus sweep.
 
 ## Known limits / next
 
 - One code per scan (by design for now); multi-code scanning is future work.
-- A very small Data Matrix filling little of a whole 12 MP frame (see the
-  tracked XFAIL above).
+- GS1 DataBar Expanded is decode-only until its render/fixture encoder lands.
 - GPU contrast normalization (per-tile stretch) for dim/grey captures is not
   done yet.
 - Native Android/iOS bindings on top of the same Rust core.

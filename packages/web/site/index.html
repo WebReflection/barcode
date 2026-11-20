@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>@webreflection/barcode — WebGPU barcode &amp; QR SDK</title>
-<meta name="description" content="MIT-licensed, WebGPU-accelerated barcode and QR scanning and rendering for the web. All 17 symbologies, clean-room Rust/WASM, one session, one worker." />
+<meta name="description" content="MIT-licensed, WebGPU-accelerated barcode and QR scanning and rendering for the web. All 19 symbologies, clean-room Rust/WASM, one session, one worker." />
 <link rel="stylesheet" href="./docs.css" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23fff'/%3E%3Cg fill='%23101820'%3E%3Crect x='2' y='2' width='4' height='4'/%3E%3Crect x='10' y='2' width='2' height='4'/%3E%3Crect x='16' y='2' width='6' height='4'/%3E%3Crect x='2' y='10' width='4' height='2'/%3E%3Crect x='2' y='16' width='8' height='2'/%3E%3Crect x='14' y='10' width='2' height='8'/%3E%3Crect x='20' y='10' width='4' height='2'/%3E%3Crect x='20' y='16' width='2' height='6'/%3E%3Crect x='2' y='22' width='2' height='8'/%3E%3Crect x='8' y='22' width='6' height='2'/%3E%3Crect x='8' y='28' width='2' height='2'/%3E%3Crect x='14' y='22' width='2' height='6'/%3E%3Crect x='20' y='26' width='4' height='4'/%3E%3Crect x='28' y='2' width='2' height='14'/%3E%3Crect x='28' y='20' width='2' height='10'/%3E%3C/g%3E%3C/svg%3E" />
 </head>
@@ -16,7 +16,7 @@
   </p>
   <h1>@webreflection/barcode</h1>
   <p class="lede">
-    A barcode and QR <strong>scanner</strong> that reads 17 symbologies from a
+    A barcode and QR <strong>scanner</strong> that reads 19 symbologies from a
     camera or a still image, and a <strong>renderer</strong> that produces a
     fresh, standards-compliant SVG for every one of them. One session, one
     worker, two explicit entries. Everything runs on the device.
@@ -54,7 +54,7 @@
       <a class="card" href="./render.html">
         <span class="card-kicker">encoder</span>
         <h3>Render any symbol</h3>
-        <p>All 17 symbologies, with QR EC/mask/version, PDF417 level/columns and Data Matrix sizes. Scan it back in one click.</p>
+        <p>18 of the 19 symbologies — every encoder except GS1 DataBar Expanded (decode-only for now) — with QR EC/mask/version, PDF417 level/columns and Data Matrix sizes. Scan it back in one click.</p>
         <code>render(code, opts)</code>
       </a>
       <a class="card" href="./worker.html">
@@ -97,7 +97,7 @@ if (code) {
       </div>
       <div>
         <h3>1D</h3>
-        <p><code>ean13</code> / <code>upca</code>, <code>ean8</code>, <code>upce</code>, <code>code39</code>, <code>code93</code>, <code>code128</code> / GS1-128, <code>itf</code>, <code>codabar</code>, GS1 DataBar (Omni, Limited, Stacked, Stacked Omni).</p>
+        <p><code>ean13</code> / <code>upca</code>, <code>ean8</code>, <code>upce</code>, <code>code39</code>, <code>code93</code>, <code>code128</code> / GS1-128, <code>itf</code>, <code>codabar</code>, GS1 DataBar (Omni, Limited, Stacked, Stacked Omni), <code>databarexpanded</code> (decode-only).</p>
       </div>
     </div>
     <p class="note">

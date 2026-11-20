@@ -46,6 +46,7 @@ export async function ensurePermission() {
   // learn the labels is a visible, unnecessary flash.
   const s = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: { ideal: "environment" } },
+    audio: false,
   });
   s.getTracks().forEach((t) => t.stop());
 }
@@ -70,6 +71,9 @@ export async function listBackLenses() {
       // openCamera will surface the real permission error.
     }
     inputs = await listVideoInputs();
+    // The permission probe just stopped a camera; Android releases it
+    // asynchronously, so the first real open needs a beat.
+    await sleep(150);
   }
   /** @type {CameraLens[]} */
   const lenses = [];
@@ -96,15 +100,117 @@ export async function listBackLenses() {
 function classifyLens(label) {
   if (/ultra|ultrawide|0[.,]5x|0[.,]5\b/.test(label)) return "ultrawide";
   if (/tele|zoom|2x|3x|5x/.test(label)) return "tele";
-  if (/wide|haupt|main|back|rück/.test(label)) return "wide";
+  if (/wide|haupt|main/.test(label)) return "wide";
+  // Android Chrome labels every rear lens "camera N, facing back": no
+  // wide/ultra hint at all. Keep it unknown so the capability probe
+  // decides instead of trusting enumeration order.
+  if (/facing back|facing rear/.test(label)) return "unknown";
+  if (/back|rear|rück/.test(label)) return "wide";
   return "unknown";
+}
+
+/** Probe result cache: one short stream per device for the page lifetime. */
+/** @type {Map<string, TrackCaps | null>} */
+const probeCache = new Map();
+
+/** Android releases a camera asynchronously: give it a beat between opens. */
+const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Read a lens' capabilities without committing to it. Android labels do
+ * not say which rear device is the main/close-focus lens and
+ * `facingMode: environment` is not reliable across WebViews (a WebView
+ * test app picked its fixed-focus ultra-wide here), so the only honest
+ * signal is the track itself.
+ * @param {string} deviceId
+ * @returns {Promise<TrackCaps | null>}
+ */
+async function probeTrackCaps(deviceId) {
+  if (probeCache.has(deviceId)) return probeCache.get(deviceId) ?? null;
+  /** @type {TrackCaps | null} */
+  let caps = null;
+  // A previous camera may still be releasing (NotReadableError). One
+  // spaced retry turns a transient release race into a real answer.
+  for (let attempt = 0; attempt < 2 && !caps; attempt++) {
+    if (attempt) await sleep(300);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: deviceId }, width: { ideal: 320 }, height: { ideal: 240 } },
+        audio: false,
+      });
+      const track = stream.getVideoTracks()[0];
+      caps = track ? trackCapabilities(track) : null;
+      stream.getTracks().forEach((t) => t.stop());
+    } catch {
+      // A busy or forbidden device: retry once, then let the caller fall back.
+    }
+  }
+  probeCache.set(deviceId, caps);
+  return caps;
+}
+
+/** Lower `camera N` labels first; labels without a number last. */
+function labelIndex(/** @type {CameraLens} */ lens) {
+  const index = Number(/\bcamera\s+(\d+)/i.exec(lens.label)?.[1]);
+  return Number.isFinite(index) ? index : 99;
+}
+
+/**
+ * Score a rear lens for *scanning*: continuous autofocus and a close
+ * focus range put pixels on a barcode held at arm's length. A camera
+ * that only shoots landscapes (fixed focus, no continuous AF) is the
+ * wrong default even when the platform calls it "environment".
+ * @param {CameraLens} lens
+ * @param {TrackCaps | null} caps
+ */
+function scanScore(lens, caps) {
+  if (!caps) return -1;
+  let score = 0;
+  if (caps.focusMode?.includes("continuous")) score += 1000;
+  const range = caps.focusDistance;
+  if (range) {
+    // Meters. A wide range covers both a close barcode and a shelf.
+    score += Math.min(20, Math.max(0, range.max - range.min)) * 25;
+  }
+  if (caps.zoom) score += 200;
+  const index = labelIndex(lens);
+  if (index < 99) score += 20 / (index + 1);
+  return score;
+}
+
+/**
+ * Pick the rear lens worth scanning with.
+ * - `ultrawide` → the classified ultra-wide when the label says so.
+ * - `wide` / `default` → the best scanning lens by capability probe;
+ *   ambiguous labels never fall back to enumeration order alone.
+ * @param {CameraLens[]} lenses
+ * @param {LensPreference} want
+ * @returns {Promise<CameraLens | null>}
+ */
+async function pickBackLens(lenses, want) {
+  const ultra = lenses.filter((l) => l.kind === "ultrawide");
+  if (want === "ultrawide") return ultra[0] ?? null;
+  const candidates = lenses.filter((l) => l.kind !== "ultrawide");
+  if (!candidates.length) return ultra[0] ?? null;
+  if (candidates.length === 1) return candidates[0] ?? null;
+  // Sequential, lowest label index first: two concurrent getUserMedia
+  // calls for different rear cameras race on Android, and the camera
+  // that wins that race is not the one that wins the scan.
+  const ranked = [...candidates].sort((a, b) => labelIndex(a) - labelIndex(b));
+  /** @type {{ lens: CameraLens, score: number } | null} */
+  let best = null;
+  for (const lens of ranked) {
+    const score = scanScore(lens, await probeTrackCaps(lens.deviceId));
+    if (!best || score > best.score) best = { lens, score };
+    await sleep(150);
+  }
+  return best?.lens ?? ranked[0] ?? null;
 }
 
 /**
  * Open the rear camera. Resolution: prefer explicit deviceId, then the
- * lens keyword heuristic, then facingMode (ideal, not exact — iOS Safari
- * 16.4+ returns the virtual camera for facingMode, which is fine as a
- * fallback since adaptive zoom reaches every lens through it).
+ * best rear lens for scanning (continuous AF + close focus, capability
+ * probed), then facingMode as the last resort.
  * @param {OpenCameraOptions} [opts]
  * @returns {Promise<MediaStream>}
  */
@@ -118,22 +224,33 @@ export async function openCamera(opts = {}) {
 
   if (opts.deviceId) {
     video.deviceId = { exact: opts.deviceId };
-  } else if (opts.lens && opts.lens !== "default") {
+  } else {
     const lenses = await listBackLenses();
-    const want = opts.lens === "ultrawide" ? "ultrawide" : "wide";
-    const pick =
-      lenses.find((l) => l.kind === want) ??
-      (opts.lens === "wide" ? lenses.find((l) => l.kind === "unknown") : undefined);
+    const pick = await pickBackLens(lenses, opts.lens === "ultrawide" ? "ultrawide" : "wide");
     if (pick) {
       video.deviceId = { exact: pick.deviceId };
     } else {
+      // Last resort: the platform's environment camera (iOS Safari 16.4+
+      // may return the virtual camera; adaptive zoom reaches the others).
       video.facingMode = { ideal: "environment" };
     }
-  } else {
-    video.facingMode = { ideal: "environment" };
   }
 
-  const stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+  // The capability probe stopped its stream a moment ago; Android may
+  // still be releasing it. Retry a transient NotReadableError instead
+  // of failing the scan for a camera that is about to be free.
+  /** @type {MediaStream} */
+  let stream;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+      break;
+    } catch (err) {
+      const name = err instanceof DOMException ? err.name : "";
+      if (attempt >= 2 || (name !== "NotReadableError" && name !== "AbortError")) throw err;
+      await sleep(300);
+    }
+  }
 
   // Zoom / torch are capability-gated track constraints (Android Chrome
   // and most native-camera-backed browsers expose both; desktop webcams

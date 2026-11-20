@@ -138,12 +138,15 @@ await scan({ image, latency: 10_000 });
   end: a square viewfinder (side = `min(86vw, 86dvh, 440px)` — never
   taller than wide on portrait, never wider than tall on landscape)
   with corner brackets, a static center line, a hint, a torch toggle
-  when the track supports one, and **two-finger pinch-to-zoom**. The
-  pinch drives the camera track's own `zoom` constraint — the decoder
-  reads the stream's pixels, so this is what puts more pixels on a code
-  that is too small at 1x; a CSS scale would only enlarge the preview.
-  The page itself cannot zoom or pan under the gesture (`touch-action:
-  none`). Its ✕ aborts the *internal* controller — which is also where
+  when the track supports one, and **two-finger pinch-to-zoom**. When
+  the track exposes a native `zoom` constraint, the pinch drives it —
+  the decoder reads the stream's pixels, so this is what puts more
+  pixels on a code that is too small at 1x. When it does not (Android
+  WebView, many desktop webcams), the same pinch and a **Zoom slider
+  shown only in that case** drive a center crop; the preview scales to
+  match, so what the user sees is what decodes. The page itself cannot
+  zoom or pan under the gesture (`touch-action: none`). Its ✕ aborts
+  the *internal* controller — which is also where
   a user-provided `signal` is chained, so both paths converge on the
   same teardown and the awaiting caller gets `undefined`.
 
@@ -172,7 +175,12 @@ await scan({ image, latency: 10_000 });
   default is the law.
 
 Camera knobs (live modes only): `lens` — `"ultrawide" | "wide" |
-"default"`, a session-mergeable preference over the back lenses;
+"default"`, a session-mergeable preference over the back lenses.
+`"wide"`/`"default"` do **not** trust label order or `facingMode:
+environment`: the SDK probes each rear lens and picks the one with
+continuous autofocus and the widest close-focus range (ambiguous Android
+labels say only "camera N, facing back", and a WebView test app exposed
+its fixed-focus ultra-wide as the environment camera);
 `crop` — **`"square"` is the default everywhere**: the *center square
 of each frame is what decodes*, matching the viewfinder — whatever
 you frame is all the decoder ever sees (a portrait stream would
@@ -203,6 +211,23 @@ files sit in one directory**:
 ```js
 import barcode from "https://cdn.example/barcode-web@1.0.0/main.js";
 ```
+
+`new Worker(url)` only accepts a **same-origin** script, so a page that
+imports `main.js` from a CDN must hand `barcode()` a same-origin worker
+URL. A one-line shim next to the page is enough:
+
+    // worker-shim.js — same origin
+    import "https://cdn.example/barcode-web@1.0.0/worker.js";
+
+```js
+import barcode from "https://cdn.example/barcode-web@1.0.0/main.js";
+
+const { scan, render } = barcode({ worker: "./worker-shim.js" });
+```
+
+The shim imports the CDN worker statically at the top, so the MessagePort
+is still the worker's first message. This is exactly how the docs
+playground loads itself.
 
 Requirements seen in the wild:
 
