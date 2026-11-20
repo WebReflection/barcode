@@ -74,6 +74,28 @@ jobs:
           path: /tmp/opencode/playwright-e2e.jsonl
           if-no-files-found: ignore
 
+  rust:
+    # The Rust suite was never gated: the wasm build proves it compiles,
+    # not that the decoders still decode. Native, no wasm-pack needed.
+    # `dm_deadline_probe` skips itself when its gitignored field fixture is
+    # absent (CI), so this job is independent of personal test images.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Native workspace tests
+        run: cargo test --workspace --locked
+
+      - name: Examples compile
+        run: cargo check --workspace --examples --locked
+
   webkit:
     # WebKit/Safari engine gate: nightly + manual. The per-push job above
     # must stay under a couple of minutes; WebKit's system deps are huge.
