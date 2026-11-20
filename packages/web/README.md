@@ -63,6 +63,31 @@ The worker script is strict-once: it binds the first port-carrying
 message and never again. Port-less messages pass through untouched, so
 an embedder can keep its own protocol on the same worker.
 
+## From a CDN, no bundler
+
+Every entry is a plain ES module, so a page can import the published
+version directly:
+
+```html
+<script type="module">
+  import barcode from 'https://cdn.jsdelivr.net/npm/@webreflection/barcode@latest/dist/main.js';
+  // or '.../dist/index.js' for the auto (page/worker) entry
+  const { scan, render } = barcode();
+</script>
+```
+
+`dist/css.css` can be linked normally for the default scan UI.
+
+Worker scripts must be same-origin with the document: a browser throws
+`SecurityError` on `new Worker('https://cdn...')` no matter what CORS
+headers the CDN sends. The SDK therefore rebuilds a cross-origin default
+worker entry as a synchronous **blob shim** (`import '<cdn>/worker.js'`),
+so the entry is same-origin while the module graph and its adjacent
+`wasm.wasm` still come from the CDN. Same-origin installations keep the
+direct `new Worker` path. A host page with a Content-Security-Policy
+must allow `worker-src blob:`. Pin a version in production; `@latest`
+tracks the newest publish.
+
 ## Symbologies
 
 * **2D**: `qrcode`, `microqr`, `aztec`, `datamatrix`, `pdf417`

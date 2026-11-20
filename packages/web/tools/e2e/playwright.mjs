@@ -106,6 +106,30 @@ const staticServer = createHttpServer((req, res) => {
 await new Promise((r) => staticServer.listen(0, "127.0.0.1", r));
 const STATIC = `http://127.0.0.1:${staticServer.address().port}`;
 
+// A second origin for the CDN contract: the built dist/main.js is imported
+// from another origin with no bundler, exactly like a jsDelivr URL. Same
+// host, different port -> different origin, so a direct `new Worker` of its
+// adjacent worker.js must be rebuilt as a blob shim (see api/main.js).
+const corsServer = createHttpServer((req, res) => {
+  try {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const path = normalize(join(pkg, "dist", decodeURIComponent(url.pathname)));
+    if (!path.startsWith(join(pkg, "dist")) || !statSync(path).isFile()) {
+      res.writeHead(404).end("not found");
+      return;
+    }
+    res.writeHead(200, {
+      "content-type": MIME[extname(path)] ?? "application/octet-stream",
+      "access-control-allow-origin": "*",
+    });
+    res.end(readFileSync(path));
+  } catch {
+    res.writeHead(404).end("not found");
+  }
+});
+await new Promise((r) => corsServer.listen(0, "127.0.0.1", r));
+const CDN = `http://127.0.0.1:${corsServer.address().port}`;
+
 // --- reporting ------------------------------------------------------------
 /** @type {{ project: string, suite: string, name: string, ok: boolean, xfail?: boolean, ms: number, note?: string }[]} */
 const rows = [];
@@ -507,7 +531,48 @@ async function suiteRegression(browser, project) {
   await context.close();
 }
 
-/** Real photos, local-only. Skips (does not fail) when the corpus is absent. */
+/**
+ * The published artifact consumed from ANOTHER origin, no bundler and no
+ * worker file on the host page: `import barcode from '<cdn>/main.js'` must
+ * work (the SDK rebuilds the cross-origin worker entry as a blob shim).
+ * Uses a local second origin so CI never touches a real CDN.
+ */
+async function suiteCdn(browser, project) {
+  const context = await browser.newContext(project.context);
+  const page = await context.newPage();
+  const t0 = Date.now();
+  try {
+    await page.goto(`${STATIC}/packages/web/site/index.html`, { waitUntil: "load" });
+    const result = await page.evaluate(async (base) => {
+      const { default: barcode } = await import(`${base}/main.js`);
+      const { scan, render } = barcode();
+      const svg = await render({ symbology: "qrcode", text: "CDN-E2E" });
+      const img = new Image();
+      img.src =
+        "data:image/svg+xml;charset=utf-8," +
+        encodeURIComponent(new XMLSerializer().serializeToString(svg));
+      await img.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = 400;
+      canvas.height = 400;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, 400, 400);
+      ctx.drawImage(img, 40, 40, 320, 320);
+      const code = await scan({ image: canvas });
+      return { text: code?.text, symbology: code?.symbology };
+    }, CDN);
+    if (result.text !== "CDN-E2E")
+      throw new Error(`cross-origin: got ${JSON.stringify(result)}`);
+    record({ project, suite: "cdn", name: "cross-origin entry", ok: true, ms: Date.now() - t0 });
+  } catch (err) {
+    record({
+      project, suite: "cdn", name: "cross-origin entry", ok: false, ms: Date.now() - t0,
+      note: String(/** @type {Error} */ (err)?.message ?? err).split("\n")[0],
+    });
+  }
+  await context.close();
+}
 async function suiteField(browser, project) {
   const corpus = resolve(pkg, "test-codes/field/corpus.json");
   if (!existsSync(corpus)) {
@@ -551,6 +616,7 @@ try {
         await context.close();
         await suiteDocs(browser, project.name);
         await suiteRegression(browser, project.name);
+        await suiteCdn(browser, project.name);
       }
       await suiteFakecam(browser, project.name);
       if (FIELD) await suiteField(browser, project.name);
@@ -561,6 +627,7 @@ try {
 } finally {
   await vite.close();
   staticServer.close();
+  corsServer.close();
 }
 
 failed = rows.filter((r) => !r.ok && !r.xfail).length;

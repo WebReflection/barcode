@@ -27,6 +27,9 @@ export interface BarcodeOptions {
    * the worker for its whole lifetime — abort never terminates it;
    * handing the same worker to a second session throws ('duplicated
    * worker').
+   * A cross-origin URL (e.g. a CDN) is loaded through a same-origin blob
+   * entry, because browsers only construct Workers from the document's
+   * origin; CSP hosts must allow `worker-src blob:`.
    * @default new URL('./worker.js', import.meta.url)
    */
   worker?: string | URL | Worker;

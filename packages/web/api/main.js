@@ -236,12 +236,29 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
   // port crosses are queued on port1; nothing here is lazy and barcode()
   // returns immediately.
   let /** @type {Worker} */ w;
-  if (typeof worker === 'string' || worker instanceof URL)
-    w = new Worker(worker, { type: 'module' });
-  else if (worker instanceof Worker)
+  if (typeof worker === 'string' || worker instanceof URL) {
+    // A document cannot construct a Worker whose script is on another
+    // origin: the browser throws SecurityError by origin equality, and the
+    // CDN's CORS headers cannot change that. A synchronous blob entry whose
+    // only statement imports the CDN script keeps the entry same-origin
+    // while the worker's module graph (and its adjacent wasm, resolved from
+    // the CDN module's own import.meta.url) still comes from the CDN. Host
+    // pages with a CSP need `worker-src blob:`.
+    const url = worker instanceof URL ? worker : new URL(worker, location.href);
+    if (url.protocol.startsWith('http') && url.origin !== location.origin) {
+      const shim = `import ${JSON.stringify(url.href)};`;
+      w = new Worker(
+        URL.createObjectURL(new Blob([shim], { type: 'text/javascript' })),
+        { type: 'module' },
+      );
+    } else {
+      w = new Worker(url, { type: 'module' });
+    }
+  } else if (worker instanceof Worker) {
     w = worker;
-  else
+  } else {
     throw new TypeError('barcode: worker must be a string, a URL, or a Worker');
+  }
   if (handled.has(w)) throw new Error('duplicated worker');
   handled.add(w);
   const { port1, port2 } = new MessageChannel;
