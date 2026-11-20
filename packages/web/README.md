@@ -11,7 +11,9 @@ core — clean-room implementations, MIT throughout.
 [your own video / mount](https://webreflection.github.io/barcode/live.html),
 [still image](https://webreflection.github.io/barcode/still.html),
 [render playground](https://webreflection.github.io/barcode/render.html),
-[worker API](https://webreflection.github.io/barcode/worker.html).
+[worker API](https://webreflection.github.io/barcode/worker.html),
+[self-test](https://webreflection.github.io/barcode/test.html) and
+[transports](https://webreflection.github.io/barcode/contract-test.html).
 
 ```js
 import barcode from '@webreflection/barcode/main';
