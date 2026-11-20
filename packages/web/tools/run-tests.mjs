@@ -1,10 +1,12 @@
 #!/usr/bin/env node
+import { fileURLToPath } from "node:url";
 /**
  * Drive the self-test harness page over CDP.
  * Usage: node tools/run-tests.mjs [cdpPort] [url]
  */
 const port = process.argv[2] ?? "9333";
-const url = process.argv[3] ?? "http://localhost:5173/demo/test.html";
+const tests = fileURLToPath(new URL("../tests/", import.meta.url));
+const url = process.argv[3] ?? `http://localhost:5173/@fs${tests}test.html`;
 
 const targets = await fetch(`http://localhost:${port}/json`).then((r) => r.json());
 let page = targets.find((t) => t.type === "page");

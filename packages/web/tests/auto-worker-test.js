@@ -1,4 +1,4 @@
-// Module worker used by demo/artifact-test.html: a consumer worker that
+// Module worker used by tests/artifact-test.html: a consumer worker that
 // imports the SDK worker entry STATICALLY at the top (the contract), so the
 // page's first message — the MessagePort — is captured.
 import entry from "../dist/worker.js";

@@ -4,13 +4,13 @@
 - `cargo test --workspace` — Rust decoders, round-trip + rejection.
 - `tools/e2e/playwright.mjs` — starts Vite itself and drives the same pages
   on Chromium and WebKit (plus an iPhone-descriptor WebKit project):
-  - `dist/` artifact smoke (`demo/artifact-test.html`, plain static hosting)
-  - `demo/test.html` (synthetic round-trip, GPU/CPU)
-  - `demo/contract-test.html` (worker transports, render-raw)
+  - `dist/` artifact smoke (`tests/artifact-test.html`, plain static hosting)
+  - `tests/test.html` (synthetic round-trip, GPU/CPU)
+  - `tests/contract-test.html` (worker transports, render-raw)
   - `scan.html` live path with a fake camera (`fakecam-spec.mjs`)
   - the committed `docs/` site (landing, render round-trip, still sample,
     worker entries, bundled self-test on Chromium)
-  - the local real-photo corpus when present (`demo/field.html`)
+  - the local real-photo corpus when present (`tests/field.html`)
   Run: `npm test` (all projects + field) or `npm run test:ci` (CI).
 
   CI installs Playwright's Chromium + WebKit and runs `test:ci`; no camera

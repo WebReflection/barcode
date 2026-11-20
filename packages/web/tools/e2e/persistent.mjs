@@ -45,7 +45,8 @@ class Cdp {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const show = new Cdp(9223, "/show.html");
+const tests = fileURLToPath(new URL("../../tests/", import.meta.url));
+const show = new Cdp(9223, `/@fs${tests}show.html`);
 const phone = new Cdp(9222, "/scan.html");
 await show.connect();
 await phone.connect();
@@ -64,7 +65,7 @@ console.log("scanner open — holding camera for the whole run");
 const TIMEOUT = 30_000;
 let pass = 0;
 for (const c of cases) {
-  await show.send("Page.navigate", { url: `http://localhost:5173/show.html?s=${c.s}&t=${encodeURIComponent(c.t)}&fill=0.6` });
+  await show.send("Page.navigate", { url: `http://localhost:5173/@fs${tests}show.html?s=${c.s}&t=${encodeURIComponent(c.t)}&fill=0.6` });
   const t0 = Date.now();
   let got = null;
   while (Date.now() - t0 < TIMEOUT) {

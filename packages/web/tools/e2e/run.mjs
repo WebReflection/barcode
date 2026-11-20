@@ -2,8 +2,8 @@
 /**
  * Device-to-device e2e sweep driver (the README's "integration tier").
  *
- *   Mac Chrome window (debug :9223)  displays /demo/show.html?s=X&t=Y
- *   Phone Chrome      (debug :9222)  runs   /demo/scan.html, camera at screen
+ *   Mac Chrome window (debug :9223)  displays tests/show.html?s=X&t=Y
+ *   Phone Chrome      (debug :9222)  runs   demo/scan.html, camera at screen
  *
  * Per case: navigate the show window -> poll the phone's #result card until
  * it decodes (or timeout) -> record. Wrong/no decode -> tap "Scan again"
@@ -65,7 +65,8 @@ class Cdp {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const show = new Cdp(SHOW_PORT, "/show.html");
+const tests = fileURLToPath(new URL("../../tests/", import.meta.url));
+const show = new Cdp(SHOW_PORT, `/@fs${tests}show.html`);
 const phone = new Cdp(PHONE_PORT, "/scan.html");
 await show.connect();
 await phone.connect();
@@ -81,7 +82,7 @@ for (const c of cases) {
   // Put the code on the Mac screen first.
   const fill = process.env.E2E_FILL ? `&fill=${process.env.E2E_FILL}` : "";
   const mod = process.env.E2E_MODULE ? `&m=${process.env.E2E_MODULE}` : "";
-  await show.send("Page.navigate", { url: `http://localhost:5173/show.html?s=${encodeURIComponent(c.s)}&t=${encodeURIComponent(c.t)}${fill}${mod}` });
+  await show.send("Page.navigate", { url: `http://localhost:5173/@fs${tests}show.html?s=${encodeURIComponent(c.s)}&t=${encodeURIComponent(c.t)}${fill}${mod}` });
   await sleep(1200);
 
   // Fresh scanner per case, filtered to the symbology under test (junk 2D

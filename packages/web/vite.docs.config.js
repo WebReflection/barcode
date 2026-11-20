@@ -44,8 +44,6 @@ export default defineConfig({
         still: resolve(demo, "still.html"),
         render: resolve(demo, "render.html"),
         worker: resolve(demo, "worker.html"),
-        test: resolve(demo, "test.html"),
-        contract: resolve(demo, "contract-test.html"),
       },
     },
   },
