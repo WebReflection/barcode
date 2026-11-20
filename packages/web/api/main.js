@@ -308,7 +308,9 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
    *   Camera knobs: `lens` (session default), `crop` ("square" for the
    *   default UI — what you frame is what decodes — "full" otherwise),
    *   `zoom` initial factor, `torch` initial state (the default UI also
-   *   carries a toggle when the track supports it).
+   *   carries a toggle when the track supports it). The default UI's
+   *   two-finger pinch drives the track zoom and stands adaptive zoom
+   *   down; pass `{ video }` to bring your own UI and your own gestures.
    * @returns {Promise<Code | undefined>}
    */
   const scan = (options = { into: document.body }) => {
@@ -454,6 +456,87 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
         close.setAttribute('aria-label', 'Stop scanning');
         close.addEventListener('click', stop, { once: true });
         dialog.showModal();
+
+        // Pinch-to-zoom owns the viewfinder's touch gesture: two pointers
+        // drive the CAMERA's track zoom, not a CSS scale. Scaling the
+        // preview would not help the decoder — it reads the stream's
+        // pixels — while a track zoom is exactly what puts more pixels on
+        // a code too small to read at 1x. css.css sets `touch-action:
+        // none` on the dialog/stage so the page itself cannot zoom; the
+        // non-passive touchmove listener is the belt for iOS Safari
+        // builds that still page-zoom from inside a modal.
+        /** @type {Map<number, { x: number, y: number }>} */
+        const pointers = new Map();
+        /** @type {{ ids: number[], distance: number, zoom: number } | null} */
+        let pinch = null;
+        /** Latest requested factor; pointermoves coalesce into one constraint. */
+        /** @type {number | null} */
+        let pendingZoom = null;
+        let applyingZoom = false;
+        const applyZoom = async () => {
+          if (applyingZoom) return;
+          applyingZoom = true;
+          try {
+            while (pendingZoom != null) {
+              const factor = pendingZoom;
+              pendingZoom = null;
+              if (!scanner || settled) break;
+              await scanner.zoomTo(factor, false);
+            }
+          } catch {
+            // camera closed mid-gesture: teardown already owns the exit
+          } finally {
+            applyingZoom = false;
+          }
+        };
+        /** @param {number} factor */
+        const requestZoom = (factor) => {
+          if (!Number.isFinite(factor)) return;
+          pendingZoom = factor;
+          void applyZoom();
+        };
+        const startPinch = () => {
+          const [first, second] = [...pointers];
+          if (!first || !second) return;
+          const [idA, a] = first;
+          const [idB, b] = second;
+          const distance = Math.hypot(a.x - b.x, a.y - b.y);
+          const zoom = scanner?.zoom;
+          if (distance > 0 && zoom != null) pinch = { ids: [idA, idB], distance, zoom };
+        };
+        stage.addEventListener('pointerdown', (event) => {
+          pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          try { stage.setPointerCapture(event.pointerId); } catch (_) {}
+          startPinch();
+          event.preventDefault();
+        });
+        stage.addEventListener('pointermove', (event) => {
+          const point = pointers.get(event.pointerId);
+          if (!point) return;
+          point.x = event.clientX;
+          point.y = event.clientY;
+          if (pinch) {
+            const [a, b] = pinch.ids.map((id) => pointers.get(id));
+            const distance = a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+            if (distance > 0) requestZoom(pinch.zoom * (distance / pinch.distance));
+          }
+          event.preventDefault();
+        });
+        /** @param {PointerEvent} event */
+        const endPointer = (event) => {
+          pointers.delete(event.pointerId);
+          if (pinch && !pinch.ids.every((id) => pointers.has(id))) pinch = null;
+          // three pointers down, one lifted: the remaining pair can pinch
+          startPinch();
+          event.preventDefault();
+        };
+        stage.addEventListener('pointerup', endPointer);
+        stage.addEventListener('pointercancel', endPointer);
+        /** @param {TouchEvent} event */
+        const stopPageZoom = (event) => {
+          if (event.touches.length > 1) event.preventDefault();
+        };
+        dialog.addEventListener('touchmove', stopPageZoom, { passive: false });
       }
 
       scanner = new Scanner({

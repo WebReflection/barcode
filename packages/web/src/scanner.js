@@ -98,7 +98,8 @@ import {
  *   preference, best-effort classification from the back lenses.
  * @property {boolean} [adaptiveZoom] Grow zoom when a detected code occupies too little of the frame,
  *   and fall back to native 1x a few seconds after decoding stops. Stands
- *   down entirely when `camera.zoom` is set explicitly (never fight the user).
+ *   down entirely when `camera.zoom` is set explicitly or once the user
+ *   zooms manually (never fight the user).
  * @property {boolean} [autoTorch] Default true. Turn the torch on while a QR
  *   is present but failing to decode (marginal contrast — the field-proven
  *   fix), and off again when the scene is empty. If the frame carries no QR
@@ -165,6 +166,8 @@ export class Scanner {
   /** @type {Worker | null} */ #worker = null;
   /** Auto-framing state: the torch automation stands down once the user touches it. */
   #torchTouched = false;
+  /** Same rule for zoom: a manual pinch/zoomTo() wins over adaptive zoom. */
+  #zoomTouched = false;
   /** @type {boolean} */ #torchAuto = false;
   /** Last value applied to the track (null = untouched). */
   /** @type {boolean | null} */ #torchApplied = null;
@@ -527,7 +530,7 @@ export class Scanner {
    */
   async #maybeZoomReset(results, frame) {
     void frame;
-    if (results.length) return;
+    if (results.length || this.#zoomTouched) return;
     if (this.#opts.camera?.zoom != null) return;
     const now = performance.now();
     if (now - this.#lastZoomAt < ZOOM_COOLDOWN_MS) return;
@@ -550,7 +553,7 @@ export class Scanner {
    * @param {import("./gpu/binarizer.js").BinarizedFrame} frame
    */
   async #maybeZoom(results, frame) {
-    if (!results.length) return;
+    if (!results.length || this.#zoomTouched) return;
     // Never fight an explicit camera.zoom from the options.
     if (this.#opts.camera?.zoom != null) return;
     const now = performance.now();
@@ -888,10 +891,27 @@ export class Scanner {
     return this.#running ? setTorch(this.#track(), on) : false;
   }
 
-  /** @param {number} factor @returns {Promise<number | null>} */
-  async zoomTo(factor) {
+  /** The camera's current zoom factor, or null when the track has none. */
+  get zoom() {
+    return this.#running ? currentZoom(this.#track()) : null;
+  }
+
+  /**
+   * Set the camera zoom factor. A manual zoom stands the adaptive policy
+   * down for the session — the user wins, always.
+   *
+   * `settle` waits for autofocus to stop moving after the change (the
+   * programmatic default). Continuous gestures pass false: a 2s settle
+   * wait per pointermove would lag behind the fingers.
+   *
+   * @param {number} factor
+   * @param {boolean} [settle]
+   * @returns {Promise<number | null>}
+   */
+  async zoomTo(factor, settle = true) {
+    this.#zoomTouched = true;
     const r = this.#running ? await setZoom(this.#track(), factor) : null;
-    if (r !== null && this.#running) await waitForFocusSettle(this.#track());
+    if (r !== null && settle && this.#running) await waitForFocusSettle(this.#track());
     return r;
   }
 

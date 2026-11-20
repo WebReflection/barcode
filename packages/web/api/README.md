@@ -137,11 +137,15 @@ await scan({ image, latency: 10_000 });
   `document.body`). The UI is created fresh per scan and removed on
   end: a square viewfinder (side = `min(86vw, 86dvh, 440px)` — never
   taller than wide on portrait, never wider than tall on landscape)
-  with corner brackets, a static center line, a hint, and a torch
-  toggle when the track supports one. Its ✕ aborts the *internal*
-  controller — which is also where a user-provided `signal` is
-  chained, so both paths converge on the same teardown and the
-  awaiting caller gets `undefined`.
+  with corner brackets, a static center line, a hint, a torch toggle
+  when the track supports one, and **two-finger pinch-to-zoom**. The
+  pinch drives the camera track's own `zoom` constraint — the decoder
+  reads the stream's pixels, so this is what puts more pixels on a code
+  that is too small at 1x; a CSS scale would only enlarge the preview.
+  The page itself cannot zoom or pan under the gesture (`touch-action:
+  none`). Its ✕ aborts the *internal* controller — which is also where
+  a user-provided `signal` is chained, so both paths converge on the
+  same teardown and the awaiting caller gets `undefined`.
 
   Read feedback: a progress track at the bottom of the viewfinder —
   0% while hunting, 50% from the first frame that carried a read
@@ -179,8 +183,10 @@ factor; `torch` — initial state. On top of that, `adaptiveZoom`
 grows the zoom automatically when a code is detected but too small
 (target: ≥40% of the frame width) and `autoTorch` lights marginal
 scenes — both on by default. A code too small to even detect gets no
-automatic help: that is what `lens` and holding the phone closer are
-for.
+automatic help: pinch the viewfinder (the default UI's camera zoom),
+switch `lens`, or hold the phone closer. A manual pinch stands
+`adaptiveZoom` down for the rest of that scan — the user wins; the
+next `scan()` starts fresh.
 
 ### Serving from a CDN (or any static host)
 
