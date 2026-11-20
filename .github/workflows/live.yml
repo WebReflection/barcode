@@ -1,0 +1,48 @@
+name: live
+
+# Published-artifact smoke: npm dist-tags, jsDelivr, the deployed Pages site
+# and one render through the CDN build. Kept out of the per-PR gate on
+# purpose — it needs the network and the release, not the pull request.
+#
+# A red run means the release/CDN/Pages chain is broken; re-run after npm
+# propagation or a Pages deploy finishes before treating it as a regression.
+
+on:
+  schedule:
+    - cron: "43 5 * * *" # after the 03:17 nightly ci run
+  workflow_dispatch:
+
+concurrency:
+  group: live
+  cancel-in-progress: true
+
+jobs:
+  published:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install package deps
+        working-directory: packages/web
+        run: npm install --no-audit --no-fund
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('packages/web/package.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
+
+      - name: Install Chromium for Playwright
+        working-directory: packages/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Live release smoke
+        working-directory: packages/web
+        run: npm run test:live

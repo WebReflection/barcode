@@ -301,6 +301,9 @@ round-trip), `tests/roi.html` covers small codes in a 4096 px frame,
 ## Known limits / next
 
 - One code per scan (by design for now); multi-code scanning is future work.
+- `databarexpanded` rendering always writes the general-purpose (method 00)
+  field, so every element string is representable but the symbol is longer
+  than a compressed encodation (such as zint emits).
 - GPU contrast normalization (per-tile stretch) for dim/grey captures is not
   done yet.
 - Native Android/iOS bindings on top of the same Rust core.
