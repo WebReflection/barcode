@@ -92,9 +92,15 @@ run(process.execPath, ["tools/build-artifacts.mjs"]);
 run(process.execPath, [tsc, "--noEmit"]);
 run(process.execPath, [tsc, "-p", "tsconfig.types.json"]);
 
+// Publish coupling: prepublishOnly runs this script, and the Pages site
+// must be the exact version + demo bundle npm just received. Feature PRs
+// never commit generated docs/ (the docs guard enforces that), so this
+// only writes the working tree; a maintainer ships a docs-rebuild PR.
+run(process.execPath, ["tools/build-docs.mjs"]);
+
 if (DEMO) {
   const vite = resolve(root, "node_modules/vite/bin/vite.js");
   run(process.execPath, [vite, "build", "--config", "vite.scan.config.js"]);
 }
 
-console.log(`\ndone: ${DEMO ? "dist/ (npm payload) + demo-dist/ (deployable demo)" : "dist/ (npm payload)"}`);
+console.log(`\ndone: ${DEMO ? "dist/ (npm payload) + demo-dist/ (deployable demo)" : "dist/ (npm payload)"} + docs/`);

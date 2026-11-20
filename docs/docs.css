@@ -11,12 +11,15 @@
   --code: #0a0f14;
 }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
   background: radial-gradient(1200px 500px at 50% -10%, #16283f 0%, var(--bg) 60%);
   color: var(--ink);
   font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Never let one long token widen the layout viewport (iOS then
+     shrink-to-fits the WHOLE page, which is what made the docs tiny). */
+  overflow-wrap: break-word;
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -48,13 +51,39 @@ pre.snippet code { background: none; border: 0; padding: 0; white-space: pre; }
   text-align: center;
 }
 .eyebrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   margin: 0 0 12px;
   color: var(--muted);
   font-size: 12px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
-h1 { margin: 0 0 16px; font-size: clamp(2rem, 6vw, 3.5rem); line-height: 1.1; letter-spacing: -0.02em; }
+.version {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--muted);
+  font: 600 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+.version:hover { color: var(--ink); border-color: var(--accent); text-decoration: none; }
+h1 {
+  margin: 0 0 16px;
+  /* 32px overflowed a 375px iPhone by a few px; 6.6vw with a 24px floor
+     keeps the brand on one line down to 320px. */
+  font-size: clamp(1.5rem, 6.6vw, 3.5rem);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
 .lede { max-width: 720px; margin: 0 auto; color: var(--muted); font-size: clamp(1rem, 2vw, 1.15rem); }
 .cta { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 30px; }
 .button {
@@ -96,7 +125,8 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; }
 .api-table { width: 100%; border-collapse: collapse; margin: 16px 0 22px; font-size: 0.95rem; }
 .api-table th, .api-table td { border-bottom: 1px solid var(--line); padding: 9px 8px; text-align: left; vertical-align: top; }
 .api-table th { color: var(--muted); font-weight: 600; }
-.api-table td code { white-space: normal; }
+.api-table td { overflow-wrap: anywhere; }
+.api-table td code { white-space: normal; overflow-wrap: anywhere; }
 
 .privacy {
   border: 1px solid var(--line);
@@ -134,12 +164,65 @@ footer .fine { font-size: 0.82rem; opacity: 0.75; }
 
 @media (max-width: 760px) {
   .split { grid-template-columns: 1fr; gap: 18px; }
-  .hero { padding-top: 46px; }
+  .hero { padding: 44px 16px 22px; }
+  main { padding: 12px 16px 44px; }
+  section { margin: 40px 0; }
+  h2 { font-size: 1.22rem; }
+  h3 { font-size: 1rem; }
   .cta { flex-direction: column; align-items: stretch; }
   .button { text-align: center; }
+  .card { padding: 16px; }
+  .privacy { padding: 18px; }
+  footer { padding: 24px 16px 40px; }
+
+  /* The import table is a 3-column table that cannot fit a phone: its
+     min-content width (501px) used to force iOS/Android to widen the
+     layout viewport and shrink-to-fit the whole page. On narrow screens
+     each row becomes a stacked card, so there is nothing to scroll
+     sideways and the labels stay visible. */
+  .api-table, .api-table tbody, .api-table tr, .api-table td { display: block; }
+  .api-table thead { display: none; }
+  .api-table { margin: 14px 0 20px; }
+  .api-table tbody { display: grid; gap: 10px; }
+  .api-table tr {
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg-soft);
+  }
+  .api-table td {
+    display: grid;
+    grid-template-columns: 4.5rem minmax(0, 1fr);
+    gap: 10px;
+    padding: 2px 0;
+    border: 0;
+  }
+  /* One grid item for the value: mixed text + <code> stays together in
+     the value column instead of spilling into the label column. */
+  .api-table td > span { min-width: 0; }
+  /* The import is the card's title, so it gets the full width (and the
+     longest token never needs to break); context/default follow as
+     label/value rows. */
+  .api-table td:first-child {
+    display: block;
+    padding: 0 0 8px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+  }
+  .api-table td:first-child::before { display: none; }
+  .api-table td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding-top: 2px;
+  }
+
   /* Narrow screens have no room for sideways scroll affordances: wrap
      snippet lines instead of clipping them (the text stays intact for
      copy/paste; desktop keeps the pre-formatted single-line layout). */
-  pre.snippet { overflow-x: hidden; }
+  pre.snippet { overflow-x: hidden; padding: 14px 16px; }
   pre.snippet code { white-space: pre-wrap; overflow-wrap: anywhere; }
 }

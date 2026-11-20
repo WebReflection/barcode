@@ -10,7 +10,10 @@
 </head>
 <body>
 <header class="hero">
-  <p class="eyebrow">MIT · clean-room · Rust → WASM · WebGPU</p>
+  <p class="eyebrow">
+    <span>MIT · clean-room · Rust → WASM · WebGPU</span>
+    <a class="version" href="https://www.npmjs.com/package/@webreflection/barcode" title="Version of this docs build">v{{VERSION}}</a>
+  </p>
   <h1>@webreflection/barcode</h1>
   <p class="lede">
     A barcode and QR <strong>scanner</strong> that reads 17 symbologies from a
@@ -80,10 +83,10 @@
     <table class="api-table">
       <thead><tr><th>import</th><th>context</th><th>default</th></tr></thead>
       <tbody>
-        <tr><td><code>@webreflection/barcode</code></td><td>auto</td><td>page → <code>barcode()</code>; worker → bootstrap promise</td></tr>
-        <tr><td><code>@webreflection/barcode/main</code></td><td>page</td><td><code>barcode(options)</code></td></tr>
-        <tr><td><code>@webreflection/barcode/worker</code></td><td>worker</td><td>bootstrap promise</td></tr>
-        <tr><td><code>@webreflection/barcode/css</code></td><td>page</td><td>optional default scan UI</td></tr>
+        <tr><td data-label="import"><span><code>@webreflection/barcode</code></span></td><td data-label="context"><span>auto</span></td><td data-label="default"><span>page → <code>barcode()</code>; worker → bootstrap promise</span></td></tr>
+        <tr><td data-label="import"><span><code>@webreflection/barcode/main</code></span></td><td data-label="context"><span>page</span></td><td data-label="default"><span><code>barcode(options)</code></span></td></tr>
+        <tr><td data-label="import"><span><code>@webreflection/barcode/worker</code></span></td><td data-label="context"><span>worker</span></td><td data-label="default"><span>bootstrap promise</span></td></tr>
+        <tr><td data-label="import"><span><code>@webreflection/barcode/css</code></span></td><td data-label="context"><span>page</span></td><td data-label="default"><span>optional default scan UI</span></td></tr>
       </tbody>
     </table>
     <pre class="snippet"><code>import barcode from '@webreflection/barcode';
@@ -158,8 +161,8 @@ await render(code, { rows: 12, cols: 36 });</code></pre>
   <section>
     <h2>Run it locally</h2>
     <pre class="snippet"><code>npm install
-npm run build          # → packages/web/dist
-npm run build:demo     # → packages/web/demo-dist
+npm run build          # → dist/ + docs/
+npm run build:demo     # … and demo-dist/
 npm run serve:demo     # http://&lt;lan-ip&gt;:8124
 
 # phone over USB, no HTTPS needed
