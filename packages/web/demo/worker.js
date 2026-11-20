@@ -4,6 +4,7 @@
  * worker (the contract for a guaranteed MessagePort channel).
  */
 import barcode from "../api/main.js";
+import workerUrl from "./worker-url.js";
 
 const logEl = /** @type {HTMLElement} */ (document.getElementById("log"));
 /** @type {string[]} */
@@ -60,9 +61,7 @@ $$("explicit").addEventListener("click", async () => {
   button.disabled = true;
   try {
     // The explicit worker entry; no default worker is ever spawned.
-    const worker = new Worker(new URL("../api/worker.js", import.meta.url), {
-      type: "module",
-    });
+    const worker = new Worker(workerUrl, { type: "module" });
     worker.addEventListener("error", (event) => log(`worker error: ${event.message}`, "fail"));
     const session = barcode({ worker });
     log(`barcode({ worker }) returned the caller's Worker: ${session.worker === worker}`, session.worker === worker ? "pass" : "fail");

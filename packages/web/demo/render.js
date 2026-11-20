@@ -3,9 +3,8 @@
  * scan(render(...)) round-trip on the same session/worker.
  */
 import barcode from "../api/main.js";
-// Vite emits the worker as its own chunk; the source default URL would
-// point at an unbundled api/worker.js asset in a production build.
-import workerUrl from "../api/worker.js?worker&url";
+// The same-origin worker shim (see worker-url.js).
+import workerUrl from "./worker-url.js";
 
 const { render, scan } = barcode({ worker: workerUrl });
 
