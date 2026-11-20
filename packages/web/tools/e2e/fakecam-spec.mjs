@@ -23,6 +23,10 @@ export const CASES = [
   ["databarltd", "(01)10000000000007"],
   ["databarstk", "(01)40063813339314"],
   ["databarexpanded", "(01)40063813339314(10)ABC"],
+  // compressed encodations: (3103) weight, (3922) price, weight + date
+  ["databarexpanded", "(01)90012345678908(3103)001234"],
+  ["databarexpanded", "(01)90012345678908(3922)12345"],
+  ["databarexpanded", "(01)90012345678908(3103)001234(15)261231"],
   ["code93", "TEST93"],
   ["qrcode", "HELLO WORLD"],
   ["microqr", "12345"],

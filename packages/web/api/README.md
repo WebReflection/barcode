@@ -251,10 +251,11 @@ the same names, so `render(code)` and
 still normalizes hand-built input once, for convenience.)
 
 `databarexpanded` renders the element string the decoder returns
-(`(AI)data...`): the encoder writes the general-purpose (method 00) field,
-so the symbol is longer than a zint-compacted one but every element string
-is representable. The mod-211 check character is computed from the measured
-symbol-character table.
+(`(AI)data...`): the encoder uses the standard's compressed field whenever
+the string matches an AI-(01) family (AI 01 + general purpose, weight,
+price, or weight + date), and falls back to the general-purpose (method 00)
+field for every other element string. The mod-211 check character is
+computed from the measured symbol-character table.
 
 ### render(code | undefined, opts?) → Promise&lt;SVGSVGElement | null&gt;
 
