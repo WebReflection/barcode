@@ -19,7 +19,7 @@
  * Requires src/wasm/pkg (npm run build).
  */
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -47,7 +47,20 @@ for (const name of [
 }
 mkdirSync(docs, { recursive: true });
 
-copyFileSync(resolve(site, "index.html"), resolve(docs, "index.html"));
+// The landing page carries the package version, so a docs deploy is
+// self-identifying: when the badge says v0.1.5, the demos are the 0.1.5
+// build. `npm run build` (and therefore prepublishOnly) rebuilds this.
+const version = JSON.parse(
+  readFileSync(resolve(root, "package.json"), "utf8"),
+).version;
+const landing = readFileSync(resolve(site, "index.html"), "utf8");
+if (!landing.includes("{{VERSION}}")) {
+  throw new Error("site/index.html lost its {{VERSION}} placeholder");
+}
+writeFileSync(
+  resolve(docs, "index.html"),
+  landing.replaceAll("{{VERSION}}", version),
+);
 copyFileSync(resolve(site, "docs.css"), resolve(docs, "docs.css"));
 // GitHub Pages must serve the files as-is (no Jekyll pipeline).
 writeFileSync(resolve(docs, ".nojekyll"), "");
@@ -58,4 +71,4 @@ execFileSync(process.execPath, [vite, "build", "--config", "vite.docs.config.js"
   stdio: "inherit",
 });
 
-console.log("docs/: index.html + 7 live demo pages + assets/");
+console.log(`docs/: index.html (v${version}) + 7 live demo pages + assets/`);
