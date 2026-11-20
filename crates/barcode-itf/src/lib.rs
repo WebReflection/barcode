@@ -37,8 +37,6 @@ pub struct ItfDecoder {
     min_rows: usize,
     runs: Vec<(bool, u32)>,
     offsets: Vec<u32>,
-    /// Index of the last run containing ink (the stop's wide bar must be it).
-    last_ink_run: usize,
     votes: HashMap<String, (usize, u32, u32, u32, u32)>,
 }
 
@@ -48,7 +46,6 @@ impl ItfDecoder {
             min_rows: min_rows.max(1),
             runs: Vec::with_capacity(512),
             offsets: Vec::with_capacity(512),
-            last_ink_run: 0,
             votes: HashMap::new(),
         }
     }
@@ -72,15 +69,9 @@ impl ItfDecoder {
             }
             x += 1;
         }
-        self.last_ink_run = 0;
         if n > 0 {
             self.runs.push((cur, n));
             self.offsets.push(image.width - n);
-        }
-        for (i, r) in self.runs.iter().enumerate() {
-            if r.0 {
-                self.last_ink_run = i;
-            }
         }
     }
 
@@ -96,22 +87,22 @@ impl ItfDecoder {
             return None;
         }
         // The start's 4 runs must be narrow per the first pair's split.
-        let thr0 = self.pair_threshold(start + 4)?;
+        let (thr0, _) = self.pair_threshold(start + 4)?;
         for k in 0..4 {
             if (self.runs[start + k].1 as f32) >= thr0 {
                 return None;
             }
         }
 
-        // Decode digit pairs greedily; stop at narrow bar + narrow space +
-        // wide bar, with the wide bar being the row's last ink run.
+        // Decode digit pairs greedily; stop at wide bar + narrow space +
+        // narrow bar followed by a quiet zone.
         let mut digits: Vec<u8> = Vec::with_capacity(20);
         let mut k = start + 4;
         loop {
             if k + 10 > self.runs.len() {
                 return None;
             }
-            let thr = self.pair_threshold(k)?;
+            let (thr, narrow) = self.pair_threshold(k)?;
             let mut bar_w = [0u8; 5];
             let mut sp_w = [0u8; 5];
             for i in 0..5 {
@@ -123,13 +114,26 @@ impl ItfDecoder {
             k += 10;
 
             // Stop: wide bar, narrow space, narrow bar (verified against a
-            // real capture). The wide bar must be the row's last ink run:
-            // pair elements can mimic the stop pattern mid-symbol.
+            // real capture), then a quiet zone. The quiet zone — not "the
+            // stop must be the row's last ink" — is what separates a real
+            // stop from a mid-symbol mimic: a label border or a printed
+            // rule beside the barcode shares the row, and requiring the
+            // stop to be last rejected the whole frame (Dompé pharma box:
+            // a valid ITF-10 with the label border to its right never
+            // decoded). A genuine stop is followed by >= 5 narrow modules
+            // of white; pair elements leave at most a wide space (2-3
+            // modules) before the next bar. No next run (the crop ends at
+            // the stop) still counts as quiet.
             if k + 3 <= self.runs.len() {
                 let b1_ok = self.runs[k].0 && (self.runs[k].1 as f32) >= thr;
                 let s_ok = !self.runs[k + 1].0 && (self.runs[k + 1].1 as f32) < thr;
                 let b2_ok = self.runs[k + 2].0 && (self.runs[k + 2].1 as f32) < thr;
-                if b1_ok && s_ok && b2_ok && k + 2 == self.last_ink_run {
+                let quiet = self
+                    .runs
+                    .get(k + 3)
+                    .map(|r| !r.0 && (r.1 as f32) >= 5.0 * narrow)
+                    .unwrap_or(true);
+                if b1_ok && s_ok && b2_ok && quiet {
                     // A symbol needs at least three digit pairs. A GS1 check
                     // digit is NOT required: ITF-10/ITF-12 routing labels
                     // (parcel carriers, warehouse slips) carry plain data,
@@ -152,7 +156,9 @@ impl ItfDecoder {
 
     /// Per-pair narrow/wide threshold: sort the 10 run widths; a valid pair
     /// has exactly 6 narrow then 4 wide with a visible gap between them.
-    fn pair_threshold(&self, k: usize) -> Option<f32> {
+    /// Returns the split threshold and the widest narrow element (the
+    /// quiet-zone unit).
+    fn pair_threshold(&self, k: usize) -> Option<(f32, f32)> {
         if k + 10 > self.runs.len() {
             return None;
         }
@@ -163,7 +169,7 @@ impl ItfDecoder {
         if hi < lo * 1.4 || lo == 0.0 {
             return None; // no clean narrow/wide gap
         }
-        Some((lo + hi) / 2.0)
+        Some(((lo + hi) / 2.0, lo))
     }
 
     fn decode_impl(&mut self, image: &BitImage) -> Option<DecodeResult> {
@@ -352,6 +358,19 @@ mod tests {
             let canvas = barcode_fixtures::encode_itf(text, 3, 2.5, 30);
             assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some(text));
         }
+    }
+
+    /// A label border, printed rule or seal often shares the barcode's
+    /// rows. The stop is identified by the quiet zone after it, not by
+    /// being the row's last ink run: the old rule rejected every real
+    /// capture with anything printed beside the symbol (Dompé pharma
+    /// box, ITF-10 "0122508903").
+    #[test]
+    fn ink_beside_the_symbol_does_not_hide_the_stop() {
+        let mut canvas = barcode_fixtures::encode_itf("0122508903", 3, 2.5, 120);
+        // A 2px border column after the encoder's 10-module quiet zone.
+        canvas.fill(canvas.width - 2, 0, 2, canvas.height);
+        assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some("0122508903"));
     }
 }
 
