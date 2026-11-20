@@ -527,15 +527,6 @@ pub fn decode(image: &BitImage) -> Vec<DecodeResult> {
     // 11-module symbol drifts a whole module (the phone tilt bank missed
     // MicroQR at ±4°, where a desktop GPU happened to get away with it).
     if let Some((seed, origin, pitch)) = finder_frame(image, &finder) {
-        if std::env::var("MICROQR_DBG").is_ok() {
-            eprintln!(
-                "MQ origin ({:.2},{:.2}) seed {:.2}deg pitch {:.3}",
-                origin.0,
-                origin.1,
-                seed.to_degrees(),
-                pitch
-            );
-        }
         for off in [0.0f32, -0.5, 0.5, -1.0, 1.0, -1.5, 1.5, -2.0, 2.0] {
             let theta = seed + f32::to_radians(off);
             for size in [11usize, 13, 15, 17] {

@@ -407,7 +407,7 @@ impl Code128Decoder {
                     continue;
                 }
                 let Some(c) = self.try_from(start) else { continue };
-                let (count, exact, x0, x1, y0, y1, score) = {
+                let (count, exact, x0, x1, y0, y1, _score) = {
                     let e = self
                         .votes
                         .entry(c.text.clone())
@@ -429,22 +429,8 @@ impl Code128Decoder {
                 // receipt a systematically misread band beat the exact
                 // band on row count, with a checksum coincidence.
                 if count >= self.min_rows && exact >= self.min_rows {
-                    if std::env::var("CODE128_DBG").is_ok() {
-                        eprintln!(
-                            "CODE128 early {0:?} rows={count} exact={exact} score={score:.3} x={x0}..{x1} y={y0}..{y1}",
-                            c.text
-                        );
-                    }
                     return Some(self.finish(&c.text, x0, x1, y0, y1));
                 }
-            }
-        }
-        if std::env::var("CODE128_DBG").is_ok() {
-            for (t, v) in &self.votes {
-                eprintln!(
-                    "CODE128 vote {t:?} rows={} exact={} score={:.3} x={}..{} y={}..{}",
-                    v.0, v.1, v.6, v.2, v.3, v.4, v.5
-                );
             }
         }
         // Prefer an exact candidate (the pre-tolerance standard); fuzzy is

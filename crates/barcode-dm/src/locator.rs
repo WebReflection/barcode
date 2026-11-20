@@ -683,22 +683,6 @@ fn try_corner_sweep(
                         .and_then(|m| crate::decode_upright(&m, rows, cols))
                     };
                     if let Some(decoded) = decoded {
-                        if std::env::var("DM_DBG").is_ok() {
-                            eprintln!(
-                                "DM HIT{} kind={:?} spec {}x{} pitch={} at ({},{}) hl={} th={} vl={} vth={}",
-                                if erasure { " (erasures)" } else { "" },
-                                corner.kind,
-                                rows,
-                                cols,
-                                pitch,
-                                corner.x,
-                                corner.y,
-                                corner.hlen,
-                                corner.hth,
-                                corner.vlen,
-                                corner.vth
-                            );
-                        }
                         return Some(Location {
                             corner: (corner.x, corner.y),
                             kind: corner.kind,
@@ -755,16 +739,9 @@ pub fn locate_binary_budget_corners(map: &BinaryMap, budget: u64, limit: usize) 
     });
     let mut out: Vec<Location> = Vec::new();
     let mut budget = budget;
-    let dbg = std::env::var("DM_DBG").is_ok();
-    for (ci, c) in corners.iter().take(limit).enumerate() {
+    for c in corners.iter().take(limit) {
         if budget == 0 {
             break;
-        }
-        if dbg {
-            eprintln!(
-                "ref corner {ci} ({},{}) ratio={:.6} hl={} vl={} th={}",
-                c.x, c.y, best_spec_ratio(c), c.hlen, c.vlen, c.hth
-            );
         }
         let mut found = try_corner(map, c, &mut budget);
         // Erasure last resort (item 6b): the same sweep, but modules whose
@@ -1071,7 +1048,6 @@ pub fn locate_binary_fast_budget(map: &BinaryMap, budget: u64) -> Vec<Location> 
             .then((b.hlen + b.vlen).cmp(&(a.hlen + a.vlen)))
     });
     let mut budget = budget;
-    let dbg = std::env::var("DM_DBG").is_ok();
     // Per-corner cap: no single junk corner (long-legged UI bands pass the
     // L-probe and grind full grid sweeps) may starve the true corner
     // sitting later in the order. A real corner — with the estimate-ordered
@@ -1086,12 +1062,6 @@ pub fn locate_binary_fast_budget(map: &BinaryMap, budget: u64) -> Vec<Location> 
         let before = cbudget;
         let found = try_corner_fast(map, c, &mut cbudget);
         budget -= before - cbudget;
-        if dbg {
-            eprintln!(
-                "DM fast try ({},{}) hl={} th={} vl={} vth={} spent={} hit={}",
-                c.x, c.y, c.hlen, c.hth, c.vlen, c.vth, before - cbudget, found.is_some()
-            );
-        }
         if found.is_some() {
             let loc = found.unwrap();
             let fresh = !out.iter().any(|l| {
@@ -1103,9 +1073,6 @@ pub fn locate_binary_fast_budget(map: &BinaryMap, budget: u64) -> Vec<Location> 
                 out.push(loc);
             }
         }
-    }
-    if dbg {
-        eprintln!("DM fast done: {} corners, budget left {}", corners.len(), budget);
     }
     out
 }

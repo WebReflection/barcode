@@ -37,7 +37,6 @@ pub fn read_frame(dark: &[u8], w: usize, h: usize) -> Option<FrameDecode> {
     // grouping would split one symbol into fragments that each see only
     // part of its codeword rows. Hits arrive in scan-line order.
     hits.sort_by_key(|hit| (hit.y, hit.x0));
-    let hit_count = hits.len();
     let mut clusters: Vec<(f64, f64, usize, Vec<(usize, f64, f64)>)> = Vec::new();
     for hit in hits {
         let rows = match clusters
@@ -61,19 +60,6 @@ pub fn read_frame(dark: &[u8], w: usize, h: usize) -> Option<FrameDecode> {
         rows.push((hit.y, hit.s0, hit.s1));
     }
     clusters.sort_by_key(|(_, _, _, rows)| std::cmp::Reverse(rows.len()));
-    if std::env::var("PDF_DBG2").is_ok() {
-        eprintln!("hits {} -> {} clusters", hit_count, clusters.len());
-        for (x0, x1, ncols, rows) in clusters.iter().take(6) {
-            let y0 = rows.iter().map(|r| r.0).min().unwrap_or(0);
-            let y1 = rows.iter().map(|r| r.0).max().unwrap_or(0);
-            eprintln!(
-                "  cluster x {x0:.1}..{x1:.1} ncols {ncols} rows {} y {y0}..{y1} s0 {:.2}..{:.2}",
-                rows.len(),
-                rows.iter().map(|r| r.1).fold(f64::INFINITY, f64::min),
-                rows.iter().map(|r| r.1).fold(0.0, f64::max)
-            );
-        }
-    }
     for (x0, x1, ncols, rows) in &clusters {
         if let Some((payload, (bx0, bx1, by0, by1))) =
             decode_symbol(dark, w, (*x0 as usize, *x1 as usize, *ncols), rows)
@@ -183,7 +169,6 @@ fn scan_candidates(dark: &[u8], w: usize, h: usize) -> Vec<Hit> {
             }
         }
         if starts.is_empty() {
-            if std::env::var("PDF_DBG2").is_ok() { eprintln!("row {y}: no starts"); }
             continue;
         }
         let mut stops = Vec::new();
@@ -320,9 +305,6 @@ fn parse_line(
             let want_n = if ci == bounds.len() - 1 { 9 } else { 8 };
             let want_sum = if ci == bounds.len() - 1 { 18 } else { 17 };
             if cell.len() != want_n || cell.iter().sum::<u8>() != want_sum || cell.iter().min() == Some(&0) {
-                if std::env::var("PDF_DBG3").is_ok() {
-                    eprintln!("row {y}: cell {ci}/{ncols} bad {cell:?} (want {want_n} elems sum {want_sum})");
-                }
                 return None;
             }
             cells.push(cell);
@@ -375,9 +357,6 @@ fn parse_line(
         let want_n = if ci == bounds.len() - 1 { 9 } else { 8 };
         let want_sum = if ci == bounds.len() - 1 { 18 } else { 17 };
         if cell.len() != want_n || cell.iter().sum::<u8>() != want_sum || cell.iter().min() == Some(&0) {
-            if std::env::var("PDF_DBG3").is_ok() {
-                eprintln!("row {y}: sampled cell {ci}/{ncols} bad {cell:?}");
-            }
             return None;
         }
         cells.push(cell);
@@ -414,7 +393,6 @@ fn decode_symbol(
     ys: &[(usize, f64, f64)],
 ) -> Option<(Vec<u8>, (usize, usize, usize, usize))> {
     let (x0, x1, ncols) = key;
-    let dbg = std::env::var("PDF_DBG2").is_ok();
     // votes[symbol row][cell index][(elements)] -> count
     let mut votes: HashMap<usize, HashMap<usize, HashMap<Vec<u8>, usize>>> = HashMap::new();
     let mut why = [0usize; 4]; // parse / cluster / value / row-mismatch
@@ -449,16 +427,9 @@ fn decode_symbol(
         }
     }
     if votes.is_empty() {
-        if dbg {
-            eprintln!("symbol: no votes (parse {why:?})");
-        }
         return None;
     }
     let nrows = *votes.keys().max()?;
-    if dbg {
-        let rows: Vec<_> = votes.keys().copied().collect();
-        eprintln!("symbol: nrows {nrows} voted rows {rows:?}");
-    }
     // Second pass: a row whose indicator codewords never survived the
     // cell jitter (crease, keystone, low print contrast) would otherwise
     // fail the whole symbol ("a codeword row is missing entirely").
@@ -481,16 +452,6 @@ fn decode_symbol(
             for (i, cell) in cells.iter().enumerate().skip(2).take(ncols) {
                 *per.entry(i).or_default().entry(cell.clone()).or_insert(0) += 1;
             }
-        }
-        if dbg {
-            let filled: Vec<_> = missing.iter().filter(|r| votes.contains_key(r)).copied().collect();
-            eprintln!("symbol: filled rows {filled:?}");
-        }
-    }
-    if !(1..=nrows).all(|r| votes.contains_key(&r)) {
-        if dbg {
-            let missing: Vec<_> = (1..=nrows).filter(|r| !votes.contains_key(r)).collect();
-            eprintln!("symbol: rows lost to the print {missing:?} (RS will correct)");
         }
     }
     let mut stream = Vec::new();
@@ -516,14 +477,11 @@ fn decode_symbol(
             }
         }
     }
-    if !placeholders.is_empty() && dbg {
-        eprintln!("symbol: {} placeholder codewords", placeholders.len());
-    }
     // Mostly-unreadable footprint: reject before RS (see correct_stream).
     if placeholders.len() * 4 > stream.len() * 3 {
         return None;
     }
-    let full = crate::correct_stream(stream, &placeholders, "symbol", dbg)?;
+    let full = crate::correct_stream(stream, &placeholders)?;
     let desc = full[0] as usize;
     let data = strip_pads(&full[1..desc]);
     let payload = interpret(data)?;
@@ -954,19 +912,8 @@ pub fn read_frame_rectified(img: &BitImage) -> Option<FrameDecode> {
         }
     }
     let hits = scan_candidates(&dark, w, h);
-    if std::env::var("PDF_DBG2").is_ok() {
-        eprintln!("rect: {} hits", hits.len());
-    }
     let (quad, ncols) = estimate_quad(&hits, &dark, w, h)?;
     let modules = 69 + 17 * ncols;
-    let dbg = std::env::var("PDF_DBG2").is_ok();
-    if dbg {
-        eprintln!(
-            "rect: ncols {ncols} quad ({:.0},{:.0}) ({:.0},{:.0}) ({:.0},{:.0}) ({:.0},{:.0})",
-            quad[0].x, quad[0].y, quad[1].x, quad[1].y,
-            quad[2].x, quad[2].y, quad[3].x, quad[3].y
-        );
-    }
     let decode_grid = |grid: &barcode_core::geometry::BitGrid, rows: usize| {
         let modules_bits: Vec<u8> = grid.bits.iter().map(|&b| b as u8).collect();
         crate::decode_exact(&modules_bits, modules, rows)
@@ -983,28 +930,10 @@ pub fn read_frame_rectified(img: &BitImage) -> Option<FrameDecode> {
     // creased print instead of assuming uniform row spacing.
     let labels = row_labels(img, &quad, modules as u32);
     let snapped_rows = labels.iter().map(|(_, row)| row + 1).max();
-    if dbg {
-        let covered = labels.iter().map(|(_, r)| r).collect::<std::collections::HashSet<_>>().len();
-        eprintln!("rect: {} labelled lines, {} rows covered, snapped rows {:?}", labels.len(), covered, snapped_rows);
-        if std::env::var("PDF_DBG3").is_ok() {
-            let mut by_row: std::collections::BTreeMap<usize, Vec<f32>> = std::collections::BTreeMap::new();
-            for &(tv, row) in &labels {
-                by_row.entry(row).or_default().push(tv);
-            }
-            let summary: Vec<(usize, usize, f32, f32)> = by_row
-                .iter()
-                .map(|(&r, tvs)| (r, tvs.len(), tvs[0], tvs[tvs.len() - 1]))
-                .collect();
-            eprintln!("rect: bands (row, n, tv0, tv1) {summary:?}");
-        }
-    }
     if let Some(rows) = snapped_rows {
         if (2..=90).contains(&rows) {
             let grid = sample_rows_snapped(img, &quad, modules as u32, rows as u32, &labels);
             if let Some(payload) = decode_grid(&grid, rows) {
-                if dbg {
-                    eprintln!("rect: decoded at {rows} rows (snapped)");
-                }
                 return Some(FrameDecode { payload, quad: quad_f });
             }
         }
@@ -1019,9 +948,6 @@ pub fn read_frame_rectified(img: &BitImage) -> Option<FrameDecode> {
         }
         let grid = sample_rows_snapped(img, &quad, modules as u32, rows as u32, &[]);
         if let Some(payload) = decode_grid(&grid, rows) {
-            if dbg {
-                eprintln!("rect: decoded at {rows} rows (uniform)");
-            }
             return Some(FrameDecode { payload, quad: quad_f });
         }
     }
