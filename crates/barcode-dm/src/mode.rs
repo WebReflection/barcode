@@ -7,6 +7,9 @@
 /// Latch codewords.
 const C40: u8 = 230;
 const BASE256: u8 = 231;
+/// FNC1 (GS1). As the FIRST codeword it is a mode flag and is not
+/// transmitted; anywhere else it is a field separator and decodes to GS.
+const FNC1: u8 = 232;
 const UPPER_SHIFT: u8 = 235;
 const X12: u8 = 238;
 const TEXT: u8 = 239;
@@ -57,6 +60,11 @@ pub fn decode_payload(data: &[u8]) -> Option<Vec<u8>> {
                 out.push(b'0' + v / 10);
                 out.push(b'0' + v % 10);
             }
+            FNC1 => {
+                if i > 1 {
+                    out.push(0x1d);
+                }
+            }
             C40 => i = decode_40(data, i, &mut out, Kind::C40)?,
             BASE256 => i = decode_base256(data, i, &mut out)?,
             UPPER_SHIFT => {
@@ -71,7 +79,7 @@ pub fn decode_payload(data: &[u8]) -> Option<Vec<u8>> {
             X12 => i = decode_x12(data, i, &mut out)?,
             TEXT => i = decode_40(data, i, &mut out, Kind::Text)?,
             EDIFACT => i = decode_edifact(data, i, &mut out)?,
-            _ => return None, // 232-234, 236 f, 237, 241-253, 254, 255
+            _ => return None, // 233 f, 236 f, 241-253, 255
         }
     }
     Some(out)

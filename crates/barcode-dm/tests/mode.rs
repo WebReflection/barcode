@@ -117,3 +117,22 @@ fn reserved_codewords_are_rejected() {
     assert_eq!(decode_payload(&[236, 129]), None);
     assert_eq!(decode_payload(&[231, 200]), None); // length overrun
 }
+
+/// GS1 DataMatrix: FNC1 in the FIRST codeword is a mode flag and is not
+/// transmitted; every later FNC1 is a variable-length field separator and
+/// decodes to GS (0x1D). Oracle: zxing on a real 18x18 GS1 DataMatrix
+/// (payload "901050883\x1d100006316163\x1d"; the stream below is the
+/// RS-corrected data-codeword stream of that symbol).
+#[test]
+fn fnc1_flag_and_field_separator() {
+    let stream = [
+        232, 220, 140, 180, 218, 52, 232, 140, 130, 136, 161, 191, 193, 232, 129, 237, 133, 28,
+    ];
+    assert_eq!(
+        decode_payload(&stream).as_deref(),
+        Some(&b"901050883\x1d100006316163\x1d"[..])
+    );
+    // A leading FNC1 emits nothing; a later one emits GS.
+    assert_eq!(decode_payload(&[232, 220, 129]).as_deref(), Some(&b"90"[..]));
+    assert_eq!(decode_payload(&[220, 232, 129]).as_deref(), Some(&b"90\x1d"[..]));
+}

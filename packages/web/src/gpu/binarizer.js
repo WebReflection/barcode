@@ -254,7 +254,14 @@ export class GpuBinarizer {
     );
     // The tiny luma downsample (the luma stage samples normalized UV, so a
     // 64x64 destination averages the whole frame), then full-extent box
-    // means over those 4096 pixels — exact scene mean for pennies.
+    // means over those 4096 pixels. Only dstW/dstH are written on purpose:
+    // the luma shader reads srcW/srcH as 0, pads the whole plane white, and
+    // the binarize floor becomes the FIXED `luma < 0.5` rescue. That fixed
+    // floor is load-bearing for faded thermal receipts (2026-11-18 field
+    // corpus: a correct 0.5 x scene mean regressed receipt-qr-112247 and
+    // shipping-itf-115030). The glossy-label DataMatrix it loses is read on
+    // the CPU mask instead (see STILL_CPU_FAMILIES in api/worker.js) — do
+    // not "fix" this uniform without re-running the field corpus.
     u.writeBuffer(bufs.uniform, STAGE.lumaSmall, new Uint32Array([SMALL, SMALL]));
     u.writeBuffer(bufs.uniform, STAGE.globalH, new Uint32Array([SMALL, SMALL, SMALL, 0]));
     u.writeBuffer(bufs.uniform, STAGE.globalV, new Uint32Array([SMALL, SMALL, SMALL, 1]));

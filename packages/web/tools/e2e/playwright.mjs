@@ -335,29 +335,89 @@ async function suiteDocs(browser, project) {
 
 /** Committed, non-sensitive specimens from shipped bug reports. */
 async function suiteRegression(browser, project) {
-  const fixture = resolve(pkg, "test-codes/regression/code32-aic-2026-11-19.jpeg");
-  if (!existsSync(fixture)) {
-    console.log(`SKIP  ${project.padEnd(8)} regression no fixture at ${fixture}`);
+  const box = resolve(pkg, "test-codes/regression/gs1-datamatrix-box-2026-11-19.jpeg");
+  const hard = resolve(pkg, "test-codes/regression/qr-hard-negative-2026-11-19.jpeg");
+  const code32 = resolve(pkg, "test-codes/regression/code32-aic-2026-11-19.jpeg");
+  if (!existsSync(code32)) {
+    console.log(`SKIP  ${project.padEnd(8)} regression no fixture at ${code32}`);
     return;
   }
   const context = await browser.newContext(project.context);
-  const page = await context.newPage();
-  const t0 = Date.now();
-  try {
-    await page.goto(`${ORIGIN}/still.html`, { waitUntil: "load" });
-    await page.setInputFiles("#file", fixture);
-    await page.waitForFunction(
-      () => document.getElementById("value")?.textContent === "A938261563",
-      null,
-      { timeout: 30_000 },
-    );
-    record({ project, suite: "regression", name: "code32-aic", ok: true, ms: Date.now() - t0 });
-  } catch (err) {
-    record({
-      project, suite: "regression", name: "code32-aic", ok: false, ms: Date.now() - t0,
-      note: String(/** @type {Error} */ (err)?.message ?? err).split("\n")[0],
+  /**
+   * One still scan of a committed fixture through the demo page.
+   * @param {string} fixture
+   * @param {string} [query]
+   * @returns {Promise<{ ms: number, value: string, status: string }>}
+   */
+  const scanFixture = async (fixture, query = "") => {
+    const page = await context.newPage();
+    const t0 = Date.now();
+    try {
+      await page.goto(`${ORIGIN}/still.html${query}`, { waitUntil: "load" });
+      await page.setInputFiles("#file", fixture);
+      await page.waitForFunction(
+        () => {
+          const status = document.getElementById("status")?.textContent ?? "";
+          return status.startsWith("Read ") || status.startsWith("No code");
+        },
+        null,
+        { timeout: 30_000 },
+      );
+      return {
+        ms: Date.now() - t0,
+        value: await page.locator("#value").textContent() ?? "",
+        status: await page.locator("#status").textContent() ?? "",
+      };
+    } finally {
+      await page.close();
+    }
+  };
+  /** @param {string} name @param {() => Promise<void>} run */
+  const check = async (name, run) => {
+    const t0 = Date.now();
+    try {
+      await run();
+      record({ project, suite: "regression", name, ok: true, ms: Date.now() - t0 });
+    } catch (err) {
+      record({
+        project, suite: "regression", name, ok: false, ms: Date.now() - t0,
+        note: String(/** @type {Error} */ (err)?.message ?? err).split("\n")[0],
+      });
+    }
+  };
+
+  await check("code32-aic", async () => {
+    const { value } = await scanFixture(code32);
+    if (value !== "A938261563") throw new Error(`code32: got ${JSON.stringify(value)}`);
+  });
+
+  if (existsSync(box)) {
+    const GS1 = "901050883\u001d100006316163\u001d";
+    // A CI CPU runner needs more than the 5s still default for the
+    // low-contrast opinion ladder (local: 3.4s, GitHub: 5.8s). These are
+    // correctness checks; hard-negative-deadline pins the budget.
+    await check("gs1-datamatrix", async () => {
+      const { value } = await scanFixture(box, "?type=datamatrix&latency=20000");
+      if (value !== GS1) throw new Error(`datamatrix: got ${JSON.stringify(value)}`);
+    });
+    await check("gs1-two-codes", async () => {
+      // Default "everything": the DataMatrix is more centered than the
+      // EAN-13, so the linear fast-path must not hide the 2D tier.
+      const { value } = await scanFixture(box, "?latency=20000");
+      if (value !== GS1) throw new Error(`two-codes: got ${JSON.stringify(value)}`);
     });
   }
+
+  if (existsSync(hard)) {
+    await check("hard-negative-deadline", async () => {
+      // No decoder reads this QR; the point is that the still scan stops
+      // at its budget instead of sweeping for ~23s.
+      const { status, ms } = await scanFixture(hard, "?latency=1500");
+      if (!status.startsWith("No code")) throw new Error(`unexpected read: ${status}`);
+      if (ms > 12_000) throw new Error(`still scan took ${ms}ms with a 1500ms budget`);
+    });
+  }
+
   await context.close();
 }
 
