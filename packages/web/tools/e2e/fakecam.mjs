@@ -5,7 +5,7 @@
  * Page.addScriptToEvaluateOnNewDocument, BEFORE scan.js runs) that
  * builds a specimen with our own render pipeline — worker, wasm, the
  * real encoders — rasterizes it onto a canvas, and returns
- * canvas.captureStream() as the "camera". scan.html then runs its real
+ * canvas.captureStream() as the "camera". tests/scan-fakecam.html then runs its real
  * UI flow end to end: camera open, frames, decode tier, confirmation
  * law, result card.
  *
@@ -20,6 +20,7 @@
  * flow so regressions in it are caught on every run.
  */
 import { writeFileSync, appendFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const rawArgs = process.argv.slice(2);
 /** Pull a `--flag value` pair out of the arguments. */
@@ -144,7 +145,8 @@ for (const [s, t] of cases) {
     .replace(/^diagonal-/, "")
     .replace(/^tiny\d+-/, "");
   const max = s.startsWith("tiny") ? "&max=1056" : "";
-  const url = `${ORIGIN}/scan.html?formats=${encodeURIComponent(format)}&e2e=${encodeURIComponent(`${s}:${t}`)}${max}&_=${Date.now()}`;
+  const TESTS = fileURLToPath(new URL("../../tests/", import.meta.url));
+  const url = `${ORIGIN}/@fs${TESTS}scan-fakecam.html?formats=${encodeURIComponent(format)}&e2e=${encodeURIComponent(`${s}:${t}`)}${max}&_=${Date.now()}`;
   await page.send("Page.navigate", { url });
   await sleep(1500);
   const started = await page.eval(`(function () {
@@ -206,7 +208,7 @@ for (const [s, t] of cases) {
           return {
             status: document.getElementById('status')?.textContent,
             frame: null,
-            note: 'scan.html is the public-API demo; open index.html for mask diagnostics',
+            note: 'scan-fakecam.html is the internal harness; open demo/index.html for the public playground',
           };
         }
         const { debugState } = scanMod;

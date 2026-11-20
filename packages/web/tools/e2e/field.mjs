@@ -3,7 +3,7 @@
  * Field-corpus regression driver (roadmap item 9).
  *
  * Replays the personal field corpus (real photos + hand-confirmed ground
- * truth) through `demo/field.html`, which runs the SHIPPED artifacts
+ * truth) through `tests/field.html`, which runs the SHIPPED artifacts
  * (main.js -> worker.js -> wasm.wasm) or the source API (`--dev`). This
  * is the gate that answers "do the codes people actually scan still
  * read, and within budget?".
@@ -124,7 +124,8 @@ const send = (method, params = {}) =>
 const params = new URLSearchParams({ corpus: corpusUrl, mode: MODE, api: `/@fs${apiAbs}` });
 if (ONLY) params.set("id", ONLY);
 if (EVERYTHING) params.set("formats", "all");
-const pageUrl = `${BASE}/field.html?${params}`;
+const TESTS = fileURLToPath(new URL("../../tests/", import.meta.url));
+const pageUrl = `${BASE}/@fs${TESTS}field.html?${params}`;
 
 let exitCode = 0;
 try {

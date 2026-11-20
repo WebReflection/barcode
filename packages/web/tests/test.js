@@ -5,7 +5,7 @@
  * video uses, and asserts the decoded text. No camera required — this is
  * the automated regression page.
  *
- * Usage: open /demo/test.html. Results render as a table and are exposed
+ * Usage: open /@fs…/tests/test.html. Results render as a table and are exposed
  * read programmatically from the rendered table + document.title.
  */
 

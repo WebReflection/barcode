@@ -1,10 +1,12 @@
 #!/usr/bin/env node
+import { fileURLToPath } from "node:url";
 /**
- * Drive demo/contract-test.html (worker transports) over CDP.
+ * Drive tests/contract-test.html (worker transports) over CDP.
  * Usage: node tools/run-contract.mjs [cdpPort] [url]
  */
 const port = process.argv[2] ?? "9225";
-const url = process.argv[3] ?? "http://localhost:5173/demo/contract-test.html";
+const tests = fileURLToPath(new URL("../tests/", import.meta.url));
+const url = process.argv[3] ?? `http://localhost:5173/@fs${tests}contract-test.html`;
 
 const targets = await fetch(`http://localhost:${port}/json`).then((r) => r.json());
 let page = targets.find((t) => t.type === "page");

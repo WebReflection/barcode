@@ -18,7 +18,7 @@
  * get, not our internals.
  *
  * The page keeps only URL escape hatches: ?formats=, ?accuracy=high,
- * ?zoom= and ?torch=1 (used by tools/e2e/fakecam.mjs too).
+ * ?zoom= and ?torch=1.
  */
 import barcode from "../api/main.js";
 import "../css.css";
@@ -39,11 +39,9 @@ const resultSvgEl = /** @type {HTMLElement} */ (document.getElementById("result-
 /** ONE session per page/SPA: it owns the worker for the page's lifetime. */
 const { scan, render } = barcode({ lens: "wide", worker: workerUrl });
 
-// The fake-camera e2e renders its specimens through the page's own encoder:
-// this is the same `render` consumers use, on the same single worker.
-(/** @type {any} */ (globalThis)).__barcodeRender = (
-  /** @type {{ type: string, value: string }} */ { type, value },
-) => render({ symbology: type, text: value });
+// The internal fake-camera page (tests/scan-fakecam.js) reuses this exact
+// page and session; the public page exposes nothing test-specific.
+export { render };
 
 /** @param {string} msg @param {boolean} [isError] */
 function setStatus(msg, isError = false) {
