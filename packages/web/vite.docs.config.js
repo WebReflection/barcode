@@ -22,6 +22,49 @@ const versionBadge = {
     ),
 };
 
+/** A version-pinned jsDelivr URL for one published dist/ file. */
+const cdn = (/** @type {string} */ file) =>
+  `https://cdn.jsdelivr.net/npm/@webreflection/barcode@${version}/dist/${file}`;
+
+/**
+ * The docs site is the published package's playground, not a second copy
+ * of it: main.js/worker.js/wasm.wasm come from the version-pinned CDN
+ * instead of being bundled into docs/assets (the wasm alone was 1.6MB of
+ * duplicate payload). Dev and e2e keep importing api/ directly.
+ *
+ * The worker needs a same-origin script, so worker-url.js is replaced by
+ * the shim URL that tools/build-docs.mjs writes next to the pages.
+ */
+const cdnEntries = {
+  name: "barcode-docs-cdn-entries",
+  enforce: "pre",
+  /**
+   * @param {string} source
+   * @param {string} [importer]
+   */
+  resolveId(source, importer) {
+    if (!importer) return null;
+    if (source === "../api/main.js") {
+      return { id: cdn("main.js"), external: true };
+    }
+    if (source === "../api/worker.js") {
+      return { id: cdn("worker.js"), external: true };
+    }
+    if (source === "./worker-url.js") {
+      return { id: "virtual:barcode-worker-url" };
+    }
+    return null;
+  },
+  /** @param {string} id */
+  load(id) {
+    if (id === "virtual:barcode-worker-url") {
+      // Relative to the page (the shim is written next to the HTML).
+      return 'export default "./worker-shim.js";';
+    }
+    return null;
+  },
+};
+
 // Builds the public GitHub Pages site into `docs/` (repo root). The
 // landing page is site/index.html (copied by tools/build-docs.mjs); the
 // demo pages are the same files used by the dev server and the e2e gates.
@@ -31,8 +74,8 @@ const versionBadge = {
 export default defineConfig({
   root: "demo",
   base: "./",
-  plugins: [versionBadge],
-  worker: { format: "es" },
+  plugins: [versionBadge, cdnEntries],
+  worker: { format: "es", plugins: () => [cdnEntries] },
   build: {
     outDir: "../../../docs",
     emptyOutDir: false,

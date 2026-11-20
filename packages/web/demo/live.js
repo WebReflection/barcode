@@ -2,7 +2,7 @@
  * scan({ video, signal }) and scan({ into }) in one page.
  */
 import barcode from "../api/main.js";
-import workerUrl from "../api/worker.js?worker&url";
+import workerUrl from "./worker-url.js";
 
 const { scan, render } = barcode({ worker: workerUrl });
 

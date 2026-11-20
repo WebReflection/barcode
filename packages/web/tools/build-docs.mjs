@@ -8,7 +8,9 @@
  *   docs/still.html   scan({ image })
  *   docs/render.html  render(result, opts) playground
  *   docs/worker.html  worker entry + auto entry in a worker
- *   docs/assets/      hashed JS/CSS/wasm emitted by Vite
+ *   docs/worker-shim.js  one-line same-origin import of the CDN worker
+ *   docs/assets/      hashed page JS/CSS emitted by Vite; the SDK itself
+ *                     (main, worker, wasm) comes from the versioned CDN
  *
  * Public playground pages stay in demo/; the internal harness (self-test,
  * contract, artifact, fake-camera pages, diagnostics) lives in tests/ and
@@ -40,6 +42,8 @@ for (const name of [
   "worker.html",
   "favicon.ico",
   ".nojekyll",
+  // Regenerated below with the version-pinned CDN import.
+  "worker-shim.js",
   // Legacy generated pages: no longer built, but an old docs/ may still
   // contain them (they reference hashed assets this build replaces).
   "test.html",
@@ -72,5 +76,14 @@ execFileSync(process.execPath, [vite, "build", "--config", "vite.docs.config.js"
   cwd: root,
   stdio: "inherit",
 });
+
+// `new Worker(url)` needs a same-origin script, so the pages spawn this
+// one-line shim, which imports the exact same version from the CDN. The
+// pages themselves import main/worker from that CDN entry too (see the
+// cdnEntries plugin in vite.docs.config.js): docs/ ships no SDK duplicate.
+writeFileSync(
+  resolve(docs, "worker-shim.js"),
+  `import "https://cdn.jsdelivr.net/npm/@webreflection/barcode@${version}/dist/worker.js";\n`,
+);
 
 console.log(`docs/: index.html (v${version}) + 5 playground pages + assets/`);

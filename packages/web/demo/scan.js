@@ -23,10 +23,9 @@
 import barcode from "../api/main.js";
 import "../css.css";
 // The bound worker's URL. The published main.js resolves "./worker.js" next
-// to itself at RUN time (the dist/ files are the contract); a bundler
-// build must hand it the emitted worker chunk instead, or the page would
-// look for a non-existent assets/worker.js and silently never decode.
-import workerUrl from "../api/worker.js?worker&url";
+// to itself at RUN time (the dist/ files are the contract), but a worker
+// script must be same-origin, so every page hands it the one-line shim.
+import workerUrl from "./worker-url.js";
 
 const startBtn = /** @type {HTMLButtonElement} */ (document.getElementById("start"));
 const statusEl = /** @type {HTMLElement} */ (document.getElementById("status"));
