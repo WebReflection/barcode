@@ -1,9 +1,7 @@
 /**
  * Build the published `dist/` payload (package.json `files: ["dist"]`):
  *
- *   index.js     — thread-aware default entry: main.js on a page,
- *                  worker.js in a worker (see api/index.js)
- *   main.js      — ESM, the consumer SDK (scan/render/camera/dialog)
+ *   main.js      — ESM, the consumer SDK, page entry (scan/render/camera/dialog)
  *   worker.js    — ESM, the bound worker (binarizer + wasm decode/encode)
  *   wasm.wasm    — the wasm binary (resolved next to worker.js)
  *   css.css      — the optional default-UI stylesheet
@@ -16,10 +14,6 @@
  * publish/CDN layout (import maps / unpacked localhost). The scanner's
  * pipeline worker is therefore never referenced from the artifact: main.js
  * injects decode() through the bound worker instead (see src/scanner.js).
- *
- * `index.js` is copied VERBATIM: its dynamic `./main.js` / `./worker.js`
- * imports must stay runtime-resolved (a bundle would inline both, pulling
- * main-thread code into workers).
  *
  * Run from packages/web:  node tools/build-artifacts.mjs
  */
@@ -113,18 +107,14 @@ await esbuild.build({
 });
 
 // main.js — the SDK. No wasm glue: decode is injected through the worker.
-// `__BARCODE_DIST__` marks the published bundle; it makes the default
-// worker URL carry the adjacent wasm URL so consumer bundlers emit it.
+// The default worker is `new URL('./worker.js', import.meta.url)`, i.e. the
+// sibling file: serve/copy dist/ as-is, no URL plumbing in the API.
 await esbuild.build({
   ...common,
   entryPoints: [resolve(root, "api/main.js")],
   outfile: resolve(dist, "main.js"),
   plugins: [raw],
-  define: { __BARCODE_DIST__: '"dist"' },
 });
-
-// index.js — thread detection + runtime dynamic import. Copied, not bundled.
-copyFileSync(resolve(root, "api/index.js"), resolve(dist, "index.js"));
 
 // wasm.wasm — the binary, named for the export spec.
 copyFileSync(
@@ -139,7 +129,7 @@ if (!existsSync(css)) throw new Error("missing css.css at the package root");
 copyFileSync(css, resolve(dist, "css.css"));
 
 // Consumer-facing types (hand-authored against the frozen contract).
-for (const name of ["index.d.ts", "main.d.ts", "worker.d.ts"]) {
+for (const name of ["main.d.ts", "worker.d.ts"]) {
   copyFileSync(resolve(root, name), resolve(dist, name));
 }
 
@@ -151,7 +141,7 @@ for (const name of ["README.md", "LICENSE"]) {
 const bytes = (/** @type {string} */ name) =>
   (readFileSync(resolve(dist, name)).length / 1024).toFixed(1);
 console.log(
-  "artifacts: dist/index.js dist/main.js dist/worker.js dist/wasm.wasm dist/css.css " +
+  "artifacts: dist/main.js dist/worker.js dist/wasm.wasm dist/css.css " +
   `(${bytes("main.js")} KB main, ${bytes("worker.js")} KB worker, ` +
   `${(Number(bytes("wasm.wasm")) / 1024).toFixed(1)} MB wasm)`,
 );

@@ -12,12 +12,12 @@
 //
 // Contract:
 //   - barcode(options) boots the session instantly: a string/URL worker
-//     spawns right here, a caller-created Worker is used as-is, a
-//     port-less ping/ready handshake then introduces the MessagePort, and
-//     the returned `worker` is always the live Worker instance (ours or
-//     the caller's). Handing the same worker to a second session throws:
-//     the worker side binds exactly once, ever ('duplicated worker').
-//     The session is the only owner: abort never terminates the worker.
+//     spawns right here, a caller-created Worker is used as-is, the
+//     MessagePort is handed over immediately (calls queue until the worker
+//     binds), and the returned `worker` is always the live Worker instance
+//     (ours or the caller's). Handing the same worker to a second session
+//     throws: the worker side binds exactly once, ever ('duplicated
+//     worker'). The session is the only owner: abort never terminates it.
 //   - scan(options) resolves ONCE with the best code (most centered
 //     first, larger symbol as tiebreak — each result carries its own
 //     score) or `undefined` — a graceful end never throws. Real errors
@@ -210,85 +210,33 @@ const toBitmap = async (/** @type {StillImage} */ image) => {
   throw new TypeError('scan: unsupported image input');
 };
 
-/** @type {URL | undefined} */
-let distWorker;
-/** @type {string | undefined} */
-let distWasm;
-if (typeof __BARCODE_DIST__ === 'string') {
-  // Dist bundle: worker.js and wasm.wasm sit beside main.js. The wasm URL
-  // is sent in the readiness ping so consumer bundlers (Vite/Rollup) see
-  // `new URL('./wasm.wasm', import.meta.url)` and emit the asset, without
-  // putting a query on the worker URL (which some dev servers dislike).
-  distWorker = new URL('./worker.js', import.meta.url);
-  distWasm = new URL('./wasm.wasm', import.meta.url).href;
-  // A fragment survives on module Workers where some dev servers mishandle
-  // query strings; the worker reads it at MODULE EVALUATION time (its wasm
-  // singleton boots at import time, before any message can arrive).
-  distWorker.hash = 'wasm=' + encodeURIComponent(distWasm);
-}
-
 export default (/** @type {BarcodeOptions} */ opts = {}) => {
-  const customWorker = opts.worker != null;
-  const { worker = distWorker ?? new URL('./worker.js', import.meta.url), type, accuracy, lens } = opts;
+  const { worker, type, accuracy, lens } = opts;
 
-  // The session spine: create the binding proxy now, introduce the port
-  // as soon as the worker answers the ping (below). Calls made before the
-  // port crosses are queued on port1; nothing here is lazy and barcode()
-  // returns immediately.
+  // The session spine: the worker spawns right here, its MessagePort is
+  // handed over in the same tick, and the binding proxy is ready for calls
+  // immediately (port1 queues them until the worker binds).
   let /** @type {Worker} */ w;
-  if (typeof worker === 'string' || worker instanceof URL)
+  if (worker == null) {
+    // Keep the literal inside `new Worker`: it is standard JavaScript, and
+    // a bundler that understands worker entries (Vite) emits ./worker.js
+    // and its sibling wasm.wasm from the worker's own import.meta.url.
+    w = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+  } else if (typeof worker === 'string' || worker instanceof URL) {
     w = new Worker(worker, { type: 'module' });
-  else if (worker instanceof Worker)
+  } else if (worker instanceof Worker) {
     w = worker;
-  else
+  } else {
     throw new TypeError('barcode: worker must be a string, a URL, or a Worker');
+  }
   if (handled.has(w)) throw new Error('duplicated worker');
   handled.add(w);
   const { port1, port2 } = new MessageChannel;
   const utils = /** @type {Bindings} */ (binding(port1, {}));
-
-  // Introduce the port only after the worker says it is listening. A
-  // worker script starts asynchronously; a MessagePort posted in the same
-  // tick as `new Worker(...)` can be dispatched while its module graph
-  // (wasm, GPU binarizer) is still evaluating — before worker.js installs
-  // the capture — and is then lost. A port-less ping travels safely,
-  // worker.js answers with READY, and only then does the port cross.
-  // Messages sent on `port1` before the peer binds are queued, so
-  // scan()/render() called immediately are safe.
-  let introduced = false;
-  const ping = () => {
-    if (introduced) return;
-    w.postMessage({
-      type: 'barcode:ping',
-      // Only the default worker belongs to this package's dist; a caller's
-      // worker must keep resolving its own adjacent wasm.
-      wasm: customWorker ? null : distWasm,
-    });
-  };
-  /** @param {MessageEvent} event */
-  const introduce = (event) => {
-    if (event.data?.type !== 'barcode:ready') return;
-    if (introduced) return;
-    introduced = true;
-    w.removeEventListener('message', introduce);
-    clearInterval(pingTimer);
-    w.postMessage(null, { transfer: [port2] });
-  };
-  w.addEventListener('message', introduce);
-  // Repeat the port-less ping: a worker whose module graph is still
-  // evaluating can miss the first one (message events are not held back
-  // by a pending dynamic import). Every ping is harmless.
-  ping();
-  const pingTimer = setInterval(ping, 250);
-  // Safety net for a worker that predates the ping protocol: never hang
-  // forever on a handshake. The old behavior posted the port at once.
-  setTimeout(() => {
-    if (introduced) return;
-    introduced = true;
-    w.removeEventListener('message', introduce);
-    clearInterval(pingTimer);
-    w.postMessage(null, { transfer: [port2] });
-  }, 10_000);
+  // The worker binds this port on the first message it receives. The
+  // worker entry must import the SDK statically at the top: a lazily
+  // imported worker module may miss the port, and that is not recoverable.
+  w.postMessage(null, { transfer: [port2] });
 
   // Session-level defaults every scan inherits; per-scan options win.
   const sessionType = type;

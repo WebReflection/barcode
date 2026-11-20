@@ -16,7 +16,7 @@ core — clean-room implementations, MIT throughout.
 [transports](https://webreflection.github.io/barcode/contract-test.html).
 
 ```js
-import barcode from '@webreflection/barcode';
+import barcode from '@webreflection/barcode/main';
 import '@webreflection/barcode/css'; // optional: the default scan UI
 
 const { scan, render } = barcode();
@@ -30,33 +30,34 @@ if (code) {
 }
 ```
 
-## Three entries, one package
+## Two explicit entries
 
 | import | context | default export |
 | --- | --- | --- |
-| `@webreflection/barcode` | auto | on a page: `barcode(options)` → `{ scan, render, worker }`; in a worker: the bootstrap promise |
-| `@webreflection/barcode/main` | main thread | `barcode(options)` (always) |
-| `@webreflection/barcode/worker` | worker | bootstrap promise (always) |
+| `@webreflection/barcode/main` | page | `barcode(options)` → `{ scan, render, worker }` |
+| `@webreflection/barcode/worker` | worker | bootstrap promise |
 
-The auto entry detects the context before importing anything DOM-ish:
-a worker only evaluates `worker.js`, so main-thread code never runs
-there. In a worker the default is a **non-blocking promise**: the
-message listener is installed synchronously; the promise resolves when
-the page hands over its port.
+There is **no bare package entry**: an entry that guesses the context has
+to import the worker lazily, and a lazily imported worker cannot
+guarantee the MessagePort channel.
 
-It uses top-level await (the branch must be chosen before the default
-export exists). Browsers support that; a bundler targeting below ES2022
-(Vite's default `build.target`) should either raise the target to
-`es2022` or import the explicit `/main` / `/worker` entry, which needs no
-top-level await.
+**The worker entry must be imported statically at the top of the worker
+script** (or be the worker script itself — also when it comes from a
+CDN). The page's first message is the MessagePort; a module that is
+imported lazily, after an `await`, cannot guarantee the channel and is
+not supported.
+
+The worker default is a **non-blocking promise**: the message listener is
+installed synchronously when the module evaluates; the promise resolves
+when the page hands over its port.
 
 ```js
-// a worker that wants the SDK alongside its own protocol
-import bootstrap from '@webreflection/barcode';
-const { decode, encode } = await bootstrap;
-
-// a page, explicit entry (precise types; no runtime branching)
+// a page
 import barcode from '@webreflection/barcode/main';
+
+// your worker (top of the file — static, not awaited)
+import bootstrap from '@webreflection/barcode/worker';
+const { decode, encode } = await bootstrap;
 ```
 
 The worker script is strict-once: it binds the first port-carrying
@@ -76,8 +77,8 @@ Session option `type` filters what decodes: `'qr'` (QR + Micro QR),
 ## The session
 
 One `barcode(options)` per page/SPA. It returns `{ scan, render, worker }`
-and boots instantly — the worker spawns, the handshake crosses, and wasm
-warms up before your first scan. The session owns its worker for its
+and boots instantly — the worker spawns, its MessagePort crosses, and
+wasm warms up before your first scan. The session owns its worker for its
 whole lifetime: **abort never terminates it**. Handing the same worker
 to a second session throws (`duplicated worker`).
 
@@ -150,21 +151,22 @@ Style via CSS custom properties — set them on the SVG (it carries class
 
 `worker` accepts a string/URL (spawns a dedicated module Worker), or an
 already-created `Worker` used as-is. Either way `Barcode.worker` is the
-live Worker instance. The handshake is deterministic: the page sends a
-port-less `barcode:ping`, the worker answers `barcode:ready`, then the
-MessagePort crosses. Ports posted before the worker is bound are safe.
+live Worker instance. `barcode()` posts the MessagePort as the worker's
+first message; calls made before the port crosses are queued on the
+channel. The worker entry must import the SDK statically at the top.
 
 `@webreflection/barcode/worker` is the script the session loads. It can
 also be imported on top of your own worker (its default export is the
 bootstrap promise).
 
-With a bundler, the default `barcode()` just works when it understands
-`new URL("./worker.js", import.meta.url)` / `new URL("./wasm.wasm", ...)`
-(Vite, Rollup, webpack 5 asset modules): the emitted worker and wasm are
-linked automatically. For an unbundled `dist/` (CDN, import map, static
-folder) they sit beside `main.js` and resolve the same way. A bundler that
-does neither can pass an explicit worker URL, optionally with
-`?wasm=<url>` pointing at the wasm asset it copied.
+The default worker is `new URL("./worker.js", import.meta.url)`, and the
+worker resolves its wasm as `new URL("wasm.wasm", import.meta.url)`: both
+are ordinary JavaScript, no query/fragment protocol. Bundlers that
+understand those URLs (Vite, Rollup, webpack 5 asset modules) emit the
+worker and its wasm and rewrite them to the emitted assets; an unbundled
+`dist/` (CDN, import map, static folder) resolves them as siblings. A
+bundler that does neither can pass an explicit `worker` URL — and must
+then also ship `wasm.wasm` next to that worker.
 
 ## Published payload
 
@@ -172,8 +174,7 @@ The npm package is `README.md`, `LICENSE` and `dist/`:
 
 ```
 dist/
-  index.js     thread-aware default entry
-  main.js      main-thread SDK (scan/render/camera/dialog)
+  main.js      page entry: barcode() → { scan, render, worker }
   worker.js    bound worker (binarizer + wasm decode/encode)
   wasm.wasm    the binary (resolved next to worker.js)
   css.css      optional default-UI stylesheet
@@ -183,8 +184,8 @@ dist/
 ```
 
 Serve the folder from any origin (import map, CDN, unpacked localhost);
-`wasm.wasm` resolves relatively to `worker.js`. The module never touches
-`window`; the auto entry avoids loading main-thread code in a worker.
+`wasm.wasm` resolves relatively to `worker.js`. The page entry never
+touches a worker; a worker imports `/worker` statically at the top.
 
 ## Development
 

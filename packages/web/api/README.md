@@ -3,8 +3,7 @@
 The published package is `README.md` + `LICENSE` + one `dist/` folder.
 The entries are:
 
-  * `dist/index.js` — thread-aware default entry: on a page it loads
-    `main.js`, in a worker it loads `worker.js`
+
   * `dist/main.js` — ESM, main thread (`barcode()` → `scan`/`render`)
   * `dist/worker.js` — ESM, the bound worker (binarizer + wasm)
   * `dist/wasm.wasm` — the WASM binary module for barcode en/decoding
@@ -12,7 +11,7 @@ The entries are:
 
 Both *main* and *worker* are described roughly within their code/content and the orchestration should be driven by `@webreflection/bindings` which is the most direct/simple/elegant solution that automatically provide the primitive to simply invoke methods and utilities on the other side (either worker or main).
 
-The reason there should be only these 3 files is that, once published, the CDN can automatically resolve their relative paths and that should work also using import maps or having the package unpacked within a `localhost` path.
+The reason there should be only these 2 entries is that, once published, the CDN can automatically resolve their relative paths and that should work also using import maps or having the package unpacked within a `localhost` path.
 
 The *main* API is what the consumer uses directly in the browser, providing high-level functions like `scan()` and `render()` that internally delegate to the worker via the bindings.
 
@@ -26,9 +25,8 @@ This styling should probably be also configurable as part of the options to `sca
 
 The build writes one `dist/` payload:
 
-1. **index.js**: thread-aware default entry (`main.js` on a page, `worker.js` in a worker).
-2. **main.js**: the main-thread ESM entry, with `scan()` and `render()` delegating to the worker via `@webreflection/bindings`.
-3. **worker.js**: the ESM worker entry, initializing the WASM module and exposing the barcode utilities through the same bindings.
+1. **main.js**: the page entry, with `scan()` and `render()` delegating to the worker via `@webreflection/bindings`.
+2. **worker.js**: the ESM worker entry, initializing the WASM module and exposing the barcode utilities through the same bindings. Import it statically at the top of the worker script.
 4. **wasm.wasm**: the compiled WebAssembly binary.
 5. **css.css**: the optional default UI stylesheet.
 
@@ -86,19 +84,21 @@ const { scan, render, worker } = barcode({
 });
 ```
 
-The session boots instantly — worker spawned, handshake crossed, wasm
-warming up — so the first scan arrives to a live decoder. The module
+The session boots instantly — worker spawned, MessagePort posted as the
+worker's first message, wasm warming up — so the first scan arrives to a
+live decoder. The worker entry must be a static top-of-file import: a
+lazy import cannot guarantee the port. The module
 owns the worker for the whole session: **abort never terminates it**,
 and terminating `worker` yourself ends the session (make a new one).
 
-Transport notes (all verified in `demo/contract-test.html` via
+Transport notes (all verified in `tests/contract-test.html` via
 `node tools/run-contract.mjs <cdpPort>`):
 
 * **`worker` accepts only `string | URL | Worker`** — a dedicated
   Worker is the whole story: one process, bound once, off the main
   thread. SharedWorkers/iframes/MessagePorts are intentionally out of
   scope for v1 (a SharedWorker binds one process across tabs, which
-  the bind-exactly-once handshake cannot serve; pass a plain Worker
+  the bind-exactly-once bootstrap cannot serve; pass a plain Worker
   per page instead). Anything else throws a TypeError.
 * Public types ship as `main.d.ts` / `worker.d.ts` (referenced from
   `package.json` exports) — the consumer-facing truth for the frozen
@@ -195,21 +195,18 @@ The `dist/` files are side-by-side-relative: `main.js` spawns
 relative to itself — so they work from any host **as long as the dist
 files sit in one directory**:
 
-    https://cdn.example/barcode-web@1.0.0/index.js
     https://cdn.example/barcode-web@1.0.0/main.js
     https://cdn.example/barcode-web@1.0.0/worker.js
     https://cdn.example/barcode-web@1.0.0/wasm.wasm
     https://cdn.example/barcode-web@1.0.0/css.css
 
 ```js
-import barcode from "https://cdn.example/barcode-web@1.0.0/index.js";
-// or the explicit main-thread entry:
 import barcode from "https://cdn.example/barcode-web@1.0.0/main.js";
 ```
 
 Requirements seen in the wild:
 
-* `worker.js` / `index.js` / `main.js` must be served with a
+* `worker.js` / `main.js` must be served with a
   **JavaScript MIME type** (`text/javascript`) — module workers fail
   silently otherwise.
 * `css.css` is optional; omit the `<link>` when you theme the default

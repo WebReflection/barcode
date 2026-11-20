@@ -1,9 +1,7 @@
-// Module worker used by demo/artifact-test.html: prove the thread-aware
-// default entry (`@webreflection/barcode`) chooses worker.js here.
-//
-// The first port-carrying message is the handshake from barcode(); the
-// default export is the bootstrap promise (non-blocking until then).
-import entry from "../dist/index.js";
+// Module worker used by demo/artifact-test.html: a consumer worker that
+// imports the SDK worker entry STATICALLY at the top (the contract), so the
+// page's first message — the MessagePort — is captured.
+import entry from "../dist/worker.js";
 
 const bootstrap = /** @type {Promise<{ decode: Function, encode: Function }>} */ (entry);
 const globals = /** @type {any} */ (globalThis);

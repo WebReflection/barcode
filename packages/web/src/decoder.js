@@ -8,32 +8,6 @@
 import init, { BarcodeScanner as WasmScanner, supported_symbologies } from "./wasm/pkg/barcode_wasm.js";
 import wasmUrl from "./wasm/pkg/barcode_wasm_bg.wasm?url";
 
-/**
- * Resolve the wasm URL at INIT time (never at import time):
- *
- * 1. `?wasm=<encoded-url>` on THIS script (explicit escape hatch).
- * 2. `__barcodeWasm`, set by api/handshake.js from the page's
- *    `barcode:ping` (published dist main.js knows the URL its bundler
- *    emitted; the worker URL itself stays query-free).
- * 3. the sibling wasm.wasm (plain static hosting / direct worker.js).
- */
-const resolveWasm = () => {
-  try {
-    const self = new URL(import.meta.url);
-    const explicit = self.searchParams.get("wasm");
-    if (explicit) return explicit;
-    // dist/main.js puts the bundler-emitted wasm URL in the worker's
-    // fragment: available at module-evaluation time, unlike a message.
-    const hash = self.hash.replace(/^#/, "");
-    if (hash.startsWith("wasm=")) {
-      const fromHash = decodeURIComponent(hash.slice(5));
-      if (fromHash) return fromHash;
-    }
-  } catch { /* import.meta.url is always a URL; be defensive */ }
-  const fromPing = /** @type {any} */ (globalThis).__barcodeWasm;
-  return typeof fromPing === "string" ? fromPing : wasmUrl;
-};
-
 /** @typedef {Object} DecodedCode
  * @property {string} text
  * @property {string} symbology
@@ -52,7 +26,7 @@ let instancePromise = null;
 export function getWasmScanner() {
   if (!instancePromise) {
     instancePromise = (async () => {
-      await init(resolveWasm());
+      await init({ module_or_path: wasmUrl });
       return new WasmScanner();
     })();
   }
@@ -65,7 +39,7 @@ export function getWasmScanner() {
  * @returns {Promise<string[]>}
  */
 export async function getSupportedSymbologies() {
-  await init(resolveWasm());
+  await init({ module_or_path: wasmUrl });
   return supported_symbologies();
 }
 
