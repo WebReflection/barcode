@@ -32,8 +32,21 @@ export class Scanner {
     hasTorch(): boolean;
     /** @param {boolean} on @returns {Promise<boolean>} */
     setTorch(on: boolean): Promise<boolean>;
-    /** @param {number} factor @returns {Promise<number | null>} */
-    zoomTo(factor: number): Promise<number | null>;
+    /** The camera's current zoom factor, or null when the track has none. */
+    get zoom(): number | null;
+    /**
+     * Set the camera zoom factor. A manual zoom stands the adaptive policy
+     * down for the session — the user wins, always.
+     *
+     * `settle` waits for autofocus to stop moving after the change (the
+     * programmatic default). Continuous gestures pass false: a 2s settle
+     * wait per pointermove would lag behind the fingers.
+     *
+     * @param {number} factor
+     * @param {boolean} [settle]
+     * @returns {Promise<number | null>}
+     */
+    zoomTo(factor: number, settle?: boolean): Promise<number | null>;
     /**
      * Switch lens at runtime; keeps the GPU pipeline and pump alive.
      * Waits for the lens to settle focus before returning.
@@ -202,7 +215,8 @@ export type ScannerOptions = {
     /**
      * Grow zoom when a detected code occupies too little of the frame,
      * and fall back to native 1x a few seconds after decoding stops. Stands
-     * down entirely when `camera.zoom` is set explicitly (never fight the user).
+     * down entirely when `camera.zoom` is set explicitly or once the user
+     * zooms manually (never fight the user).
      */
     adaptiveZoom?: boolean | undefined;
     /**
