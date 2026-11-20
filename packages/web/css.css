@@ -43,6 +43,10 @@ dialog.barcode-ui::backdrop {
 .barcode-ui-stage video {
   display: block; width: 100%; height: 100%;
   object-fit: cover;
+  /* Digital-zoom fallback (no native track zoom): the preview scales
+     with the decoded center crop, so what the user sees is what reads. */
+  transition: transform .12s ease-out;
+  will-change: transform;
 }
 .barcode-ui-corners i {
   position: absolute;
@@ -126,4 +130,38 @@ dialog.barcode-ui.barcode-ui-done::backdrop {
 .barcode-ui-torch.on {
   background: var(--barcode-ui-accent, #ffd60a);
   color: #111;
+}
+/* Digital-zoom fallback, shown only when the camera track has no native
+   zoom capability (see api/main.js). */
+.barcode-ui-zoom {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  margin: 0;
+  color: var(--barcode-ui-text, rgba(255, 255, 255, .85));
+}
+.barcode-ui-zoom[hidden] { display: none; }
+.barcode-ui-zoom-label {
+  font: 500 12px/1.2 system-ui, sans-serif;
+  opacity: .72;
+  letter-spacing: .02em;
+}
+.barcode-ui-zoom input {
+  width: min(70vw, 300px);
+  margin: 0;
+  accent-color: var(--barcode-ui-accent, #ffd60a);
+}
+/* Landscape: put the zoom control beside the viewfinder, vertical, with
+   up = closer. The stage stays centered. */
+@media (orientation: landscape) {
+  .barcode-ui-zoom {
+    position: absolute;
+    right: max(16px, env(safe-area-inset-right));
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  .barcode-ui-zoom input {
+    width: auto;
+    height: min(60dvh, 300px);
+    writing-mode: vertical-lr;
+    direction: rtl;
+  }
 }

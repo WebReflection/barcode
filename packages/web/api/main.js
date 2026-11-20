@@ -340,8 +340,23 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
       /** @type {HTMLVideoElement | null} */ let v = video ?? null;
       /** @type {HTMLDialogElement | null} */ let dialog = null;
       /** @type {HTMLButtonElement | null} */ let torchBtn = null;
+      /** @type {HTMLInputElement | null} */ let zoomInput = null;
+      /** @type {HTMLElement | null} */ let zoomLabel = null;
+      /** @type {HTMLElement | null} */ let zoomText = null;
       /** @type {HTMLElement | null} */ let progressFill = null;
       /** @type {Scanner | null} */ let scanner;
+      /**
+       * Digital zoom must be visible: the preview shows exactly the
+       * center crop the decoder receives. Native track zoom already
+       * zooms the camera preview, so this is a no-op there.
+       * @param {number} factor
+       */
+      const syncPreview = (factor) => {
+        if (!scanner || scanner.hasZoom()) return;
+        const z = Math.min(4, Math.max(1, factor));
+        if (v) /** @type {HTMLVideoElement} */ (v).style.transform = `scale(${z})`;
+        if (zoomText) zoomText.textContent = `Zoom ${z.toFixed(1)}×`;
+      };
       const teardown = () => {
         internal.signal.removeEventListener('abort', onAbort);
         try { scanner?.stop(); } catch (_) {}
@@ -397,6 +412,21 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
           '<path d="M13 2 4.5 13.5h5L10 22l9-12h-5.5L13 2z" fill="currentColor"/></svg>',
         ));
         torchBtn = dialog.appendChild(torchBtnEl);
+        // Native track zoom is the preferred gesture; when the camera has
+        // no zoom capability (Android WebView, desktop webcams) the same
+        // pinch drives a digital center crop and this slider is shown.
+        zoomLabel = dialog.appendChild(document.createElement('label'));
+        zoomLabel.className = 'barcode-ui-zoom';
+        zoomText = zoomLabel.appendChild(document.createElement('span'));
+        zoomText.className = 'barcode-ui-zoom-label';
+        zoomText.textContent = 'Zoom 1.0×';
+        zoomInput = /** @type {HTMLInputElement} */ (zoomLabel.appendChild(document.createElement('input')));
+        Object.assign(zoomInput, {
+          type: 'range',
+          min: '1', max: '4', step: '0.1', value: '1',
+          'aria-label': 'Zoom',
+        });
+        zoomLabel.hidden = true;
         const close = dialog.appendChild(document.createElement('button'));
         close.type = 'button';
         close.className = 'barcode-ui-close';
@@ -440,6 +470,11 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
         /** @param {number} factor */
         const requestZoom = (factor) => {
           if (!Number.isFinite(factor)) return;
+          if (zoomInput) {
+            /** @type {HTMLInputElement} */ (zoomInput).value =
+              String(Math.min(4, Math.max(1, factor)));
+          }
+          syncPreview(factor);
           pendingZoom = factor;
           void applyZoom();
         };
@@ -449,8 +484,11 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
           const [idA, a] = first;
           const [idB, b] = second;
           const distance = Math.hypot(a.x - b.x, a.y - b.y);
-          const zoom = scanner?.zoom;
-          if (distance > 0 && zoom != null) pinch = { ids: [idA, idB], distance, zoom };
+          // zoomFactor is the native constraint when available and the
+          // digital crop otherwise; it is never null, so pinch always has
+          // a base factor.
+          const zoom = scanner?.zoomFactor ?? 1;
+          if (distance > 0) pinch = { ids: [idA, idB], distance, zoom };
         };
         stage.addEventListener('pointerdown', (event) => {
           pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -543,6 +581,16 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
       });
       try {
         await scanner.start();
+        // The slider exists only when the camera cannot zoom natively;
+        // pinch drives both paths (see zoomTo in scanner.js).
+        if (!video && zoomLabel && zoomInput && !scanner.hasZoom()) {
+          const slider = /** @type {HTMLInputElement} */ (zoomInput);
+          /** @type {HTMLElement} */ (zoomLabel).hidden = false;
+          slider.addEventListener('input', () => {
+            syncPreview(Number(slider.value));
+            void scanner.zoomTo(Number(slider.value), false);
+          });
+        }
         // the torch toggle only exists when the track can actually do it
         if (!video && torchBtn && scanner.hasTorch()) {
           const btn = /** @type {HTMLButtonElement} */ (torchBtn);

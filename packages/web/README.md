@@ -109,7 +109,11 @@ await scan({ image });           // still: canvas | ImageBitmap |
 Camera knobs: `crop` (`'square'` default — what you frame is what
 decodes; `'full'` opts out), `zoom`, `torch`. `latency` overrides the
 per-mode law (500ms live, 5000ms still). `type`/`accuracy`/`lens` have
-per-scan overrides.
+per-scan overrides. `lens: "wide"` picks the best scanning rear lens by
+capability (continuous AF + close focus), not by enumeration order.
+When the camera track has no `zoom` capability (Android WebView, many
+desktop webcams), the default UI shows a **Zoom** slider and the pinch
+drives a digital center crop; otherwise both drive the native zoom.
 
 ### render(result, opts) → Promise&lt;SVGSVGElement | null&gt;
 
