@@ -40,6 +40,10 @@ for (const name of [
   "worker.html",
   "favicon.ico",
   ".nojekyll",
+  // Legacy generated pages: no longer built, but an old docs/ may still
+  // contain them (they reference hashed assets this build replaces).
+  "test.html",
+  "contract-test.html",
 ]) {
   rmSync(resolve(docs, name), { force: true });
 }
