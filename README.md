@@ -341,10 +341,14 @@ sweep.
   measured no better than the global stretch on the same field variants.
 - The GPU binarizer keeps the fixed `luma < 0.5` floor that rescues faded
   thermal receipts. On a bright, busy background that floor can over-ink
-  the scene; a small dense 2D symbol (measured: a version-6 QR at
-  ~3.4 px/module on a woven mat) can then fail the QR finder stage on the
-  GPU mask while the CPU mask reads it. A CPU second opinion for small 2D
-  codes is the next reliability item.
+  the scene, so a small dense 2D symbol (measured: a version-6 QR at
+  ~3.4 px/module on a woven mat) can fail the QR finder stage on the GPU
+  mask. QR/Micro QR stills therefore also try the CPU mask (thresholded
+  against the scene mean) before the GPU sweep, and live frames retry it
+  at most every 400 ms after a GPU miss; DataMatrix always had its CPU
+  first opinion. A CPU read returns immediately (one valid code per scan),
+  and a CPU miss still runs the full GPU sweep, so the receipts keep the
+  fixed floor.
 - Native Android/iOS bindings are out of scope: this is the Web SDK.
 
 
