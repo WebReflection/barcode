@@ -23,8 +23,8 @@ pub struct Point {
 /// top-left, top-right, bottom-right, bottom-left in symbol space.
 pub type Quad = [Point; 4];
 
-/// All symbologies the library intends to support, eventually.
-/// Start small: implement the `Milestone1` ones first.
+/// The supported symbologies — exactly the JS API's 19 canonical names.
+/// A variant must not be added without a decoder, an encoder and a gate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Symbology {
     // ---- Milestone 1 ----
@@ -51,11 +51,6 @@ pub enum Symbology {
     DataBarLimited,
     PDF417,
     Aztec,
-    MaxiCode,
-    DotCode,
-    HanXin,
-    CodablockF,
-    Pharmacode,
 }
 
 impl Symbology {
@@ -83,11 +78,6 @@ impl Symbology {
             Symbology::DataBarLimited => "databarltd",
             Symbology::PDF417 => "pdf417",
             Symbology::Aztec => "aztec",
-            Symbology::MaxiCode => "maxicode",
-            Symbology::DotCode => "dotcode",
-            Symbology::HanXin => "hanxin",
-            Symbology::CodablockF => "codablockf",
-            Symbology::Pharmacode => "pharmacode",
         }
     }
 }

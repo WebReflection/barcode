@@ -3,8 +3,7 @@
 <sup>**Social Media Photo by [Risto Kokkonen](https://unsplash.com/@risto_kokkonen) on [Unsplash](https://unsplash.com/)**</sup>
 
 MIT-licensed, WebGPU-accelerated barcode and QR scanning for the web. The
-decoder core is clean-room Rust compiled to WebAssembly (the same core is
-meant to grow native Android/iOS bindings later).
+decoder core is clean-room Rust compiled to WebAssembly.
 
 **Clean-room decoders**: no ZXing, no ZBar, no zint source. Everything is
 implemented from the public ISO/GS1 specifications, so the whole tree is MIT
@@ -178,14 +177,16 @@ Data Matrix and Aztec.
 
 Real phone photos, replayed through the published bundle (`still` =
 `scan({ image })`, `live` = the same photo through a fake camera +
-`scan({ video })`). The personal corpus currently has **30 still photos
-and 17 live replays**; the latest still run is **30/30** and the live run
-is **16/17**, with one tracked xfail: `viva-dm-115212` is a ~2px/module
+`scan({ video })`). The personal corpus currently has **32 still photos
+and 19 live replays**; the latest still run is **32/32** and the live run
+is **18/19**, with one tracked xfail: `viva-dm-115212` is a ~2px/module
 Data Matrix in a full 12MP frame, below what the 1056px live frame can
 resolve (the still pass and the center-square crop both read it). The
 corpus covers product EAN-13/UPC/EAN-8, ISBN, a shipping-slip ITF, a
 vertical invoice Code 128, loyalty cards, receipt QRs, DataMatrix (square
-and DMRE), VIVA QR, and 12 Lufthansa/DB Bahn Aztec boarding passes.
+and DMRE), VIVA QR, the captured phone frames of a coupon QR on a woven
+mat (the GPU-floor case now read by the CPU second opinion), and 12
+Lufthansa/DB Bahn Aztec boarding passes.
 
 Live reads on the phone are typically a few hundred milliseconds; the
 still corpus is bounded by the still budget. The previously tracked
