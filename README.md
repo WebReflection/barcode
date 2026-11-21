@@ -298,7 +298,8 @@ real-photo gates.
 `tests/test.html` is the synthetic round-trip harness (decode + SVG
 round-trip), `tests/roi.html` covers small codes in a 4096 px frame,
 `tests/diagonal.html` covers 45°/135° rotation, `tests/tilt.html` covers
-±4°/8° roll and `tests/harden.html` the synthetic blur/noise/defocus sweep.
+±4°/8° roll and `tests/harden.html` the synthetic blur/noise/defocus/exposure
+sweep.
 
 ## Known limits / next
 
@@ -308,8 +309,9 @@ round-trip), `tests/roi.html` covers small codes in a 4096 px frame,
   general purpose, `310x`/`320x` weight, `392x`/`393x` price, `310x`/`320x`
   + date); any other element string falls back to the general-purpose
   (method 00) field, which is valid for all AIs but longer.
-- GPU contrast normalization (per-tile stretch) for dim/grey captures is not
-  done yet.
+- Dim/low-contrast captures get global auto-levels (a gated p2/p98 stretch)
+  before the Bradley threshold. Per-tile normalization is not used: it
+  measured no better than the global stretch on the same field variants.
 - Native Android/iOS bindings on top of the same Rust core.
 
 

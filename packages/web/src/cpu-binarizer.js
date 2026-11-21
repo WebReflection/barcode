@@ -98,6 +98,69 @@ export class CpuBinarizer {
         255;
     }
 
+    // Global auto-levels, same contract as the GPU path: p2/p98 over a
+    // ~256x256 stride sample of the luma plane (the CPU already has every
+    // pixel, so no second canvas), applied only to genuinely dim,
+    // low-contrast frames. The full gate is documented in
+    // src/shaders/stats.wgsl; it leaves the real field corpus untouched
+    // while the synthetic dim/veil variants sit at 0.09-0.19.
+    const sample = Math.max(1, Math.floor(Math.sqrt((w * h) / 65536)));
+    const hist = new Uint32Array(256);
+    let sampled = 0;
+    for (let y = 0; y < h; y += sample) {
+      for (let x = 0; x < w; x += sample) {
+        const v = Math.min(1, Math.max(0, luma[y * w + x] ?? 0));
+        hist[(v * 255) | 0] = (hist[(v * 255) | 0] ?? 0) + 1;
+        sampled++;
+      }
+    }
+    const tLo = (sampled * 2) / 100;
+    const tHi = (sampled * 98) / 100;
+    let cum = 0;
+    let loBin = 0;
+    let hiBin = 255;
+    let gotLo = false;
+    for (let b = 0; b < 256; b++) {
+      cum += hist[b] ?? 0;
+      if (!gotLo && cum >= tLo) {
+        loBin = b;
+        gotLo = true;
+      }
+      if (cum >= tHi) {
+        hiBin = b;
+        break;
+      }
+    }
+    let lo = loBin / 255;
+    let hi = hiBin / 255;
+    // Percentiles collapsed (small feature on a uniform field): use the
+    // populated extremes instead, same fallback as the GPU scan pass.
+    if (hi - lo <= 2 / 255) {
+      let minBin = 0;
+      let maxBin = 255;
+      for (let b = 0; b < 256; b++) {
+        if (hist[b]) {
+          minBin = b;
+          break;
+        }
+      }
+      for (let b = 255; b >= 0; b--) {
+        if (hist[b]) {
+          maxBin = b;
+          break;
+        }
+      }
+      lo = minBin / 255;
+      hi = maxBin / 255;
+    }
+    // Dim AND low-contrast only; see src/shaders/stats.wgsl for the gate.
+    if (hi < 0.65 && hi - lo < 0.4 && hi - lo > 2 / 255) {
+      const span = hi - lo;
+      for (let i = 0; i < w * h; i++) {
+        luma[i] = Math.min(1, Math.max(0, ((luma[i] ?? 0) - lo) / span));
+      }
+    }
+
     // Integral image for the box mean (same math as the GPU blur passes).
     const integ = new Float64Array((w + 1) * (h + 1));
     for (let y = 0; y < h; y++) {

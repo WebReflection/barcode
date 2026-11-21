@@ -18,6 +18,7 @@
 import lumaShader from "../shaders/luma.wgsl?raw";
 import blurShader from "../shaders/blur.wgsl?raw";
 import binarizeShader from "../shaders/binarize.wgsl?raw";
+import statsShader from "../shaders/stats.wgsl?raw";
 
 /** @typedef {Object} BinarizedFrame
  * @property {number} width
@@ -45,10 +46,21 @@ const STAGE = /** @type {const} */ ({
   lumaSmall: 1024,
   globalH: 1280,
   globalV: 1536,
+  statsLuma: 1792,
+  histogram: 2048,
 });
-const UNIFORM_SLOTS = 7;
+const UNIFORM_SLOTS = 9;
 /** Side of the tiny luma downsample the global-mean floor is computed on. */
 const SMALL = 64;
+/**
+ * Side of the luma probe the p2/p98 auto-levels statistic is computed on.
+ * 64x64 percentiles are too noisy (they missed one synthetic dim set and,
+ * ungated, one real frame); 256x256 matched the full-frame statistic on
+ * both synthetic sets at a negligible pass cost (65k pixels, 32x32 groups).
+ */
+const STATS = 256;
+/** 256 histogram bins, u32 counts. */
+const BINS = 256;
 
 export class GpuBinarizer {
   /** @type {GPUDevice} */
@@ -62,13 +74,15 @@ export class GpuBinarizer {
   /** @type {GPUComputePipeline} */ #lumaPipeline;
   /** @type {GPUComputePipeline} */ #blurPipeline;
   /** @type {GPUComputePipeline} */ #binarizePipeline;
+  /** @type {GPUComputePipeline} */ #histPipeline;
+  /** @type {GPUComputePipeline} */ #scanPipeline;
   /** @type {GPUSampler} */ #sampler;
   /** @type {GPUTexture | undefined} */ #srcTex;
   /** @type {number} */ #allocW = 0;
   /** @type {number} */ #texW = 0;
   /** @type {number} */ #texH = 0;
   /** @type {number} */ #allocH = 0;
-  /** @type {{ uniform: GPUBuffer, luma: GPUBuffer, blurA: GPUBuffer, blurB: GPUBuffer, small: GPUBuffer, smallScratch: GPUBuffer, smallGlobal: GPUBuffer, mask: GPUBuffer, staging: GPUBuffer } | null} */
+  /** @type {{ uniform: GPUBuffer, luma: GPUBuffer, blurA: GPUBuffer, blurB: GPUBuffer, small: GPUBuffer, smallScratch: GPUBuffer, smallGlobal: GPUBuffer, statsLuma: GPUBuffer, hist: GPUBuffer, stretch: GPUBuffer, mask: GPUBuffer, staging: GPUBuffer } | null} */
   #bufs = null;
 
   /**
@@ -99,6 +113,15 @@ export class GpuBinarizer {
     this.#binarizePipeline = d.createComputePipeline({
       layout: "auto",
       compute: { module: mod(binarizeShader), entryPoint: "main" },
+    });
+    const statsModule = mod(statsShader);
+    this.#histPipeline = d.createComputePipeline({
+      layout: "auto",
+      compute: { module: statsModule, entryPoint: "hist_main" },
+    });
+    this.#scanPipeline = d.createComputePipeline({
+      layout: "auto",
+      compute: { module: statsModule, entryPoint: "scan_main" },
     });
   }
 
@@ -159,10 +182,14 @@ export class GpuBinarizer {
       old.small.destroy();
       old.smallScratch.destroy();
       old.smallGlobal.destroy();
+      old.statsLuma.destroy();
+      old.hist.destroy();
+      old.stretch.destroy();
       old.mask.destroy();
       old.staging.destroy();
     }
     const smallBytes = SMALL * SMALL * 4;
+    const statsBytes = STATS * STATS * 4;
 
     this.#bufs = {
       uniform: d.createBuffer({
@@ -178,6 +205,14 @@ export class GpuBinarizer {
       small: d.createBuffer({ size: smallBytes, usage: GPUBufferUsage.STORAGE }),
       smallScratch: d.createBuffer({ size: smallBytes, usage: GPUBufferUsage.STORAGE }),
       smallGlobal: d.createBuffer({ size: smallBytes, usage: GPUBufferUsage.STORAGE }),
+      // Auto-levels: a 256x256 probe (never stretched itself), its histogram,
+      // and the [lo, hi] the scan pass writes for the luma stage.
+      statsLuma: d.createBuffer({ size: statsBytes, usage: GPUBufferUsage.STORAGE }),
+      hist: d.createBuffer({
+        size: BINS * 4,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      }),
+      stretch: d.createBuffer({ size: 2 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST }),
       mask: d.createBuffer({
         size: maskBytes,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
@@ -244,7 +279,17 @@ export class GpuBinarizer {
     // Write all stage uniforms up front, at fixed slots. Bind groups pin the
     // offset per stage, so queue ordering can't clobber a pass's uniforms.
     const u = d.queue;
-    u.writeBuffer(bufs.uniform, STAGE.luma, new Uint32Array([w, h, srcW, srcH]));
+    u.writeBuffer(bufs.uniform, STAGE.luma, new Uint32Array([w, h, srcW, srcH, 1]));
+    // The probe pass never stretches (apply=0), or the statistic would feed
+    // back into itself frame after frame. srcW/srcH = STATS (not 0 — 0 is
+    // the deliberate all-white pad used for the FIXED 0.5 floor pass) so the
+    // shader samples the whole frame over the probe grid.
+    u.writeBuffer(
+      bufs.uniform,
+      STAGE.statsLuma,
+      new Uint32Array([STATS, STATS, STATS, STATS, 0]),
+    );
+    u.writeBuffer(bufs.uniform, STAGE.histogram, new Uint32Array([STATS, STATS]));
     u.writeBuffer(bufs.uniform, STAGE.blurH, new Uint32Array([w, h, radius, 0]));
     u.writeBuffer(bufs.uniform, STAGE.blurV, new Uint32Array([w, h, radius, 1]));
     u.writeBuffer(
@@ -262,7 +307,7 @@ export class GpuBinarizer {
     // shipping-itf-115030). The glossy-label DataMatrix it loses is read on
     // the CPU mask instead (see STILL_CPU_FAMILIES in api/worker.js) — do
     // not "fix" this uniform without re-running the field corpus.
-    u.writeBuffer(bufs.uniform, STAGE.lumaSmall, new Uint32Array([SMALL, SMALL]));
+    u.writeBuffer(bufs.uniform, STAGE.lumaSmall, new Uint32Array([SMALL, SMALL, 0, 0, 1]));
     u.writeBuffer(bufs.uniform, STAGE.globalH, new Uint32Array([SMALL, SMALL, SMALL, 0]));
     u.writeBuffer(bufs.uniform, STAGE.globalV, new Uint32Array([SMALL, SMALL, SMALL, 1]));
 
@@ -277,6 +322,8 @@ export class GpuBinarizer {
     // The mask is written with atomicOr and persists across frames — clear it
     // BEFORE the binarize pass or ink accumulates until the mask saturates.
     enc.clearBuffer(bufs.mask, 0, maskBytes);
+    // Histogram bins accumulate with atomicAdd: clear every frame.
+    enc.clearBuffer(bufs.hist, 0, BINS * 4);
     /** @param {number} offset @param {number} [size] */
     const uniform = (offset, size = 16) => ({ buffer: bufs.uniform, offset, size });
 
@@ -294,11 +341,45 @@ export class GpuBinarizer {
       bg.end();
     };
 
+    // Auto-levels statistic first: probe -> histogram -> p2/p98 scan. The
+    // scan writes the [lo, hi] the luma stage then applies.
+    pass(
+      this.#lumaPipeline,
+      [
+        { binding: 0, resource: srcTex.createView() },
+        { binding: 1, resource: this.#sampler },
+        { binding: 2, resource: uniform(STAGE.statsLuma, 32) },
+        { binding: 3, resource: { buffer: bufs.statsLuma } },
+        { binding: 4, resource: { buffer: bufs.stretch } },
+      ],
+      STATS,
+      STATS,
+    );
+    pass(
+      this.#histPipeline,
+      [
+        { binding: 0, resource: uniform(STAGE.histogram) },
+        { binding: 1, resource: { buffer: bufs.statsLuma } },
+        { binding: 2, resource: { buffer: bufs.hist } },
+      ],
+      STATS,
+      STATS,
+    );
+    pass(
+      this.#scanPipeline,
+      [
+        { binding: 2, resource: { buffer: bufs.hist } },
+        { binding: 3, resource: { buffer: bufs.stretch } },
+      ],
+      1,
+      1,
+    );
     pass(this.#lumaPipeline, [
       { binding: 0, resource: srcTex.createView() },
       { binding: 1, resource: this.#sampler },
-      { binding: 2, resource: uniform(STAGE.luma) },
+      { binding: 2, resource: uniform(STAGE.luma, 32) },
       { binding: 3, resource: { buffer: bufs.luma } },
+      { binding: 4, resource: { buffer: bufs.stretch } },
     ]);
     pass(this.#blurPipeline, [
       { binding: 0, resource: uniform(STAGE.blurH) },
@@ -317,8 +398,9 @@ export class GpuBinarizer {
       [
         { binding: 0, resource: srcTex.createView() },
         { binding: 1, resource: this.#sampler },
-        { binding: 2, resource: uniform(STAGE.lumaSmall) },
+        { binding: 2, resource: uniform(STAGE.lumaSmall, 32) },
         { binding: 3, resource: { buffer: bufs.small } },
+        { binding: 4, resource: { buffer: bufs.stretch } },
       ],
       SMALL,
       SMALL,
