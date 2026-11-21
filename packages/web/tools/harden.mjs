@@ -10,19 +10,23 @@
  */
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
 const outArg = args.indexOf("--out");
 const OUT = outArg >= 0 ? args[outArg + 1] : "/tmp/opencode/harden-results.json";
 const QUICK = args.includes("--quick") ? "?quick=1" : "";
-const PAGE = `http://localhost:5173/harden.html${QUICK}`;
+// vite's root is `demo/`, so pages under tests/ are only reachable through
+// the /@fs escape hatch (same as tools/e2e/field.mjs).
+const TESTS = fileURLToPath(new URL("../tests/", import.meta.url));
+const PAGE = `http://localhost:5173/@fs${TESTS}harden.html${QUICK}`;
 const DEBUG_PORT = 9225;
 const CHROME =
   process.env.CHROME_BIN ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
 // 1. vite must be up — the page imports src modules.
 try {
-  const r = await fetch(PAGE.replace(OUT, ""), { method: "HEAD" });
+  const r = await fetch(PAGE, { method: "HEAD" });
   if (!r.ok) throw new Error(String(r.status));
 } catch {
   console.error(`vite is not serving ${PAGE} — run: npx vite --host --port 5173 (from packages/web)`);

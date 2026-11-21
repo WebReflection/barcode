@@ -2,8 +2,9 @@
  * Synthetic hardening sweep (replaces the propped-phone rig for day-to-day
  * validation): every specimen is re-drawn onto a scene at four sizes
  * (module px = simulated distance), with gaussian blur (defocus), uniform
- * luma noise (sensor), and rotation (handheld tilt) — then binarized and
- * decoded through the REAL wasm pipeline at three Bradley thresholds.
+ * luma noise (sensor), rotation (handheld tilt), and two exposure levels
+ * (normal / dim) — then binarized and decoded through the REAL wasm
+ * pipeline at three Bradley thresholds.
  *
  * Reports, per symbology and degradation cell:
  *   single — read rate at the primary threshold 0.92 (balanced mode)
@@ -42,6 +43,10 @@ const MODULES = [4, 3, 2, 1];
 const BLURS = [0, 0.6, 1.2];
 const NOISES = [0, 10];
 const ROTS = [0, 6];
+// Scene exposure axis: 1 = the original mid-gray paper, 0.4 = a dim capture
+// (paper ~0.34, print ~0.04). Global auto-levels must lift the dim scenes
+// without touching the normal ones (the gate reads p2/p98 of the frame).
+const LIGHTS = [1, 0.4];
 const THRESHOLDS = [0.80, 0.92, 1.04];
 const SEEDS = 3;
 const SCENE = 512; // multiple of 32 (binarizer contract)
@@ -83,10 +88,11 @@ function maskToCanvas(enc) {
 
 /**
  * Compose the degraded scene: mid-gray bg, specimen centered at
- * `module` px/module, rotated, optionally blurred, plus seeded noise.
+ * `module` px/module, rotated, optionally blurred, plus seeded noise,
+ * then scaled by `light` (1 = normal exposure, 0.4 = dim capture).
  * @param {HTMLCanvasElement} spec
  */
-function makeScene(spec, /** @type {number} */ module, /** @type {number} */ blur, /** @type {number} */ noise, /** @type {number} */ rot, /** @type {number} */ seed) {
+function makeScene(spec, /** @type {number} */ module, /** @type {number} */ blur, /** @type {number} */ noise, /** @type {number} */ rot, /** @type {number} */ seed, /** @type {number} */ light = 1) {
   const c = document.createElement("canvas");
   c.width = SCENE;
   c.height = SCENE;
@@ -120,6 +126,16 @@ function makeScene(spec, /** @type {number} */ module, /** @type {number} */ blu
     }
     ctx.putImageData(img, 0, 0);
   }
+  if (light !== 1) {
+    const img = ctx.getImageData(0, 0, SCENE, SCENE);
+    const d = /** @type {Uint8ClampedArray} */ (img.data);
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = Number(d[i]) * light;
+      d[i + 1] = Number(d[i + 1]) * light;
+      d[i + 2] = Number(d[i + 2]) * light;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
   return c;
 }
 
@@ -129,6 +145,7 @@ async function run() {
   const blurs = quick ? [0, 1.2] : BLURS;
   const noises = quick ? [0] : NOISES;
   const rots = quick ? [0] : ROTS;
+  const lights = LIGHTS;
   const seeds = quick ? 1 : SEEDS;
 
   const bin = await createBinarizer({ maxSize: SCENE });
@@ -147,33 +164,35 @@ async function run() {
       for (const b of blurs) {
         for (const n of noises) {
           for (const r of rots) {
-            // noise 0 => identical scene for every seed; decode it once.
-            const nSeeds = n === 0 ? 1 : seeds;
-            let single = 0, any = 0;
-            for (let seed = 0; seed < nSeeds; seed++) {
-              const scene = makeScene(spec, m, b, n, r, ((ci * 31 + seed * 7919) | 0) + m * 101 + b * 7 + n * 13 + r);
-              // Primary first, early exit — mirrors the accuracy-high
-              // pipeline (sweep alternates only to RESCUE a primary miss).
-              // Formats filtered to the case's symbology, as prod pages do.
-              bin.setThreshold(PRIMARY);
-              const frame0 = await bin.process(scene);
-              let hitAny = decodeFrame(scanner, frame0, [c.s]).some((x) => x.text === expect);
-              if (hitAny) {
-                single++;
-              } else {
-                for (const th of THRESHOLDS) {
-                  if (th === PRIMARY) continue;
-                  bin.setThreshold(th);
-                  const frame = await bin.process(scene);
-                  if (decodeFrame(scanner, frame, [c.s]).some((x) => x.text === expect)) { hitAny = true; break; }
+            for (const light of lights) {
+              // noise 0 => identical scene for every seed; decode it once.
+              const nSeeds = n === 0 ? 1 : seeds;
+              let single = 0, any = 0;
+              for (let seed = 0; seed < nSeeds; seed++) {
+                const scene = makeScene(spec, m, b, n, r, ((ci * 31 + seed * 7919) | 0) + m * 101 + b * 7 + n * 13 + r, light);
+                // Primary first, early exit — mirrors the accuracy-high
+                // pipeline (sweep alternates only to RESCUE a primary miss).
+                // Formats filtered to the case's symbology, as prod pages do.
+                bin.setThreshold(PRIMARY);
+                const frame0 = await bin.process(scene);
+                let hitAny = decodeFrame(scanner, frame0, [c.s]).some((x) => x.text === expect);
+                if (hitAny) {
+                  single++;
+                } else {
+                  for (const th of THRESHOLDS) {
+                    if (th === PRIMARY) continue;
+                    bin.setThreshold(th);
+                    const frame = await bin.process(scene);
+                    if (decodeFrame(scanner, frame, [c.s]).some((x) => x.text === expect)) { hitAny = true; break; }
+                  }
                 }
+                if (hitAny) any++;
               }
-              if (hitAny) any++;
+              cells[`m${m} b${b} n${n} r${r} l${light}`] = { single, any, of: nSeeds };
+              singleHits += single;
+              anyHits += any;
+              total += nSeeds;
             }
-            cells[`m${m} b${b} n${n} r${r}`] = { single, any, of: nSeeds };
-            singleHits += single;
-            anyHits += any;
-            total += nSeeds;
           }
         }
       }
@@ -193,7 +212,7 @@ async function run() {
     meta: {
       when: new Date().toISOString(),
       binarizer: bin.kind,
-      grid: { modules, blurs, noises, rots, thresholds: THRESHOLDS, seeds },
+      grid: { modules, blurs, noises, rots, lights, thresholds: THRESHOLDS, seeds },
       scene: SCENE,
       primaryThreshold: PRIMARY,
     },
