@@ -94,19 +94,46 @@ const stillBinarizer = () =>
  *
  * The GPU mask's floor is a fixed `luma < 0.5` rescue (see the lumaSmall
  * note in src/gpu/binarizer.js), which is load-bearing for faded thermal
- * receipts but force-inks a glossy label's midtone background — the
- * DataMatrix locator then spends the whole still budget on the noise. The
- * CPU mask thresholds against `0.5 x scene mean` and keeps the label
- * clean, so one extra binarize (~76ms on a phone at 2048x1152) reads what
- * the GPU sweep cannot. QR/1D stay GPU-only: they need the fixed floor.
+ * receipts but force-inks a glossy label's midtone background. Two
+ * measured failures share that root:
+ * - the DataMatrix locator then spends the whole still budget on a glossy
+ *   label's noise;
+ * - a real version-6 QR on a woven mat (~3.4 px/module) fails the QR
+ *   finder stage on the GPU mask at 1056 AND 2112, 1x AND 2x, while the
+ *   CPU mask finds three finders and decodes it (desktop WebGPU and the
+ *   phone agreed).
+ *
+ * The CPU mask thresholds against `0.5 x scene mean` and keeps the busy
+ * background out, so one extra binarize (~76ms on a phone at
+ * 2048x1152) reads what the GPU sweep cannot. It runs BEFORE the GPU
+ * sweep: after the sweep is too late, the still law's exotic tiers can
+ * consume the whole deadline on the busy mask (measured: 10s and no
+ * room left). A CPU miss costs the binarize plus its cheap decode and
+ * the GPU sweep still runs every family, so the fixed floor keeps its
+ * receipts; a CPU read returns immediately, since one valid code already
+ * satisfies the one-code contract.
  */
-const STILL_CPU_FAMILIES = new Set(["datamatrix"]);
+const STILL_CPU_FAMILIES = new Set(["datamatrix", "qrcode", "microqr"]);
+/** The still CPU families that also escalate to native-resolution crops. */
+const STILL_CPU_ROI_FAMILIES = new Set(["datamatrix"]);
+/**
+ * 2D families a CPU mask gets a SECOND OPINION for when the GPU path
+ * missed. The fixed GPU floor over-inks a busy background: a real
+ * version-6 QR on a woven mat (~3.4 px/module) failed the QR finder
+ * stage on the GPU mask at 1056 AND 2112, 1x AND 2x, while the CPU mask
+ * found three finders and decoded it (desktop WebGPU and the phone
+ * agreed). Running the CPU mask only after the GPU miss keeps the
+ * load-bearing fixed floor untouched and pays the extra binarize only on
+ * frames that are already a miss.
+ *
+ * DataMatrix and still QR/Micro QR are excluded: they already run on the
+ * CPU FIRST (see STILL_CPU_FAMILIES); live keeps DataMatrix's dedicated
+ * ROI/diagonal paths.
+ */
+const CPU_SECOND_OPINION_FAMILIES = new Set(["qrcode", "microqr", "aztec", "pdf417"]);
 /** The requested families a CPU still mask should answer (see above). */
 const stillCpuFamilies = (/** @type {string[] | undefined} */ formats) =>
   (formats ?? ALL_FORMATS).filter((f) => STILL_CPU_FAMILIES.has(String(f).toLowerCase()));
-/** The requested families left for the GPU after the CPU still pass. */
-const withoutStillCpu = (/** @type {string[] | undefined} */ formats) =>
-  (formats ?? ALL_FORMATS).filter((f) => !STILL_CPU_FAMILIES.has(String(f).toLowerCase()));
 
 /** The still CPU binarizer (lazily allocated, shared across scans). */
 let stillCpuBinarizerInstance = null;
@@ -116,6 +143,38 @@ const stillCpuBinarizer = () =>
     windowDivisor: 20,
     threshold: 0.7,
   }));
+
+/**
+ * The live CPU second-opinion binarizer. Same frame geometry as the live
+ * GPU binarizer (1056 longest edge) so quads map 1:1; a still-sized CPU
+ * mask would both cost more per frame and need a coordinate remap.
+ */
+let liveCpuBinarizerInstance = null;
+const liveCpuBinarizer = () =>
+  (liveCpuBinarizerInstance ??= new CpuBinarizer({
+    maxSize: 1056,
+    windowDivisor: 20,
+    threshold: 0.7,
+  }));
+
+/** The requested families a CPU second opinion should answer (GPU missed). */
+const cpuSecondOpinionFormats = (
+  /** @type {string[] | undefined} */ formats,
+  /** @type {{ symbology: string }[]} */ codes,
+  /** @type {Set<string> | null} */ skip = null,
+) => {
+  const seen = new Set(codes.map((c) => c.symbology));
+  return (formats ?? ALL_FORMATS).filter((f) => {
+    const name = String(f).toLowerCase();
+    return CPU_SECOND_OPINION_FAMILIES.has(name) && !seen.has(name) && !skip?.has(name);
+  });
+};
+
+/** Live: at most one CPU second-opinion pass per this many ms. */
+const CPU_SECOND_OPINION_MIN_INTERVAL_MS = 400;
+let lastCpuSecondOpinionAt = -Infinity;
+/** Keep re-running after a hit so consecutive-frame confirmation can pass. */
+let cpuSecondOpinionHotUntil = 0;
 
 const scannerReady = getWasmScanner();
 // the scanner init brings the whole wasm module up once — encode
@@ -461,7 +520,7 @@ const handlers = {
           bin.setThreshold(0.92);
         }
       }
-      // GPU stills: a second opinion for STILL_CPU_FAMILIES (see above).
+      // GPU stills: a first opinion for STILL_CPU_FAMILIES (see above).
       // A hit also drops those families from the GPU sweep below, which is
       // where the seconds go on a glossy label. A miss is capped so a hard
       // negative cannot eat the deadline before the GPU tiers run.
@@ -473,34 +532,90 @@ const handlers = {
           // `input` (not `bitmap`) is the same area-filtered source the GPU
           // frame came from: a >2112px photo must not take a second,
           // different downscale path here.
-          const cpuMask = await stillCpuBinarizer().process(input);
-          cpuCodes = decodeFrame(scanner, cpuMask, families, {
-            ...opts,
-            latency: Math.min(budgetOpts().latency ?? 2000, 2000),
-          });
+          const cpuBin = stillCpuBinarizer();
+          const cpuLatency = () => Math.min(budgetOpts().latency ?? 2000, 2000);
+          /** @param {DecodedCode[]} hits @returns {boolean} whether any was new */
+          const add = (hits) => {
+            const seen = new Set(cpuCodes.map((c) => c.symbology + '\u0000' + c.text));
+            let got = false;
+            for (const hit of hits) {
+              const key = hit.symbology + '\u0000' + hit.text;
+              if (!seen.has(key)) {
+                seen.add(key);
+                cpuCodes.push(hit);
+                got = true;
+              }
+            }
+            return got;
+          };
+          const isRoi = (/** @type {string} */ f) => STILL_CPU_ROI_FAMILIES.has(String(f).toLowerCase());
+          const roiFamilies = families.filter(isRoi);
+          const cheapFamilies = families.filter((f) => !isRoi(f));
+          /** The 0.7 full-frame mask, shared by the cheap ladder and the
+           *  DataMatrix first opinion. @type {import('../src/gpu/binarizer.js').BinarizedFrame | null} */
+          let frame07 = null;
+          // QR/Micro QR: 0.7 then 0.82. The captured phone frame reads at
+          // 0.75/0.82 but NOT at 0.7 when the 1080 source pads up to 1088;
+          // the zoomed frame reads at 0.7. A hit ends the ladder (one
+          // code per scan; another threshold only re-reads the same value).
+          // This extra opinion uses the LIVE law: the still law's forced
+          // inverted retry turned one CPU miss into ~2s, while a mostly-ink
+          // mask still gets its inverted pass, and an inverted code
+          // escalates to the GPU path below.
+          for (const threshold of [0.7, 0.82]) {
+            if (!cheapFamilies.length || outOfTime()) break;
+            const seen = new Set(cpuCodes.map((c) => c.symbology));
+            if (cheapFamilies.every((f) => seen.has(String(f).toLowerCase()))) break;
+            let cpuMask = threshold === 0.7 ? frame07 : null;
+            if (!cpuMask) {
+              cpuBin.setThreshold(threshold);
+              const mask = await cpuBin.process(input);
+              cpuMask = mask;
+              if (threshold === 0.7) frame07 = mask;
+            }
+            if (cpuMask && add(decodeFrame(scanner, cpuMask, cheapFamilies, { ...opts, still: false }))) break;
+          }
+          // DataMatrix first opinion, only when the cheap tier read nothing:
+          // its 0.7 full-frame low-contrast mask plus the still law's
+          // forced inverted retry costs up to 2s on a busy label, and a
+          // QR/Micro read already satisfies the one-code contract.
+          if (!cpuCodes.length && roiFamilies.length && !outOfTime()) {
+            if (!frame07) {
+              cpuBin.setThreshold(0.7);
+              frame07 = await cpuBin.process(input);
+            }
+            const mask07 = frame07;
+            if (mask07) add(decodeFrame(scanner, mask07, roiFamilies, { ...opts, latency: cpuLatency() }));
+          }
           // The full 2112 frame can still crush a 2px/module symbol; the
           // same native-pitch crops the desktop CPU path uses read it
           // (3072px crop: 842ms desktop). Rank on a 0.92 opinion — the
           // 0.7 mask is for the full-frame low-contrast symbol, not for
-          // picking compact clusters.
-          if (!cpuCodes.length && !outOfTime()) {
-            const cpuBin = stillCpuBinarizer();
+          // picking compact clusters. Only the DataMatrix family escalates:
+          // QR/Micro QR read on the full CPU mask or not at all.
+          const cpuHit = new Set(cpuCodes.map((c) => c.symbology));
+          const roiLeft = roiFamilies.filter((f) => !cpuHit.has(String(f).toLowerCase()));
+          if (roiLeft.length && !outOfTime()) {
             cpuBin.setThreshold?.(0.92);
             const cpuRoiFrame = await cpuBin.process(input);
-            cpuCodes = await decodeRoi(
-              scanner,
-              cpuBin,
-              bitmap,
-              cpuRoiFrame,
-              families,
-              budgetOpts(),
-              4,
-              Math.min(performance.now() + 3000, deadline),
+            cpuCodes = cpuCodes.concat(
+              await decodeRoi(
+                scanner,
+                cpuBin,
+                bitmap,
+                cpuRoiFrame,
+                roiLeft,
+                budgetOpts(),
+                4,
+                Math.min(performance.now() + 3000, deadline),
+              ),
             );
           }
           if (cpuCodes.length) codes = codes.concat(cpuCodes);
         }
       }
+      /** Families actually decoded on the CPU still mask. */
+      const cpuHit = new Set(cpuCodes.map((c) => c.symbology));
       // A still can carry BOTH a linear code and a 2D one (a product box:
       // EAN-13 and a GS1 DataMatrix on the same label). The linear
       // fast-path above must not hide the 2D tier: when the caller asked
@@ -515,7 +630,7 @@ const handlers = {
           (f) =>
             !LINEAR_FORMATS.has(String(f).toLowerCase()) &&
             // answered on the CPU mask already
-            !(cpuCodes.length && STILL_CPU_FAMILIES.has(String(f).toLowerCase())),
+            !cpuHit.has(String(f).toLowerCase()),
         );
         if (twoD.length && !outOfTime()) {
           const roi = await decodeRoi(
@@ -547,7 +662,7 @@ const handlers = {
       // 2112px ladder can still leave a bar code at 2-3px/module. The
       // compact clusters the mask already shows are cropped from the
       // ORIGINAL photo and read at native pitch before the exotic sweep.
-      if (still === true && !stillLinearHit) {
+      if (still === true && !stillLinearHit && codes.length === 0) {
         const linear = stillLinearFormats(activeFormats);
         if (linear.length) {
           const roi = await decodeRoi(
@@ -566,10 +681,12 @@ const handlers = {
           }
         }
       }
-      // Families answered on the CPU still mask need no GPU sweep. An empty
-      // list here means the CPU pass covered the whole request.
-      const sweepFormats = cpuCodes.length ? withoutStillCpu(activeFormats) : activeFormats;
-      if (!stillLinearHit && !(cpuCodes.length && sweepFormats?.length === 0)) {
+      // A CPU read already satisfies the one-code contract: the remaining
+      // exotic tiers on the busy mask cost seconds (measured: the GPU
+      // sweep spent the rest of the 10s still deadline after the CPU had
+      // read the QR), so only an empty CPU result escalates to the GPU.
+      const sweepFormats = activeFormats;
+      if (!stillLinearHit && !cpuHit.size && sweepFormats?.length !== 0) {
         // Cheap-first escalation: on a scheduled FULL frame, decode the
         // cheap tier (QR/Micro/Aztec/DataBarStk + linear when the 2D gate
         // allows) FIRST — QR/1D hits then confirm for a fraction of the
@@ -606,11 +723,10 @@ const handlers = {
             checked = null;
           }
         } else {
-          codes = decodeFrame(scanner, frame, sweepFormats, budgetOpts());
+          // Append, never assign: a CPU still first opinion may already
+          // have read a code (see STILL_CPU_FAMILIES).
+          codes = codes.concat(decodeFrame(scanner, frame, sweepFormats, budgetOpts()));
         }
-        // The CPU pass answered the remaining families: every requested
-        // family ran across the two masks.
-        if (cpuCodes.length) checked = null;
         const firstMs = performance.now() - t0;
         // 'auto' = lazy second threshold when the first pass finds nothing.
         // On live camera frames that is the common case, and a second
@@ -647,6 +763,48 @@ const handlers = {
             codes = codes.concat(hits);
             // The alternate-threshold passes decode every requested family.
             checked = null;
+          }
+        }
+      }
+      // CPU second opinion for small/dense 2D codes (roadmap item 10):
+      // the GPU mask's fixed floor can over-ink a busy background and starve
+      // the finder detector, while the CPU mask (thresholded against the
+      // scene mean) reads it. Only after a GPU 2D miss, so the load-bearing
+      // GPU path is untouched and the extra binarize is paid on misses; a
+      // CPU-only browser already decoded on its CPU path, so it skips this.
+      // Live is rate-limited (and stays hot for 600ms after a hit, so the
+      // consecutive-frame confirmation law can see it) because a QR is a
+      // cheap-tier family and this would otherwise run on every frame.
+      if (bin.kind === "gpu" && !codes.some((c) => is2DResult(c.symbology))) {
+        const families = cpuSecondOpinionFormats(activeFormats, codes, still === true ? STILL_CPU_FAMILIES : null);
+        const now = performance.now();
+        const due =
+          still === true ||
+          now <= cpuSecondOpinionHotUntil ||
+          now - lastCpuSecondOpinionAt >= CPU_SECOND_OPINION_MIN_INTERVAL_MS;
+        // The CPU binarize itself is not deadline-aware; leave it room.
+        if (families.length && due && (still !== true || remaining() > 250)) {
+          lastCpuSecondOpinionAt = now;
+          const cpuBin = still === true ? stillCpuBinarizer() : liveCpuBinarizer();
+          cpuBin.setThreshold(0.7);
+          const cpuFrame = await cpuBin.process(input);
+          const seen = new Set(codes.map((c) => c.symbology + '\u0000' + c.text));
+          const hits = decodeFrame(scanner, cpuFrame, families, budgetOpts()).filter(
+            (c) => !seen.has(c.symbology + '\u0000' + c.text),
+          );
+          if (hits.length) {
+            // Same maxSize as the GPU binarizer in use (STILL_MAX / 1056),
+            // so this is 1:1; scale anyway if a source ever rounds the two
+            // fit paths differently.
+            if (cpuFrame.width !== frame.width || cpuFrame.height !== frame.height) {
+              const sx = frame.width / cpuFrame.width;
+              const sy = frame.height / cpuFrame.height;
+              for (const hit of hits) {
+                hit.position = hit.position.map((p) => ({ x: p.x * sx, y: p.y * sy }));
+              }
+            }
+            codes = codes.concat(hits);
+            cpuSecondOpinionHotUntil = now + 600;
           }
         }
       }
