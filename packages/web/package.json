@@ -57,6 +57,7 @@
     "test:phone": "node tools/e2e/fakecam.mjs --all --port 9222",
     "test:field": "node tools/e2e/field.mjs --port 9225",
     "test:field:live": "node tools/e2e/field.mjs --port 9225 --mode live",
+    "test:budgets": "node tools/budgets.mjs",
     "serve:demo": "node tools/serve-demo.mjs",
     "serve:iphone": "node tools/serve-demo.mjs --https",
     "preview": "vite preview",

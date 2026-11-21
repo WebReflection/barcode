@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Decoder fuzz gate</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; background: #111; color: #eee; }
+  h1 { font-size: 1.2rem; }
+  #summary { font-weight: 700; margin: 1rem 0; }
+  #summary.pass { color: #6f6; }
+  #summary.fail { color: #f66; }
+  table { border-collapse: collapse; }
+  th, td { border: 1px solid #444; padding: 4px 10px; text-align: left; }
+  td.pass { color: #6f6; } td.fail { color: #f66; font-weight: 700; }
+  .docs-back{display:inline-flex;margin:10px 0;padding:5px 11px;border:1px solid #2a3948;border-radius:999px;color:#93a4b5;background:#151d26;font:500 13px/1.4 ui-sans-serif,system-ui,sans-serif;text-decoration:none}.docs-back:hover{color:#e8edf2;border-color:#5b9dff}
+</style>
+</head>
+<body>
+<a class="docs-back" href="../demo/index.html">← playground</a>
+<h1>Decoder fuzz gate (wasm boundary)</h1>
+<p>Deterministic random masks + a mutated valid QR, decoded through the real wasm scanner. A decoder may miss, but must never throw or return a malformed result; a mutated checksummed symbol must never read a different payload.</p>
+<p id="summary">running…</p>
+<table>
+  <thead><tr><th>case</th><th>result</th><th>note</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<script type="module">
+import { getWasmScanner, decodeFrame } from "../src/decoder.js";
+import { encode_fixture } from "../src/wasm/pkg/barcode_wasm.js";
+
+const rows = document.getElementById("rows");
+const summary = document.getElementById("summary");
+const table = [];
+const row = (name, pass, note) => {
+  table.push({ name, pass, note });
+  const tr = rows.insertRow();
+  tr.insertCell().textContent = name;
+  tr.insertCell().textContent = pass ? "PASS" : "FAIL";
+  tr.cells[1].className = pass ? "pass" : "fail";
+  tr.insertCell().textContent = note;
+};
+
+/** Deterministic xorshift32. */
+const rng = (seed) => {
+  let s = (seed | 0) || 1;
+  return () => {
+    s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+    return s >>> 0;
+  };
+};
+
+const shapeOk = (codes) =>
+  codes.every((c) =>
+    (typeof c.text === "string" && c.text.length > 0) || (c.raw instanceof Uint8Array && c.raw.length > 0)) &&
+  codes.every((c) => Array.isArray(c.position) && c.position.length === 4 &&
+    c.position.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && p.x >= 0 && p.y >= 0));
+
+const FORMATS = ["qrcode", "datamatrix", "ean13", "code128"];
+const scanner = await getWasmScanner();
+const t0 = performance.now();
+
+try {
+  // 1. Arbitrary bit patterns. Small frames keep the 2D junk cost bounded.
+  for (const [w, h, density] of [[64, 64, 20], [96, 96, 50], [128, 96, 80]]) {
+    for (let seed = 1; seed <= 3; seed++) {
+      const next = rng(seed);
+      const bytesPerRow = Math.ceil(w / 8);
+      const data = new Uint8Array(bytesPerRow * h);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (next() % 100 < density) data[y * bytesPerRow + (x >> 3)] |= 1 << (x & 7);
+        }
+      }
+      const codes = decodeFrame(scanner, { width: w, height: h, data, bytesPerRow }, FORMATS);
+      row(`random ${w}x${h} ${density}% #${seed}`, shapeOk(codes), `${codes.length} result(s)`);
+    }
+  }
+
+  // 2. A valid QR with 10% of its modules flipped. Same-symbology reads must
+  //    still be the original payload (RS may reject, never rewrite).
+  const fx = await encode_fixture("qrcode", "FUZZ-QR", 4, 200);
+  const clean = {
+    width: fx.width, height: fx.height,
+    data: fx.data instanceof Uint8Array ? fx.data : Uint8Array.from(fx.data),
+    bytesPerRow: fx.bytesPerRow,
+  };
+  row("clean qrcode fixture", shapeOk(decodeFrame(scanner, clean, ["qrcode"])) && decodeFrame(scanner, clean, ["qrcode"]).some((c) => c.text === "FUZZ-QR"), "fixture must read");
+  for (let seed = 1; seed <= 3; seed++) {
+    const next = rng(seed * 7919);
+    const data = clean.data.slice();
+    for (let i = 0; i < data.length; i++) {
+      // flip ~10% of the bytes (each byte covers 8 adjacent modules)
+      if (next() % 100 < 10) data[i] ^= 0xff;
+    }
+    const codes = decodeFrame(scanner, { ...clean, data }, ["qrcode"]);
+    const same = codes.filter((c) => c.symbology === "qrcode");
+    const wrong = same.find((c) => c.text !== "FUZZ-QR");
+    row(`mutated qrcode #${seed}`, shapeOk(codes) && !wrong, `${codes.length} result(s)${wrong ? ` wrong=${JSON.stringify(wrong.text)}` : ""}`);
+  }
+} catch (err) {
+  row("uncaught", false, String(err?.stack ?? err));
+}
+
+const failed = table.filter((r) => !r.pass).length;
+summary.textContent = failed ? `${failed}/${table.length} FAILED in ${Math.round(performance.now() - t0)}ms` : `ALL ${table.length} PASS in ${Math.round(performance.now() - t0)}ms`;
+summary.className = failed ? "fail" : "pass";
+document.title = failed ? "FUZZ FAILED" : "FUZZ PASS";
+</script>
+</body>
+</html>
