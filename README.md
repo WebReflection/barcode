@@ -260,12 +260,32 @@ on Android), clicks start, and streams stats/screenshots. Chrome also needs
 the OS-level camera permission:
 `adb shell pm grant com.android.chrome android.permission.CAMERA`.
 
+## Browser support
+
+The runtime needs module workers, WebAssembly, `OffscreenCanvas` and
+`Promise.withResolvers`; WebGPU is used for the binarizer when the browser
+exposes it, otherwise the CPU fallback runs (slower, same results).
+
+| engine | CPU fallback | WebGPU binarizer | gated |
+| --- | --- | --- | --- |
+| Chromium (Chrome / Edge / Android WebView) | **119+** | 119+ (WebGPU landed in 113) | every push (desktop Chromium) |
+| Safari / iOS | **17.4+** | **26+** | nightly WebKit (CPU path only) + manual device |
+| Firefox | **121+** | 141+ | not gated |
+
+`Promise.withResolvers` sets the Chrome 119 / Safari 17.4 / Firefox 121
+floor; `OffscreenCanvas` in workers (16.4) and WebAssembly SIMD (16.4) are
+older. Playwright's WebKit reports the Safari engine but has no WebGPU, so
+the nightly WebKit job gates the **CPU fallback**, not the Safari 26 WebGPU
+path; that one is validated on a real device in the release checklist.
+
 ## Gates
 
 CI runs the page suites with Playwright (the fake-camera mock needs no
-physical device). Per push/PR the gate is **Chromium only** (a couple of
-minutes); WebKit/Safari-engine runs nightly and on manual dispatch. A
-native `cargo test --workspace --locked` job (plus
+physical device). Per push/PR the gate is **Chromium + payload budgets +
+the decoder fuzz gate** (a couple of minutes); WebKit/Safari-engine runs
+nightly and on manual dispatch (same suites; the fake-camera suite is
+skipped because Playwright WebKit has no fake media device). A native
+`cargo test --workspace --locked` job (plus
 `cargo check --workspace --examples --locked`) runs alongside it.
 
 ```sh
@@ -273,7 +293,12 @@ npm test                          # chromium + webkit + iphone profile
 npm run test:ci                   # headless chromium + webkit
 npm run test:ci:chromium          # what CI runs per push
 npm run test:ci:webkit            # Safari engine (nightly / manual)
+npm run test:budgets              # published dist/ size budgets (after build)
 ```
+
+The dev server does **not** send COOP/COEP by default so it behaves like
+plain static hosting and WebKit can load module workers; set
+`BARCODE_COEP=1` only for the wasm-threads A/B experiments (SharedArrayBuffer).
 
 The CDP tools remain the authority for real phones:
 
@@ -303,7 +328,9 @@ sweep.
 
 ## Known limits / next
 
-- One code per scan (by design for now); multi-code scanning is future work.
+- One code per scan **by design**; multi-code scanning is not planned.
+  Cover the other codes physically (a sheet of paper, a finger), as at a
+  checkout.
 - `databarexpanded` rendering picks the compressed encodation whenever the
   element string matches one of the standard's AI-(01) families (AI 01 +
   general purpose, `310x`/`320x` weight, `392x`/`393x` price, `310x`/`320x`
@@ -312,7 +339,13 @@ sweep.
 - Dim/low-contrast captures get global auto-levels (a gated p2/p98 stretch)
   before the Bradley threshold. Per-tile normalization is not used: it
   measured no better than the global stretch on the same field variants.
-- Native Android/iOS bindings on top of the same Rust core.
+- The GPU binarizer keeps the fixed `luma < 0.5` floor that rescues faded
+  thermal receipts. On a bright, busy background that floor can over-ink
+  the scene; a small dense 2D symbol (measured: a version-6 QR at
+  ~3.4 px/module on a woven mat) can then fail the QR finder stage on the
+  GPU mask while the CPU mask reads it. A CPU second opinion for small 2D
+  codes is the next reliability item.
+- Native Android/iOS bindings are out of scope: this is the Web SDK.
 
 
 ## License

@@ -15,6 +15,9 @@ import workerUrl from "../api/worker.js?worker&url";
 // The self-test now drives decodes through the PUBLIC api (scan/render);
 // the pipeline-worker transfer protocol keeps its own ?worker=1 mode.
 const api = barcode({ worker: workerUrl });
+
+/** Hard still-scan budget per specimen (the API's default still latency). */
+const STILL_BUDGET_MS = 5000;
 import { createSVG } from "../src/svg.js";
 import { createBinarizer } from "../src/binarizer-factory.js";
 import { CpuBinarizer } from "../src/cpu-binarizer.js";
@@ -181,12 +184,13 @@ async function run() {
       const rows = await runWorker();
       const svg = await svgPass(rows);
       const opts = await optionsPass();
+      const maxMs = Math.max(...rows.map((r) => r.ms));
       const allPass = rows.every((r) => r.pass) && svg.ok === svg.total && svg.total > 0
-        && opts.ok === opts.total;
+        && opts.ok === opts.total && maxMs <= STILL_BUDGET_MS;
       const summary = /** @type {HTMLElement} */ (document.getElementById("summary"));
       summary.textContent = allPass
-        ? `ALL ${rows.length} PASS (pipeline worker) | svg-roundtrip ${svg.ok}/${svg.total} | options ${opts.ok}/${opts.total}`
-        : `${rows.filter((r) => !r.pass).length}/${rows.length} FAILED (pipeline worker) | svg-roundtrip ${svg.ok}/${svg.total} | options ${opts.ok}/${opts.total}`;
+        ? `ALL ${rows.length} PASS (pipeline worker) | max ${maxMs}ms | svg-roundtrip ${svg.ok}/${svg.total} | options ${opts.ok}/${opts.total}`
+        : `${rows.filter((r) => !r.pass).length}/${rows.length} FAILED (pipeline worker) | max ${maxMs}ms | svg-roundtrip ${svg.ok}/${svg.total} | options ${opts.ok}/${opts.total}`;
       summary.className = allPass ? "pass" : "fail";
       document.title = allPass ? "TESTS PASS" : "TESTS FAILED";
     } catch (err) {
@@ -232,15 +236,17 @@ async function run() {
     renderRow(row);
   }
   const allPass = rows.every((r) => r.pass);
+  const maxMs = Math.max(...rows.map((r) => r.ms));
+  const perfOk = maxMs <= STILL_BUDGET_MS;
   const svg = await svgPass(rows);
   const svgOk = svg.ok === svg.total && svg.total > 0;
   const opts = await optionsPass();
   const summary = /** @type {HTMLElement} */ (document.getElementById("summary"));
   summary.textContent = allPass
-    ? `ALL ${rows.length} PASS (api scan) | svg-roundtrip ${svg.ok}/${svg.total} | options ${opts.ok}/${opts.total}`
-    : `${rows.filter((r) => !r.pass).length}/${rows.length} FAILED (api scan) | svg-roundtrip ${svg.ok}/${svg.total} | options ${opts.ok}/${opts.total}`;
-  summary.className = allPass && svgOk && opts.ok === opts.total ? "pass" : "fail";
-  document.title = allPass && svgOk && opts.ok === opts.total ? "TESTS PASS" : "TESTS FAILED";
+    ? `ALL ${rows.length} PASS (api scan) | max ${maxMs}ms | svg-roundtrip ${svg.ok}/${svg.total} | options ${opts.ok}/${opts.total}`
+    : `${rows.filter((r) => !r.pass).length}/${rows.length} FAILED (api scan) | max ${maxMs}ms | svg-roundtrip ${svg.ok}/${svg.total} | options ${opts.ok}/${opts.total}`;
+  summary.className = allPass && svgOk && opts.ok === opts.total && perfOk ? "pass" : "fail";
+  document.title = allPass && svgOk && opts.ok === opts.total && perfOk ? "TESTS PASS" : "TESTS FAILED";
 }
 
 /**

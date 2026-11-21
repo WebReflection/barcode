@@ -166,6 +166,15 @@ async function suiteContract(page, project) {
   record({ project, suite: "contract", name: "total", ok: title === "TESTS PASS" && fails === 0, ms: Date.now() - t0, note: `${checks.length - fails}/${checks.length}` });
 }
 
+/** Deterministic random/corrupted masks through the real wasm boundary. */
+async function suiteFuzz(page, project) {
+  const t0 = Date.now();
+  await page.goto(`${TESTS_FS}/fuzz.html`, { waitUntil: "load" });
+  const title = await waitTitle(page, "FUZZ PASS", "FUZZ FAILED", 240_000);
+  const note = await page.locator("#summary").textContent();
+  record({ project, suite: "fuzz", name: "mutation", ok: title === "FUZZ PASS", ms: Date.now() - t0, note: note ?? "" });
+}
+
 /** The built dist/ payload, plain static hosting (no bundler). */
 async function suiteArtifact(browser, project) {
   const context = await browser.newContext(project.context);
@@ -540,6 +549,7 @@ try {
         await suiteArtifact(browser, project);
         await suiteSelftest(page, project.name);
         await suiteContract(page, project.name);
+        await suiteFuzz(page, project.name);
         await context.close();
         await suiteDocs(browser, project.name);
         await suiteRegression(browser, project.name);

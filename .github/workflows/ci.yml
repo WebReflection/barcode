@@ -47,6 +47,10 @@ jobs:
         working-directory: packages/web
         run: npm run build
 
+      - name: Published payload budgets
+        working-directory: packages/web
+        run: npm run test:budgets
+
       - name: Docs site builds
         working-directory: packages/web
         run: npm run build:docs
@@ -132,6 +136,10 @@ jobs:
       - name: Build dist/ (wasm + artifacts + types)
         working-directory: packages/web
         run: npm run build
+
+      - name: Published payload budgets
+        working-directory: packages/web
+        run: npm run test:budgets
 
       - name: Docs site builds
         working-directory: packages/web
