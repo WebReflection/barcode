@@ -97,6 +97,105 @@ impl Ean13Decoder {
         }
     }
 
+    /// Try to decode a symbol starting at run `start` **without requiring
+    /// the whole 59-run window to quantize to exactly 95 modules**. A
+    /// blurred or tilted capture widens some runs and merges others, so
+    /// `try_at`'s single global scale rejects rows that are still
+    /// unambiguous per digit. This fallback matches each 4-run digit
+    /// against its 7-module table with a local variance, then requires a
+    /// real parity pattern and a valid check digit. Only called for starts
+    /// preceded by a quiet zone (see `decode_impl`), so a junk frame pays
+    /// at most a few attempts per row.
+    fn try_variance(&self, start: usize) -> Option<Candidate> {
+        if self.runs.len() < start + 59 {
+            return None;
+        }
+        let g = [
+            self.runs[start].1,
+            self.runs[start + 1].1,
+            self.runs[start + 2].1,
+        ];
+        let s = (g[0] + g[1] + g[2]) as f32 / 3.0;
+        if s < 0.7 || g.iter().any(|&v| (v as f32 - s).abs() > s * 0.7) {
+            return None;
+        }
+        for sf in [1.0f32, 0.9, 1.1, 0.8, 1.2, 0.85, 1.15] {
+            let scale = s * sf;
+            // Center guard (5 runs) and end guard (3 runs) are 1 module each.
+            let guards_ok = self.runs[start + 27..start + 32]
+                .iter()
+                .chain(self.runs[start + 56..start + 59].iter())
+                .all(|r| (r.1 as f32 - scale).abs() <= scale * 0.9);
+            if !guards_ok {
+                continue;
+            }
+            let mut digits = [0u8; 13];
+            let mut ok = true;
+            for d in 0..6 {
+                let i = start + 32 + d * 4;
+                let runs = [
+                    self.runs[i].1,
+                    self.runs[i + 1].1,
+                    self.runs[i + 2].1,
+                    self.runs[i + 3].1,
+                ];
+                match best_digit(runs, scale, &R_CODES) {
+                    Some((dd, _)) => digits[7 + d] = dd,
+                    None => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let mut parity = [0u8; 6];
+            for d in 0..6 {
+                let i = start + 3 + d * 4;
+                let runs = [
+                    self.runs[i].1,
+                    self.runs[i + 1].1,
+                    self.runs[i + 2].1,
+                    self.runs[i + 3].1,
+                ];
+                match best_left_digit(runs, scale) {
+                    Some((dd, kind)) => {
+                        digits[1 + d] = dd;
+                        parity[d] = kind;
+                    }
+                    None => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let Some(first) = PARITY
+                .iter()
+                .position(|p| p.as_bytes() == parity.as_slice())
+            else {
+                continue;
+            };
+            digits[0] = first as u8;
+            if !check_digit_valid(&digits) {
+                continue;
+            }
+            let total: u32 = self.runs[start..start + 59]
+                .iter()
+                .map(|r| r.1)
+                .sum();
+            return Some(Candidate {
+                text: digits,
+                x_start: self.offsets[start],
+                x_end: self.offsets[start] + total,
+            });
+        }
+        None
+    }
+
     /// Try to decode a symbol starting at run `start`. Returns the digits
     /// and the symbol's x-extent. The module width is refined around the
     /// raw total/95 estimate: ink dilation and blur shift the true scale.
@@ -282,6 +381,36 @@ impl Ean13Decoder {
                     return Some(self.finish(c.text, x0, x1, y0, y1));
                 }
             }
+            // Per-digit fallback for blurred/tilted rows the global 95-module
+            // quantizer rejects. Require a quiet zone (>= 3 guard widths of
+            // paper) before the start guard: a real symbol is preceded by
+            // one, while a junk row offers at most a handful of candidates.
+            for start in 1..=(self.runs.len() - 59) {
+                if !self.runs[start].0 || self.runs[start - 1].0 {
+                    continue;
+                }
+                let s = (self.runs[start].1
+                    + self.runs[start + 1].1
+                    + self.runs[start + 2].1) as f32
+                    / 3.0;
+                if (self.runs[start - 1].1 as f32) < s * 3.0 {
+                    continue;
+                }
+                let Some(c) = self.try_variance(start) else { continue };
+                let (count, x0, x1, y0, y1) = {
+                    let e = self.votes.entry(c.text).or_insert((0, c.x_start, c.x_end, y, y));
+                    e.0 += 1;
+                    e.1 = e.1.min(c.x_start);
+                    e.2 = e.2.max(c.x_end);
+                    e.3 = e.3.min(y);
+                    e.4 = e.4.max(y);
+                    *e
+                };
+                if count >= self.min_rows {
+                    return Some(self.finish(c.text, x0, x1, y0, y1));
+                }
+                break;
+            }
         }
         self.votes
             .iter()
@@ -313,6 +442,72 @@ impl SymbologyDecoder for Ean13Decoder {
 
     fn decode(&mut self, image: &BitImage) -> Vec<DecodeResult> {
         self.decode_impl(image).into_iter().collect()
+    }
+}
+
+/// Local-variance tolerance for the per-digit fallback: the mean absolute
+/// deviation of a digit's 4 runs from the expected 7-module pattern, in
+/// modules. One misplaced module boundary is 1/7 ≈ 0.14.
+const VARIANCE_TOL: f32 = 0.5;
+
+/// Run widths of a 7-module digit pattern (always exactly 4 runs).
+fn pattern_runs(pattern: &str) -> [u8; 4] {
+    let bytes = pattern.as_bytes();
+    let mut out = [0u8; 4];
+    let mut k = 0usize;
+    let mut cur = bytes[0];
+    let mut n = 0u8;
+    for &b in bytes {
+        if b == cur {
+            n += 1;
+        } else {
+            out[k] = n;
+            k += 1;
+            cur = b;
+            n = 1;
+        }
+    }
+    out[k] = n;
+    debug_assert_eq!(k, 3, "EAN digit patterns have 4 runs");
+    out
+}
+
+/// Closest digit in `table` under the local variance, if it is within
+/// `VARIANCE_TOL`.
+fn best_digit(runs: [u32; 4], scale: f32, table: &[&str; 10]) -> Option<(u8, f32)> {
+    let total = runs.iter().sum::<u32>().max(1) as f32;
+    let mut best: Option<(u8, f32)> = None;
+    for (d, pat) in table.iter().enumerate() {
+        let exp = pattern_runs(pat);
+        let var = runs
+            .iter()
+            .zip(exp)
+            .map(|(r, e)| (*r as f32 - e as f32 * scale).abs())
+            .sum::<f32>()
+            / total;
+        if var <= VARIANCE_TOL && best.map_or(true, |(_, bv)| var < bv) {
+            best = Some((d as u8, var));
+        }
+    }
+    best
+}
+
+/// Best left digit (L or G) under the local variance: the digit value and
+/// its table. L and G have distinct run-width sets, so the true table wins
+/// whenever it matches at all; the check digit is the final arbiter (a
+/// symbol with a bad check digit must stay rejected, not be re-read as a
+/// different valid one).
+fn best_left_digit(runs: [u32; 4], scale: f32) -> Option<(u8, u8)> {
+    let l = best_digit(runs, scale, &L_CODES).map(|(d, v)| (d, b'L', v));
+    let g = best_digit(runs, scale, &G_CODES).map(|(d, v)| (d, b'G', v));
+    match (l, g) {
+        (Some(a), Some(b)) => {
+            let pick = if a.2 <= b.2 { a } else { b };
+            Some((pick.0, pick.1))
+        }
+        (Some(a), None) => Some((a.0, a.1)),
+        (None, Some(b)) => Some((b.0, b.1)),
+        (None, None) => None,
     }
 }
 
@@ -406,6 +601,28 @@ mod tests {
         assert_eq!(
             d.decode(&img).first().map(|r| r.text.as_str()),
             Some("0404804131807")
+        );
+    }
+
+    #[test]
+    fn reads_when_the_global_module_sum_cannot_align() {
+        // Erode the last module of the first left digit's 2-module bar:
+        // its run widths become 3,1,2,1 (still 7 modules wide, so a global
+        // quantizer keeps the total at 95) but the expanded bit pattern is
+        // Hamming-2 from L0, outside the whole-symbol repair path. The
+        // per-digit variance matcher must read it. Real cause: a blurred or
+        // tilted row widens some runs and narrows neighbours exactly like
+        // this.
+        let narrow = 3;
+        let height = 33;
+        let quiet = 33;
+        let mut canvas = barcode_fixtures::encode_ean13("4006381333931", narrow, height, quiet);
+        // Module layout: 0..2 start guard 101; the first left digit is L0
+        // 0001101 at modules 3..9, its 2-module bar at modules 6..8.
+        canvas.clear(quiet + 7 * narrow, 0, narrow, height);
+        assert_eq!(
+            decode_canvas(&canvas, 2).as_deref(),
+            Some("4006381333931")
         );
     }
 

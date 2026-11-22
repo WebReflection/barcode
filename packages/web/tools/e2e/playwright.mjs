@@ -405,6 +405,7 @@ async function suiteRegression(browser, project) {
   const code32 = resolve(pkg, "test-codes/regression/code32-aic-2026-11-19.jpeg");
   const pharma = resolve(pkg, "test-codes/regression/pharma-real-code-2026-11-20.jpeg");
   const pharmaClose = resolve(pkg, "test-codes/regression/pharma-itf-close-2026-11-20.jpeg");
+  const blurTilt = resolve(pkg, "test-codes/regression/ean13-blur-tilt-mask-2026-11-22.png");
   if (!existsSync(code32)) {
     console.log(`SKIP  ${project.padEnd(8)} regression no fixture at ${code32}`);
     return;
@@ -457,6 +458,18 @@ async function suiteRegression(browser, project) {
     const { value } = await scanFixture(code32);
     if (value !== "A938261563") throw new Error(`code32: got ${JSON.stringify(value)}`);
   });
+
+  if (existsSync(blurTilt)) {
+    // Pre-binarized mask of a synthetic 2 px/module EAN-13 with gaussian
+    // blur + 6° roll: the whole-row 95-module quantizer rejected every row,
+    // the per-digit variance fallback reads it. The fixture is the mask (not
+    // the grayscale scene) so the gate is independent of the binarizer and
+    // also runs on the CI's CPU-only Chromium; zxing misses this mask.
+    await check("ean13-blur-tilt", async () => {
+      const { value } = await scanFixture(blurTilt, "?type=ean13");
+      if (value !== "4006381333931") throw new Error(`ean13-blur-tilt: got ${JSON.stringify(value)}`);
+    });
+  }
 
   if (existsSync(box)) {
     const GS1 = "901050883\u001d100006316163\u001d";
