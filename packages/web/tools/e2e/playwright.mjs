@@ -409,6 +409,7 @@ async function suiteRegression(browser, project) {
   const code39Tilt = resolve(pkg, "test-codes/regression/code39-blur-tilt-mask-2026-11-22.png");
   const databarTilt = resolve(pkg, "test-codes/regression/databar-blur-tilt-mask-2026-11-22.png");
   const ean8Noise = resolve(pkg, "test-codes/regression/ean8-blur-noise-mask-2026-11-22.png");
+  const ean13Dim = resolve(pkg, "test-codes/regression/ean13-dim-tilt-2026-11-22.png");
   if (!existsSync(code32)) {
     console.log(`SKIP  ${project.padEnd(8)} regression no fixture at ${code32}`);
     return;
@@ -504,6 +505,19 @@ async function suiteRegression(browser, project) {
     await check("ean8-blur-noise", async () => {
       const { value } = await scanFixture(ean8Noise, "?type=ean8");
       if (value !== "96385074") throw new Error(`ean8-blur-noise: got ${JSON.stringify(value)}`);
+    });
+  }
+
+  if (existsSync(ean13Dim)) {
+    // Synthetic 2 px/module EAN-13 at 6° roll with blur, captured at
+    // light 0.4 (label paper ~0.37, print ~0.04) — the dim class where
+    // the GPU binarizer's auto-levels stretch costs module edges. The
+    // still path re-draws the source brighter and reads it. CPU reads it
+    // straight through its relative floor, so this check passes on both
+    // paths while the lift is only load-bearing on the GPU one.
+    await check("ean13-dim-tilt", async () => {
+      const { value } = await scanFixture(ean13Dim, "?type=ean13");
+      if (value !== "4006381333931") throw new Error(`ean13-dim-tilt: got ${JSON.stringify(value)}`);
     });
   }
 
