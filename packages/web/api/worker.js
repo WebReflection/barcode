@@ -836,16 +836,20 @@ const handlers = {
         }
       }
       // Still 1D slight-roll retry: the row scanners assume near-vertical
-      // bars. A careless-wrist roll (measured: Code 39 at 6° with blur)
-      // defeats them while zxing reads the very same mask. Rotate the
-      // SOURCE with antialiasing and re-binarize, only after every straight
-      // pass missed. Stills only: a rotation + binarize is 20-60ms, which a
-      // live frame cannot pay, and a linear family must have been requested.
+      // bars. A careless-wrist roll (measured: Code 39 at 6° with blur,
+      // DataBar Omni at 2px/module + 6°) defeats them while zxing reads
+      // the very same frame. Rotate the SOURCE with antialiasing and
+      // re-binarize, only after every straight pass missed. The ±3 pair
+      // is the measured DataBar lever: a 6° roll reads once the residual
+      // is 2-3° (at 0.92 for the mask fixture, 0.7 on the GPU frame),
+      // while Code 39 needs the ±4 pair; keep both, cheapest first.
+      // Stills only: a rotation + binarize is 20-60ms, which a live frame
+      // cannot pay, and a linear family must have been requested.
       if (still === true && codes.length === 0 && remaining() > 300) {
         const linear = stillLinearFormats(activeFormats);
         if (linear.length) {
           const thresholds = [0.92, 0.82, 0.7];
-          for (const deg of [-4, 4, -8, 8]) {
+          for (const deg of [-3, 3, -4, 4, -8, 8]) {
             if (remaining() < 250) break;
             const rotated = await rotateDrawable(bitmap, deg);
             for (const threshold of thresholds) {
