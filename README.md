@@ -43,7 +43,12 @@ screenshot or a photographed label with white margins).
 `render()` re-encodes a result as SVG for **all 19** symbologies, with QR
 v1–40 (explicit error-correction level / mask / version), Micro QR, Data
 Matrix (including explicit rectangular sizes), Aztec and PDF417 (explicit
-EC level). See `packages/web/README.md` for the options.
+EC level). See `packages/web/README.md` for the options. A GS1 DataBar
+Expanded render uses the compressed encodation whenever the element string
+matches one of the standard AI-(01) families (AI 01 + general purpose,
+`310x`/`320x` weight, `392x`/`393x` price, `310x`/`320x` + date); any other
+element string falls back to the general-purpose (method 00) field, which
+is valid for all AIs but longer.
 
 ## Usage
 
@@ -127,11 +132,11 @@ imports `main.js` from a CDN must spawn a one-line same-origin shim:
 
 ```js
 // worker-shim.js — same origin, one line
-import "https://cdn.jsdelivr.net/npm/@webreflection/barcode@0.2.9/dist/worker.js";
+import "https://cdn.jsdelivr.net/npm/@webreflection/barcode@0.2.10/dist/worker.js";
 ```
 
 ```js
-import barcode from "https://cdn.jsdelivr.net/npm/@webreflection/barcode@0.2.9/dist/main.js";
+import barcode from "https://cdn.jsdelivr.net/npm/@webreflection/barcode@0.2.10/dist/main.js";
 
 const { scan, render } = barcode({ worker: "./worker-shim.js" });
 ```
@@ -157,6 +162,14 @@ sampling), so rotation, shear and perspective are one correction rather than
 one per symbology; Reed–Solomon correction is erasure-aware for QR, PDF417,
 Data Matrix and Aztec.
 
+Binarization detail: a dim or low-contrast frame gets a gated global
+auto-levels stretch (p2/p98) before the Bradley threshold, and the fixed
+`luma < 0.5` floor rescues faded thermal receipts. Because that floor can
+over-ink a bright, busy background, QR/Micro QR stills also try a CPU mask
+(thresholded against the scene mean) before the GPU sweep, and live frames
+retry it at most every 400 ms after a GPU miss; DataMatrix has always had
+that CPU-first order, and a CPU miss still runs the full GPU sweep.
+
 - `crates/barcode-core` — `BitImage` (1bpp layout), `SymbologyDecoder`
   contract, shared geometry/rectification, RS helpers.
 - `crates/barcode-{qr,microqr,dm,aztec,pdf417,ean13,ean8,upce,code39,code93,code128,itf,codabar,databar}`
@@ -177,11 +190,11 @@ Data Matrix and Aztec.
 
 Real phone photos, replayed through the published bundle (`still` =
 `scan({ image })`, `live` = the same photo through a fake camera +
-`scan({ video })`). The personal corpus currently has **32 still photos
-and 19 live replays**; the latest still run is **32/32** and the live run
-is **18/19**, with one tracked xfail: `viva-dm-115212` is a ~2px/module
-Data Matrix in a full 12MP frame, below what the 1056px live frame can
-resolve (the still pass and the center-square crop both read it). The
+`scan({ video })`). The personal corpus currently has **31 still photos
+and 18 live replays**, and the latest runs are **31/31** and **18/18**.
+A whole-page 12 MP frame with a ~2 px/module Data Matrix was retired from
+the corpus: it predates the zoom/aiming flow, which reads it repeatedly,
+and the center crop of the same photo passes the still gate. The
 corpus covers product EAN-13/UPC/EAN-8, ISBN, a shipping-slip ITF, a
 vertical invoice Code 128, loyalty cards, receipt QRs, DataMatrix (square
 and DMRE), VIVA QR, the captured phone frames of a coupon QR on a woven
@@ -327,30 +340,14 @@ round-trip), `tests/roi.html` covers small codes in a 4096 px frame,
 ±4°/8° roll and `tests/harden.html` the synthetic blur/noise/defocus/exposure
 sweep.
 
-## Known limits / next
+## Feedback
 
-- One code per scan **by design**; multi-code scanning is not planned.
-  Cover the other codes physically (a sheet of paper, a finger), as at a
-  checkout.
-- `databarexpanded` rendering picks the compressed encodation whenever the
-  element string matches one of the standard's AI-(01) families (AI 01 +
-  general purpose, `310x`/`320x` weight, `392x`/`393x` price, `310x`/`320x`
-  + date); any other element string falls back to the general-purpose
-  (method 00) field, which is valid for all AIs but longer.
-- Dim/low-contrast captures get global auto-levels (a gated p2/p98 stretch)
-  before the Bradley threshold. Per-tile normalization is not used: it
-  measured no better than the global stretch on the same field variants.
-- The GPU binarizer keeps the fixed `luma < 0.5` floor that rescues faded
-  thermal receipts. On a bright, busy background that floor can over-ink
-  the scene, so a small dense 2D symbol (measured: a version-6 QR at
-  ~3.4 px/module on a woven mat) can fail the QR finder stage on the GPU
-  mask. QR/Micro QR stills therefore also try the CPU mask (thresholded
-  against the scene mean) before the GPU sweep, and live frames retry it
-  at most every 400 ms after a GPU miss; DataMatrix always had its CPU
-  first opinion. A CPU read returns immediately (one valid code per scan),
-  and a CPU miss still runs the full GPU sweep, so the receipts keep the
-  fixed floor.
-- Native Android/iOS bindings are out of scope: this is the Web SDK.
+Found a code this does not read — or one that another scanner reads and
+this one misses?
+[Open an issue](https://github.com/WebReflection/barcode/issues) with the
+image (or a crop) and the printed value. Real failing photos are what the
+next round of work is built from: each one becomes a regression fixture
+and the measurement behind a change.
 
 
 ## License
