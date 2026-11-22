@@ -17,6 +17,7 @@ import { createBinarizer } from '../src/binarizer-factory.js';
 import { CpuBinarizer } from '../src/cpu-binarizer.js';
 import { getWasmScanner, decodeFrame } from '../src/decoder.js';
 import { rotateDrawable } from '../src/source-rotate.js';
+import { liftDim } from '../src/source-lift.js';
 import { cropDrawable, linearRoiCandidates, otsuMask, roiCandidates } from '../src/roi.js';
 import { ALL_FORMATS, LINEAR, cheapFormats, dueForFullSweep, is2DResult, markFullSweep, needsScheduling } from '../src/live-schedule.js';
 import {
@@ -835,27 +836,65 @@ const handlers = {
           }
         }
       }
-      // Still 1D slight-roll retry: the row scanners assume near-vertical
-      // bars. A careless-wrist roll (measured: Code 39 at 6° with blur,
-      // DataBar Omni at 2px/module + 6°) defeats them while zxing reads
-      // the very same frame. Rotate the SOURCE with antialiasing and
-      // re-binarize, only after every straight pass missed. The ±3 pair
-      // is the measured DataBar lever: a 6° roll reads once the residual
-      // is 2-3° (at 0.92 for the mask fixture, 0.7 on the GPU frame),
-      // while Code 39 needs the ±4 pair; keep both, cheapest first.
-      // Stills only: a rotation + binarize is 20-60ms, which a live frame
-      // cannot pay, and a linear family must have been requested.
+      // Dim still retry, then the still slight-roll retry.
+      //
+      // DIM: the binarizers stretch a low-exposure, low-contrast frame to
+      // 0..1 before the Bradley threshold. That is right for a faded
+      // receipt, but a capture with few distinct levels (synthetic
+      // light=0.4: label paper 0.37, print 0.04) loses module edges, and
+      // zxing -- which thresholds the grayscale its own way -- still reads
+      // it. Re-drawing the SOURCE brighter skips the gate and reads the
+      // same frame: measured on the 1D differential, the dim cells recover
+      // only once the lift is combined with the small-roll ladder.
+      // `liftDim` applies the gate itself and returns null for a normal
+      // frame, so an ordinary still miss pays one 64px probe (~1ms).
+      //
+      // ROLL: the row scanners assume near-vertical bars. A careless-wrist
+      // roll (Code 39 / DataBar at 6°) defeats them while zxing reads the
+      // very same frame. Rotate the (lifted when dim) SOURCE with
+      // antialiasing and re-binarize. The ±3 pair is the measured DataBar
+      // lever (a 6° roll reads once the residual is 2-3°; Code 39 needs
+      // ±4); cheapest first.
+      //
+      // Stills only: a lift/rotation + binarize is 20-60ms, which a live
+      // frame cannot pay. Only requested families run; the cheap stacked
+      // tier is included because the dim differential measured it.
       if (still === true && codes.length === 0 && remaining() > 300) {
+        const liftFormats = (activeFormats ?? [...LINEAR_FORMATS, 'databarstk']).filter((f) => {
+          const n = String(f).toLowerCase();
+          return LINEAR_FORMATS.has(n) || n === 'databarstk';
+        });
         const linear = stillLinearFormats(activeFormats);
-        if (linear.length) {
+        if (liftFormats.length) {
           const thresholds = [0.92, 0.82, 0.7];
+          // `input` is the same area-filtered source the straight ladder
+          // binarized (<= STILL_MAX); lifting the ORIGINAL 12MP bitmap
+          // would pay a 12MP pixel pass and then take the binarizer's
+          // aliasing bilinear downscale. Positions stay in mask space.
+          const lifted = await liftDim(input);
+          if (lifted) {
+            for (const threshold of thresholds) {
+              if (remaining() < 250) break;
+              bin.setThreshold(threshold);
+              const df = await bin.process(lifted.canvas);
+              bin.setThreshold(0.92);
+              const hits = decodeFrame(scanner, df, liftFormats, budgetOpts());
+              if (hits.length) {
+                codes = hits;
+                break;
+              }
+            }
+            bin.setThreshold(0.92);
+          }
+          const source = lifted?.canvas ?? bitmap;
           for (const deg of [-3, 3, -4, 4, -8, 8]) {
-            if (remaining() < 250) break;
-            const rotated = await rotateDrawable(bitmap, deg);
+            if (codes.length || remaining() < 250 || !linear.length) break;
+            const rotated = await rotateDrawable(source, deg);
             for (const threshold of thresholds) {
               if (remaining() < 250) break;
               bin.setThreshold(threshold);
               const df = await bin.process(rotated.canvas);
+              bin.setThreshold(0.92);
               const hits = decodeFrame(scanner, df, linear, budgetOpts());
               if (hits.length) {
                 for (const hit of hits) {
