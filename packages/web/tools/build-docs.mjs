@@ -59,6 +59,24 @@ mkdirSync(docs, { recursive: true });
 const version = JSON.parse(
   readFileSync(resolve(root, "package.json"), "utf8"),
 ).version;
+
+// The root README copy-pastes the published CDN build, so its pins must
+// match the package version: npm `latest`, docs/index.html and the
+// same-origin worker shim below all come from this one value. A version
+// bump therefore rewrites them as part of `npm run build` (and therefore
+// `prepublishOnly`) instead of leaving stale snippets for a later manual
+// fix. Only the exact `@webreflection/barcode@x.y.z` pins are touched.
+const readmePath = resolve(root, "../../README.md");
+const readme = readFileSync(readmePath, "utf8");
+const pinnedReadme = readme.replace(
+  /(@webreflection\/barcode@)\d+\.\d+\.\d+/g,
+  `$1${version}`,
+);
+if (pinnedReadme !== readme) {
+  writeFileSync(readmePath, pinnedReadme);
+  console.log(`README.md: CDN pins -> @${version}`);
+}
+
 const landing = readFileSync(resolve(site, "index.html"), "utf8");
 if (!landing.includes("{{VERSION}}")) {
   throw new Error("site/index.html lost its {{VERSION}} placeholder");
