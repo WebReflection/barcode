@@ -407,6 +407,7 @@ async function suiteRegression(browser, project) {
   const pharmaClose = resolve(pkg, "test-codes/regression/pharma-itf-close-2026-11-20.jpeg");
   const blurTilt = resolve(pkg, "test-codes/regression/ean13-blur-tilt-mask-2026-11-22.png");
   const code39Tilt = resolve(pkg, "test-codes/regression/code39-blur-tilt-mask-2026-11-22.png");
+  const databarTilt = resolve(pkg, "test-codes/regression/databar-blur-tilt-mask-2026-11-22.png");
   if (!existsSync(code32)) {
     console.log(`SKIP  ${project.padEnd(8)} regression no fixture at ${code32}`);
     return;
@@ -479,6 +480,17 @@ async function suiteRegression(browser, project) {
     await check("code39-blur-tilt", async () => {
       const { value } = await scanFixture(code39Tilt, "?type=code39");
       if (value !== "ABC-1234") throw new Error(`code39-blur-tilt: got ${JSON.stringify(value)}`);
+    });
+  }
+
+  if (existsSync(databarTilt)) {
+    // Mask of a synthetic 2 px/module DataBar Omni at 6° roll with blur
+    // (the GPU binarizer's 0.75 opinion). Every straight still pass misses
+    // it; the ±3 source rotation in api/worker.js reads it. The fixture is
+    // the mask, so the gate runs on the CI's CPU-only Chromium too.
+    await check("databar-blur-tilt", async () => {
+      const { value } = await scanFixture(databarTilt, "?type=databar");
+      if (value !== "(01)40063813339314") throw new Error(`databar-blur-tilt: got ${JSON.stringify(value)}`);
     });
   }
 
