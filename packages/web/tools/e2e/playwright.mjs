@@ -406,6 +406,7 @@ async function suiteRegression(browser, project) {
   const pharma = resolve(pkg, "test-codes/regression/pharma-real-code-2026-11-20.jpeg");
   const pharmaClose = resolve(pkg, "test-codes/regression/pharma-itf-close-2026-11-20.jpeg");
   const blurTilt = resolve(pkg, "test-codes/regression/ean13-blur-tilt-mask-2026-11-22.png");
+  const code39Tilt = resolve(pkg, "test-codes/regression/code39-blur-tilt-mask-2026-11-22.png");
   if (!existsSync(code32)) {
     console.log(`SKIP  ${project.padEnd(8)} regression no fixture at ${code32}`);
     return;
@@ -468,6 +469,16 @@ async function suiteRegression(browser, project) {
     await check("ean13-blur-tilt", async () => {
       const { value } = await scanFixture(blurTilt, "?type=ean13");
       if (value !== "4006381333931") throw new Error(`ean13-blur-tilt: got ${JSON.stringify(value)}`);
+    });
+  }
+
+  if (existsSync(code39Tilt)) {
+    // Mask of a synthetic 3 px/module Code 39 at 6° roll with blur. The
+    // upright scanner misses it; zxing reads this very mask. Pins the
+    // still-only small-roll source retry in api/worker.js.
+    await check("code39-blur-tilt", async () => {
+      const { value } = await scanFixture(code39Tilt, "?type=code39");
+      if (value !== "ABC-1234") throw new Error(`code39-blur-tilt: got ${JSON.stringify(value)}`);
     });
   }
 
