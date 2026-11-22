@@ -408,6 +408,7 @@ async function suiteRegression(browser, project) {
   const blurTilt = resolve(pkg, "test-codes/regression/ean13-blur-tilt-mask-2026-11-22.png");
   const code39Tilt = resolve(pkg, "test-codes/regression/code39-blur-tilt-mask-2026-11-22.png");
   const databarTilt = resolve(pkg, "test-codes/regression/databar-blur-tilt-mask-2026-11-22.png");
+  const ean8Noise = resolve(pkg, "test-codes/regression/ean8-blur-noise-mask-2026-11-22.png");
   if (!existsSync(code32)) {
     console.log(`SKIP  ${project.padEnd(8)} regression no fixture at ${code32}`);
     return;
@@ -491,6 +492,18 @@ async function suiteRegression(browser, project) {
     await check("databar-blur-tilt", async () => {
       const { value } = await scanFixture(databarTilt, "?type=databar");
       if (value !== "(01)40063813339314") throw new Error(`databar-blur-tilt: got ${JSON.stringify(value)}`);
+    });
+  }
+
+  if (existsSync(ean8Noise)) {
+    // Mask of a synthetic 2 px/module EAN-8 at 6° roll, blur 1.2 and luma
+    // noise ±10. Its rows break the global 67-module quantizer but each
+    // digit stays within the local variance; pins the per-digit fallback in
+    // barcode-ean8 (`try_variance`). Verified load-bearing: this mask does
+    // NOT decode without the fallback (0.82/0.92).
+    await check("ean8-blur-noise", async () => {
+      const { value } = await scanFixture(ean8Noise, "?type=ean8");
+      if (value !== "96385074") throw new Error(`ean8-blur-noise: got ${JSON.stringify(value)}`);
     });
   }
 
