@@ -325,6 +325,144 @@ async function suiteFakecam(browser, project) {
     }
     record({ project, suite: "fakecam", name: "pinch-zoom", ok, ms: Date.now() - t0, note: ok ? "" : note });
   }
+  // Adaptive zoom on the published main.js path (no msg.mask): a small code
+  // (< 40% of frame width) must raise the camera track's zoom once decoded.
+  {
+    const t0 = Date.now();
+    let ok = false;
+    let note = "";
+    try {
+      const e2e = encodeURIComponent("tiny132-qrcode:TINY-QR-ROI");
+      await page.goto(
+        `${TESTS_FS}/scan-fakecam.html?formats=qrcode&fakezoom=1&max=1056&e2e=${e2e}&_=${Date.now()}`,
+        { waitUntil: "load" },
+      );
+      await page.waitForSelector("#start", { timeout: 30_000 });
+      await page.evaluate(() => {
+        const orig = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+        navigator.mediaDevices.getUserMedia = async (c) => {
+          const stream = await orig(c);
+          globalThis.__lastTrack = stream.getVideoTracks()[0];
+          return stream;
+        };
+      });
+      await page.click("#start");
+      await page.waitForFunction(
+        () => document.getElementById("value")?.textContent === "TINY-QR-ROI",
+        null,
+        { timeout: 15_000 },
+      );
+      const zoom = await page.evaluate(() => globalThis.__lastTrack?.getSettings?.().zoom ?? 1);
+      ok = zoom > 1;
+      if (!ok) note = `expected adaptiveZoom > 1, got ${zoom}`;
+    } catch (err) {
+      note = String(err?.message ?? err).split("\n")[0];
+    }
+    record({ project, suite: "fakecam", name: "adaptive-zoom", ok, ms: Date.now() - t0, note: ok ? "" : note });
+  }
+  // Injected decode forwarding frameW/frameH: verifies both 2D close-up hint
+  // cropping (#updateHint/#mapFromHint) and digital-zoom coordinate mapping.
+  {
+    const t0 = Date.now();
+    let ok = false;
+    let note = "";
+    try {
+      const res = await page.evaluate(async (base) => {
+        const { LiveScanner } = await import(`${base}/src/live-scanner.js`);
+        const canvas = document.createElement("canvas");
+        canvas.width = 600;
+        canvas.height = 600;
+        const cx = canvas.getContext("2d");
+        cx.fillStyle = "#fff";
+        cx.fillRect(0, 0, 600, 600);
+        const origGum = navigator.mediaDevices.getUserMedia;
+        const origEnum = navigator.mediaDevices.enumerateDevices;
+        const makeStream = () => {
+          const s = canvas.captureStream(30);
+          const tick = setInterval(() => { cx.fillRect(0, 0, 1, 1); }, 33);
+          s.getVideoTracks().forEach((t) => t.addEventListener("ended", () => clearInterval(tick)));
+          return s;
+        };
+        navigator.mediaDevices.enumerateDevices = async () => [];
+        navigator.mediaDevices.getUserMedia = async () => makeStream();
+        try {
+          // 1. 2D hint close-up + quad mapping back to full 600x600 video coords.
+          const video1 = document.createElement("video");
+          video1.muted = true;
+          video1.playsInline = true;
+          const calls1 = [];
+          const hit1 = await new Promise((resolve, reject) => {
+            const sc = new LiveScanner({
+              video: video1,
+              crop: "square",
+              adaptiveZoom: false,
+              decode: async (bmp, fmts) => {
+                calls1.push({ w: bmp.width, h: bmp.height, fmts });
+                const isHint = calls1.length > 1;
+                const pos = isHint
+                  ? [{ x: 25, y: 25 }, { x: 125, y: 25 }, { x: 125, y: 125 }, { x: 25, y: 125 }]
+                  : [{ x: 200, y: 200 }, { x: 300, y: 200 }, { x: 300, y: 300 }, { x: 200, y: 300 }];
+                return {
+                  results: [{ symbology: "qrcode", text: "HINT-OK", raw: new Uint8Array([1]), position: pos }],
+                  frameW: bmp.width,
+                  frameH: bmp.height,
+                };
+              },
+              onResults: (codes) => { void sc.stop(); resolve(codes[0]); },
+              onError: reject,
+            });
+            sc.start().catch(reject);
+          });
+          const hintCropped = calls1.length >= 2 && calls1[0].w === 600 && calls1[1].w < 300 && calls1[1].fmts?.[0] === "qrcode";
+          const hintMapped = hit1.position[0].x >= 180 && hit1.position[0].y >= 180;
+
+          // 2. Digital zoom (2x center crop -> 300x300) maps quad back to full 600x600 space.
+          const video2 = document.createElement("video");
+          video2.muted = true;
+          video2.playsInline = true;
+          const calls2 = [];
+          const hit2 = await new Promise((resolve, reject) => {
+            const sc = new LiveScanner({
+              video: video2,
+              crop: "square",
+              adaptiveZoom: false,
+              decode: async (bmp) => {
+                calls2.push({ w: bmp.width, h: bmp.height });
+                if (bmp.width > 320) {
+                  // Wait for zoomTo(2) to take effect before returning hits.
+                  return { results: [], frameW: bmp.width, frameH: bmp.height };
+                }
+                return {
+                  results: [{
+                    symbology: "code128",
+                    text: "DZOOM-OK",
+                    raw: new Uint8Array([1]),
+                    position: [{ x: 50, y: 120 }, { x: 250, y: 120 }, { x: 250, y: 180 }, { x: 50, y: 180 }],
+                  }],
+                  frameW: bmp.width,
+                  frameH: bmp.height,
+                };
+              },
+              onResults: (codes) => { void sc.stop(); resolve(codes[0]); },
+              onError: reject,
+            });
+            sc.start().then(() => sc.zoomTo(2)).catch(reject);
+          });
+          const dzoomCropped = calls2.some((c) => c.w === 300 && c.h === 300);
+          const dzoomMapped = Math.round(hit2.position[0].x) === 200 && Math.round(hit2.position[0].y) === 270;
+          return { hintCropped, hintMapped, dzoomCropped, dzoomMapped, calls1, hit1Pos: hit1.position[0], hit2Pos: hit2.position[0] };
+        } finally {
+          navigator.mediaDevices.getUserMedia = origGum;
+          navigator.mediaDevices.enumerateDevices = origEnum;
+        }
+      }, `${ORIGIN}/@fs${pkg}`);
+      ok = res.hintCropped && res.hintMapped && res.dzoomCropped && res.dzoomMapped;
+      if (!ok) note = JSON.stringify(res);
+    } catch (err) {
+      note = String(err?.message ?? err).split("\n")[0];
+    }
+    record({ project, suite: "fakecam", name: "hint-and-digital-zoom", ok, ms: Date.now() - t0, note: ok ? "" : note });
+  }
   await context.close();
 }
 
