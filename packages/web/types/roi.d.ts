@@ -71,6 +71,34 @@ export function cropDrawable(source: CanvasImageSource | HTMLVideoElement, box: 
         y: number;
     }[];
 }>;
+/**
+ * Horizontal mirror of a crop, at source resolution. A 180°-presented
+ * 1D symbol is the common phone case (the label is upside down), and the
+ * mask-level mirror in wasm is starved when the binarization itself is
+ * marginal: the same bar strip re-binarized from a mirrored SOURCE reads.
+ * Mirrors the pixels (no mask round-trip), so the decoder gets a clean
+ * upright run sequence.
+ *
+ * @param {CanvasImageSource} source
+ * @returns {Promise<{
+ *   canvas: OffscreenCanvas | HTMLCanvasElement,
+ *   width: number,
+ *   height: number,
+ *   map: (fw: number, fh: number, points: {x: number, y: number}[]) => {x: number, y: number}[],
+ * }>}
+ */
+export function mirrorDrawable(source: CanvasImageSource): Promise<{
+    canvas: OffscreenCanvas | HTMLCanvasElement;
+    width: number;
+    height: number;
+    map: (fw: number, fh: number, points: {
+        x: number;
+        y: number;
+    }[]) => {
+        x: number;
+        y: number;
+    }[];
+}>;
 export type BinarizedFrame = import("./gpu/binarizer.js").BinarizedFrame;
 /**
  * A candidate box in the frame's SOURCE pixel coordinates (not mask

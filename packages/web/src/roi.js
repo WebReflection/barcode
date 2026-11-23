@@ -260,6 +260,88 @@ export function linearRoiCandidates(frame, sourceW, sourceH, limit = 2) {
     counts[y] = n;
     if (n > max) max = n;
   }
+  // A real 1D symbol is a contiguous run of rows with a near-constant,
+  // very high transition count. A lower floor (0.4) also picks up the
+  // human-readable text line and label borders, and those merge with the
+  // bars into a full-width, 300px-tall crop on a phone photo. 0.85 keeps
+  // only the bar rows; the x extent then comes from the same rows, so the
+  // crop is the symbol (plus quiet zone) instead of the whole label.
+  const sx = sourceW <= width ? 1 : sourceW / width;
+  const sy = sourceH <= height ? 1 : sourceH / height;
+  const denseFloor = Math.max(24, max * 0.85);
+  /** @type {{ y0: number, y1: number }[]} */
+  const dense = [];
+  for (let y = 0; y < height; y++) {
+    if ((counts[y] ?? 0) < denseFloor) continue;
+    const band = dense.at(-1);
+    if (band && y <= band.y1 + 2) band.y1 = y;
+    else dense.push({ y0: y, y1: y });
+  }
+  /** @type {RoiBox[]} */
+  const tight = [];
+  for (const band of dense) {
+    const bh = band.y1 - band.y0 + 1;
+    if (bh < 2 || bh > height * 0.4) continue;
+    /** @type {number[]} */
+    const x0s = [];
+    /** @type {number[]} */
+    const x1s = [];
+    for (let y = band.y0; y <= band.y1; y++) {
+      /** @type {number[]} */
+      const flips = [];
+      let prev = 0;
+      for (let x = 0; x < width; x++) {
+        const bit = (data[y * bytesPerRow + (x >> 3)] ?? 0) >> (x & 7) & 1;
+        if (bit !== prev) flips.push(x);
+        prev = bit;
+      }
+      if (flips.length < 8) continue;
+      // Split the row at the widest white gaps (the label's vertical text,
+      // bubble-wrap glare) and keep the segment with the most flips: the
+      // bars are one dense segment, everything around it is sparse.
+      const gap = Math.max(16, Math.round(width * 0.02));
+      let start = 0;
+      /** @type {{ x0: number, x1: number, n: number } | null} */
+      let best = null;
+      for (let i = 0; i <= flips.length; i++) {
+        if (
+          i === flips.length ||
+          (i > 0 && (flips[i] ?? 0) - (flips[i - 1] ?? 0) > gap)
+        ) {
+          const seg = { x0: flips[start] ?? 0, x1: flips[i - 1] ?? 0, n: i - start };
+          if (!best || seg.n > best.n) best = seg;
+          start = i;
+        }
+      }
+      if (best && best.x1 - best.x0 > width * 0.15) {
+        x0s.push(best.x0);
+        x1s.push(best.x1);
+      }
+    }
+    if (x0s.length < 2) continue;
+    /** @param {number[]} values */
+    const median = (values) => values.slice().sort((a, b) => a - b)[(values.length / 2) | 0] ?? 0;
+    const x0 = median(x0s);
+    const x1 = median(x1s);
+    // Only a bar strip that owns a large share of the frame width is the
+    // "phone held at a label" case this tight splitter exists for. A
+    // small/distant symbol (or a product box's short Code 32) keeps the
+    // established looser proposals below; taking its narrow band here
+    // used to push those crops past the still ROI deadline.
+    if (x1 - x0 < width * 0.4) continue;
+    const padX = Math.max(8, Math.round((x1 - x0) * 0.03));
+    const padY = Math.max(8, Math.round(bh * 0.2));
+    const x = Math.max(0, Math.round((x0 - padX) * sx));
+    const y = Math.max(0, Math.round((band.y0 - padY) * sy));
+    const w = Math.min(sourceW - x, Math.round((x1 - x0 + 2 * padX) * sx));
+    const h = Math.min(sourceH - y, Math.round((bh + 2 * padY) * sy));
+    if (w < MIN_SIDE || h < MIN_SIDE) continue;
+    tight.push({ x, y, w, h, score: x1 - x0 });
+  }
+  tight.sort((a, b) => b.score - a.score);
+  // Fallback: the original looser band grouping. A frame with no clean
+  // dense-row band (a symbol partly cut off, or a very noisy mask) still
+  // gets the old proposal.
   // Text lines have their own transition rhythm; only the densest rows are
   // worth a crop. 24 transitions is ~12 bars even for the narrowest 1D.
   const floor = Math.max(24, max * 0.4);
@@ -277,8 +359,6 @@ export function linearRoiCandidates(frame, sourceW, sourceH, limit = 2) {
     }
   }
 
-  const sx = sourceW <= width ? 1 : sourceW / width;
-  const sy = sourceH <= height ? 1 : sourceH / height;
   /** @type {RoiBox[]} */
   const boxes = [];
   for (const band of bands) {
@@ -349,7 +429,14 @@ export function linearRoiCandidates(frame, sourceW, sourceH, limit = 2) {
     if (!overlap) picked.push(box);
     if (picked.length >= limit) break;
   }
-  return picked;
+  // Tight boxes first (the upside-down / marginal-1D lever), then the
+  // looser proposals: a symbol the dense-row split misses (partly cut
+  // off, noisy mask, white-on-black island) is still found by the latter,
+  // whose Otsu retry is the distant-1D lever. A generous old box can
+  // overlap a tight one and still be the only readable crop (the inverted
+  // island needs its own quiet-zone margin), so only dedupe within each
+  // family; the caller's deadline bounds the extra crops.
+  return [...tight, ...picked].slice(0, limit + 2);
 }
 
 /**
@@ -477,6 +564,47 @@ export async function cropDrawable(source, box) {
       const sx = w <= fw ? 1 : w / fw;
       const sy = h <= fh ? 1 : h / fh;
       return points.map(({ x: px, y: py }) => ({ x: x + px * sx, y: y + py * sy }));
+    },
+  };
+}
+
+/**
+ * Horizontal mirror of a crop, at source resolution. A 180°-presented
+ * 1D symbol is the common phone case (the label is upside down), and the
+ * mask-level mirror in wasm is starved when the binarization itself is
+ * marginal: the same bar strip re-binarized from a mirrored SOURCE reads.
+ * Mirrors the pixels (no mask round-trip), so the decoder gets a clean
+ * upright run sequence.
+ *
+ * @param {CanvasImageSource} source
+ * @returns {Promise<{
+ *   canvas: OffscreenCanvas | HTMLCanvasElement,
+ *   width: number,
+ *   height: number,
+ *   map: (fw: number, fh: number, points: {x: number, y: number}[]) => {x: number, y: number}[],
+ * }>}
+ */
+export async function mirrorDrawable(source) {
+  const { w, h } = dims(source);
+  if (!w || !h) throw new TypeError("mirrorDrawable: source has no dimensions");
+  /** @type {OffscreenCanvas | HTMLCanvasElement} */
+  const canvas =
+    typeof OffscreenCanvas !== "undefined"
+      ? new OffscreenCanvas(w, h)
+      : Object.assign(document.createElement("canvas"), { width: w, height: h });
+  const ctx = /** @type {CanvasRenderingContext2D | null} */ (canvas.getContext("2d"));
+  if (!ctx) throw new TypeError("mirrorDrawable: no 2d context");
+  ctx.translate(w, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(/** @type {CanvasImageSource} */ (source), 0, 0);
+  return {
+    canvas,
+    width: w,
+    height: h,
+    map: (fw, fh, points) => {
+      const sx = w <= fw ? 1 : w / fw;
+      const sy = h <= fh ? 1 : h / fh;
+      return points.map(({ x, y }) => ({ x: w - x * sx, y: y * sy }));
     },
   };
 }

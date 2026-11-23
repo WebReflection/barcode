@@ -18,7 +18,7 @@ import { CpuBinarizer } from '../src/cpu-binarizer.js';
 import { getWasmScanner, decodeFrame } from '../src/decoder.js';
 import { rotateDrawable } from '../src/source-rotate.js';
 import { liftDim } from '../src/source-lift.js';
-import { cropDrawable, linearRoiCandidates, otsuMask, roiCandidates } from '../src/roi.js';
+import { cropDrawable, linearRoiCandidates, mirrorDrawable, otsuMask, roiCandidates } from '../src/roi.js';
 import { ALL_FORMATS, LINEAR, cheapFormats, dueForFullSweep, is2DResult, markFullSweep, needsScheduling } from '../src/live-schedule.js';
 import {
   encode_fixture_opts,
@@ -301,6 +301,12 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
   if (!sourceW || !sourceH) return [];
   const wantsLinear =
     !formats?.length || formats.some((f) => LINEAR.includes(String(f).toLowerCase()));
+  /** The requested 1D families only: a bar strip must never pay for a 2D
+   *  tier (DataMatrix/PDF417 on the strip can spend the whole live
+   *  deadline before the row scanners run). */
+  const linearOnly = formats?.length
+    ? formats.filter((f) => LINEAR.includes(String(f).toLowerCase()))
+    : [...LINEAR];
   // Linear bands first: a wide bar strip is often not a "compact cluster"
   // (it merges with the page/box around it, or loses to the text below).
   const linear = wantsLinear
@@ -312,64 +318,116 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
     const overlap = boxes.some((p) => {
       const ix = Math.max(0, Math.min(box.x + box.w, p.x + p.w) - Math.max(box.x, p.x));
       const iy = Math.max(0, Math.min(box.y + box.h, p.y + p.h) - Math.max(box.y, p.y));
+      // Two linear proposals for the SAME strip at different padding are
+      // both worth a crop: the tight one reads a marginal dark-on-white
+      // photo, the generous one keeps the quiet-zone margin an inverted
+      // (white-on-black) symbol needs. Only near-identical sizes dedupe.
+      const isLinear = /** @type {{ linear?: boolean }} */ (box).linear;
+      if (isLinear && p.linear && Math.max(box.w / p.w, p.w / box.w) > 1.15) return false;
       return ix * iy > 0.6 * Math.min(box.w * box.h, p.w * p.h);
     });
     if (!overlap) boxes.push(box);
     // The caller's crop budget is the bound: extra candidates multiply
     // the wasm sweep, and a junk frame produces no valid crop anyway.
-    if (boxes.length >= limit) break;
+    // Linear candidates now come in two flavours (tight dense-row bands
+    // plus the looser original proposals), so allow the extra pair; the
+    // deadline below still caps the actual work.
+    if (boxes.length >= limit + 2) break;
   }
   if (!boxes.length) return [];
   bin.setThreshold?.(0.92);
-  for (const box of boxes) {
-    const left = deadline - performance.now();
-    if (left <= 0) break;
-    const crop = await cropDrawable(bitmap, box);
-    // Per-candidate cap: a dense junk cluster can otherwise spend the
-    // whole still budget before a later (true symbol) candidate is tried.
-    const roiOpts = opts.still === true
+  const remaining = () => deadline - performance.now();
+  const callOpts = () =>
+    opts.still === true
       ? {
           still: true,
-          latency: Math.max(250, Math.min(opts.latency ?? 5000, left, ROI_BOX_CAP_MS)),
+          latency: Math.max(250, Math.min(opts.latency ?? 5000, remaining(), ROI_BOX_CAP_MS)),
         }
       : opts;
-    /** @param {import('../src/gpu/binarizer.js').BinarizedFrame} mask */
-    const decodeCrop = (mask) => decodeFrame(scanner, mask, formats, roiOpts);
-    /**
-     * @param {DecodedCode[]} hits
-     * @param {import('../src/gpu/binarizer.js').BinarizedFrame} mask
-     * @param {{ x: number, y: number, width: number, height: number, map: (fw: number, fh: number, points: {x: number, y: number}[]) => {x: number, y: number}[] }} [mapper]
-     * @returns {DecodedCode[]}
-     */
-    const mapHits = (hits, mask, mapper = crop) =>
-      mapRoiHits(hits, mapper, mask, frame, sourceW, sourceH);
+  /** @type {{ box: { x: number, y: number, w: number, h: number, linear?: boolean }, crop: Awaited<ReturnType<typeof cropDrawable>> }[]} */
+  const crops = [];
+  /**
+   * @param {DecodedCode[]} hits
+   * @param {import('../src/gpu/binarizer.js').BinarizedFrame} mask
+   * @param {{ x: number, y: number, width: number, height: number, map: (fw: number, fh: number, points: {x: number, y: number}[]) => {x: number, y: number}[] }} mapper
+   */
+  const done = (hits, mask, mapper) => mapRoiHits(hits, mapper, mask, frame, sourceW, sourceH);
+  /** The short-checksum EAN/UPC family: on a marginal Code 128 strip the
+   *  EAN-8 tier can fit a guard + 8 digits on two rows and pass its 1/10
+   *  check digit. Such a hit is a fallback, never a reason to stop before
+   *  the Code 128 (1/103) opinion has had its chance. */
+  const WEAK = new Set(['ean13', 'ean8', 'upce', 'upca']);
+  /** @type {any} */
+  let weakHit = null;
+  /**
+   * Return the strong hits of a stage (and only those); remember a
+   * weak-only stage as the eventual fallback.
+   * @param {DecodedCode[]} hits
+   * @param {import('../src/gpu/binarizer.js').BinarizedFrame} mask
+   * @param {any} mapper
+   */
+  const offer = (hits, mask, mapper) => {
+    if (!hits.length) return null;
+    const strong = hits.filter((h) => !WEAK.has(h.symbology));
+    if (strong.length) return done(strong, mask, mapper);
+    weakHit ??= { hits, mask, mapper };
+    return null;
+  };
 
-    /** @type {{ width: number, height: number, data: Uint8Array, bytesPerRow: number }} */
-    let f = await bin.process(crop.canvas);
-    let hits = decodeCrop(f);
-    if (hits.length) return mapHits(hits, f);
-    // White-on-black on a light page: the crop keeps a light margin, so the
-    // full-frame ink heuristic cannot pick the inverted polarity. Flip the
-    // (small) crop and let the decoders' own format/RS validation arbitrate.
-    let left2 = deadline - performance.now();
-    if (left2 <= 0) break;
-    let invOpts = roiOpts.still === true
-      ? { ...roiOpts, latency: Math.max(250, Math.min(roiOpts.latency ?? 5000, left2)) }
-      : roiOpts;
-    let flipped = f.data.map((/** @type {number} */ b) => ~b);
-    let invHits = decodeFrame(scanner, { ...f, data: flipped }, formats, invOpts);
-    if (invHits.length) return mapHits(invHits, f);
-
-    // The local threshold floods thin spaces when the crop is a blurry bar
-    // strip. A global Otsu split over a 2x upscale keeps them white; this
-    // is the distant/out-of-focus 1D lever (a real Code 32 package
-    // measured 0 reads locally, reads at 2x Otsu).
+  // Pass 1: cheap opinions on every candidate. The 0.92/inverted pair is
+  // the established path; for a linear strip a 0.88 SOURCE mirror and the
+  // unmirrored 0.88 follow. Cheap-first matters: the inverted island's
+  // readable crop is the generous box AFTER the tight one, and Otsu must
+  // not spend the live deadline before that box is even tried.
+  for (const box of boxes) {
+    if (remaining() <= 0) break;
+    const crop = await cropDrawable(bitmap, box);
+    crops.push({ box, crop });
+    // A bar strip is decoded by the row scanners only.
+    const boxFormats = box.linear ? linearOnly : formats;
+    /** @type {import('../src/gpu/binarizer.js').BinarizedFrame} */
+    const f = await bin.process(crop.canvas);
+    let found = offer(decodeFrame(scanner, f, boxFormats, callOpts()), f, crop);
+    if (found) return found;
+    const inverted = { ...f, data: f.data.map((/** @type {number} */ b) => ~b) };
+    found = offer(decodeFrame(scanner, inverted, boxFormats, callOpts()), f, crop);
+    if (found) return found;
     if (!box.linear) continue;
-    left2 = deadline - performance.now();
-    if (left2 <= 0) break;
-    invOpts = roiOpts.still === true
-      ? { ...roiOpts, latency: Math.max(250, Math.min(roiOpts.latency ?? 5000, left2)) }
-      : roiOpts;
+
+    // The source mirror is the upside-down phone lever and comes first;
+    // both opinions live at 0.88, the measured threshold for a marginal
+    // strip. The mirror is unconditional: a deadline check here cut it on
+    // the full (slower) frames while the cheap frames read it.
+    bin.setThreshold(0.88);
+    const mirrored = await mirrorDrawable(crop.canvas);
+    const fm = await bin.process(mirrored.canvas);
+    const mirrorMap = {
+      ...crop,
+      /** @param {number} fw @param {number} fh @param {{x: number, y: number}[]} points */
+      map: (fw, fh, points) =>
+        mirrored.map(fw, fh, points).map((p) => ({ x: crop.x + p.x, y: crop.y + p.y })),
+    };
+    found = offer(decodeFrame(scanner, fm, boxFormats, callOpts()), fm, mirrorMap);
+    if (found) {
+      bin.setThreshold(0.92);
+      return found;
+    }
+    const f88 = await bin.process(crop.canvas);
+    found = offer(decodeFrame(scanner, f88, boxFormats, callOpts()), f88, crop);
+    if (found) {
+      bin.setThreshold(0.92);
+      return found;
+    }
+    bin.setThreshold(0.92);
+  }
+
+  // Pass 2: the local threshold floods thin spaces on a blurry bar strip;
+  // a global Otsu split over a 2x upscale keeps them white. That is the
+  // distant/out-of-focus 1D lever (a real Code 32 package measured 0
+  // reads locally, reads at 2x Otsu). Only linear crops, only after every
+  // cheap opinion missed.
+  for (const { box, crop } of crops) {
+    if (!box.linear || remaining() <= 0) continue;
     /** @param {number} fw @param {number} fh @param {{x: number, y: number}[]} points */
     const scaledMap = (fw, fh, points) =>
       points.map((p) => ({
@@ -378,16 +436,15 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
       }));
     const scaled = { ...crop, map: scaledMap };
     for (const scale of [2, 1]) {
-      if (deadline - performance.now() <= 0) break;
+      if (remaining() <= 0) break;
       const otsu = otsuMask(crop.canvas, scale);
-      hits = decodeFrame(scanner, otsu, formats, invOpts);
-      if (hits.length) return mapHits(hits, otsu, scaled);
-      const otsuFlipped = otsu.data.map((/** @type {number} */ b) => ~b);
-      hits = decodeFrame(scanner, { ...otsu, data: otsuFlipped }, formats, invOpts);
-      if (hits.length) return mapHits(hits, otsu, scaled);
+      for (const data of [otsu, { ...otsu, data: otsu.data.map((/** @type {number} */ b) => ~b) }]) {
+        const found = offer(decodeFrame(scanner, data, linearOnly, callOpts()), otsu, scaled);
+        if (found) return found;
+      }
     }
   }
-  return [];
+  return weakHit ? done(weakHit.hits, weakHit.mask, weakHit.mapper) : [];
 };
 
 /**
