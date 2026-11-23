@@ -100,6 +100,32 @@ try {
     binCode.raw.length === BIN.length &&
     BIN.every((b, i) => binCode.raw[i] === b);
   row('render-raw: scan round-trip', binOk, JSON.stringify({ ...binCode, raw: binCode?.raw instanceof Uint8Array ? `u8:${binCode.raw.length}` : String(binCode?.raw) }));
+
+  // ---- 7. concurrent scan lock stays held across a rejected 2nd scan ----
+  const img7 = await specimen(s1, 'CT-LOCK');
+  const first = s1.scan({ image: img7 });
+  let err2 = '';
+  let err3 = '';
+  try { await s1.scan({ image: img7 }); } catch (e) { err2 = String(e?.message ?? e); }
+  try { await s1.scan({ image: img7 }); } catch (e) { err3 = String(e?.message ?? e); }
+  const firstCode = await guarded(first);
+  row('concurrent scan lock holds', /already in progress/.test(err2) && /already in progress/.test(err3) && firstCode?.text === 'CT-LOCK', `err2=${err2} err3=${err3}`);
+
+  // ---- 8. invalid signal rejects asynchronously (never throws sync) ----
+  let syncThrew = false;
+  let badSigErr = '';
+  let badSigP;
+  try { badSigP = s1.scan({ image: img7, signal: /** @type {any} */ ({}) }); } catch { syncThrew = true; }
+  if (badSigP) {
+    try { await badSigP; } catch (e) { badSigErr = String(e?.message ?? e); }
+  }
+  row('invalid signal rejects async', !syncThrew && /AbortSignal/.test(badSigErr), `sync=${syncThrew} ${badSigErr}`);
+
+  // ---- 9. type: 'barcode' includes databarexpanded ----
+  const expText = '(01)40063813339314(10)ABC';
+  const expCode = await guarded((async () =>
+    await s1.scan({ image: await specimen(s1, expText, 'databarexpanded'), type: 'barcode' }))());
+  row('type barcode reads databarexpanded', expCode?.symbology === 'databarexpanded' && expCode?.text === expText, JSON.stringify({ sym: expCode?.symbology, text: expCode?.text }));
 } catch (err) {
   row('harness', false, String((err && err.stack) || err));
 }

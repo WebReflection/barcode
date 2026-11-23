@@ -245,13 +245,20 @@ impl BarcodeScanner {
             return out;
         }
         // A still's fixed per-polarity costs (rotation/locator setup) are
-        // not charged to the sample budget. When the first polarity has
-        // already spent the caller's deadline, the inverted retry is a
-        // second full sweep after the budget — skip it.
-        if still && now_ms().saturating_sub(started) >= still_budget_ms {
-            return out;
-        }
-        let out = self.scan_polarity(&inv, tiers, still, still_budget_ms - first_budget);
+        // not charged to the sample budget. Cap the inverted retry to both
+        // its planned share AND the wall time actually left in the caller's
+        // deadline so an overshoot in polarity 1 cannot double the budget
+        // (and an early finish in polarity 1 never inflates polarity 2).
+        let inv_budget = if still {
+            let left = still_budget_ms.saturating_sub(now_ms().saturating_sub(started));
+            if left == 0 {
+                return out;
+            }
+            (still_budget_ms - first_budget).min(left)
+        } else {
+            still_budget_ms - first_budget
+        };
+        let out = self.scan_polarity(&inv, tiers, still, inv_budget);
         if !out.is_empty() {
             self.inverted = true;
         }
@@ -424,12 +431,7 @@ impl BarcodeScanner {
             // diagonal still gets its slice.
             if two_d.is_empty() && diagonal_sensitive {
                 let budget = if still {
-                    // A slow primary sweep can already have spent this
-                    // polarity's wall budget (its fixed per-step costs are
-                    // not sample-charged); the two ±45° supersampled passes
-                    // must not run past the caller's deadline.
-                    let left = still_budget_ms.saturating_sub(now_ms().saturating_sub(start));
-                    diagonal_budget.min(left)
+                    diagonal_budget
                 } else {
                     let elapsed = now_ms().saturating_sub(t0);
                     LIVE_DIAGONAL_MS.min(LIVE_DIAGONAL_DEADLINE_MS.saturating_sub(elapsed))

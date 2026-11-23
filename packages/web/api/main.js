@@ -269,6 +269,17 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
       lens = sessionLens, crop, zoom, torch,
       type = sessionType, accuracy = sessionAccuracy ?? 'auto',
     } = options;
+    // A rejected call must NOT touch `activeScan`: it never owned it.
+    if (activeScan)
+      return Promise.reject(new Error('scan: another scan is already in progress'));
+    // Option errors reject like every other scan error (they used to
+    // throw synchronously, bypassing the promise contract).
+    if (signal && typeof signal.addEventListener !== 'function')
+      return Promise.reject(new TypeError('scan: signal must be an AbortSignal (pass controller.signal)'));
+    const modes = Number(image != null) + Number(video != null) + Number(into != null);
+    if (modes > 1)
+      return Promise.reject(new TypeError('scan: pick one of into, video, image'));
+
     const { promise, resolve, reject } = Promise.withResolvers();
     let settled = false;
     const internal = new AbortController();
@@ -290,18 +301,6 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
         fn(arg);
       }
     };
-
-    // A rejected call must NOT touch `activeScan`: it never owned it.
-    if (activeScan)
-      return Promise.reject(new Error('scan: another scan is already in progress'));
-    // Option errors reject like every other scan error (they used to
-    // throw synchronously, bypassing the promise contract).
-    if (signal && typeof signal.addEventListener !== 'function')
-      return Promise.reject(new TypeError('scan: signal must be an AbortSignal (pass controller.signal)'));
-
-    const modes = Number(image != null) + Number(video != null) + Number(into != null);
-    if (modes > 1)
-      return Promise.reject(new TypeError('scan: pick one of into, video, image'));
     activeScan = true;
 
     // One graceful exit for every mode: whoever aborts — the user's

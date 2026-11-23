@@ -441,7 +441,7 @@ mod tests {
     /// read back as garbage — the round-trip was broken, not the encoder.
     #[test]
     fn round_trip_control_bytes() {
-        for text in ["\u{01}", "\u{1a}", "\u{01}\u{1a}AB", "\u{0a}\u{0d}"] {
+        for text in ["\u{00}", "\u{01}", "\u{1a}", "\u{01}\u{1a}AB", "\u{0a}\u{0d}"] {
             let canvas = barcode_fixtures::encode_code93(text, 4, 30);
             assert_eq!(
                 decode_canvas(&canvas, 2).as_deref(),
