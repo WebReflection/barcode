@@ -26,6 +26,27 @@ const D2OF5: [&str; 10] = [
     "01010", // 9
 ];
 
+/// The same table as 5-bit masks (bit i set = element i is wide), derived
+/// at compile time so `pattern_digit` never allocates.
+const D2OF5_BITS: [u8; 10] = {
+    let mut out = [0u8; 10];
+    let mut i = 0;
+    while i < D2OF5.len() {
+        let p = D2OF5[i].as_bytes();
+        let mut mask = 0u8;
+        let mut j = 0;
+        while j < p.len() {
+            if p[j] == b'1' {
+                mask |= 1 << j;
+            }
+            j += 1;
+        }
+        out[i] = mask;
+        i += 1;
+    }
+    out
+};
+
 struct Candidate {
     text: String,
     x_start: u32,
@@ -162,8 +183,13 @@ impl ItfDecoder {
         if k + 10 > self.runs.len() {
             return None;
         }
-        let mut widths: Vec<u32> = (0..10).map(|i| self.runs[k + i].1).collect();
-        widths.sort();
+        // Ten elements in a stack array: this used to allocate and sort a
+        // Vec for every candidate window on every row.
+        let mut widths = [0u32; 10];
+        for (i, w) in widths.iter_mut().enumerate() {
+            *w = self.runs[k + i].1;
+        }
+        widths.sort_unstable();
         let lo = widths[5] as f32;
         let hi = widths[6] as f32;
         if hi < lo * 1.4 || lo == 0.0 {
@@ -184,10 +210,8 @@ impl ItfDecoder {
             // 2-of-5 and reaching the same stop), so "first one to vote
             // twice wins" let a suffix shadow the full payload; the real
             // start decodes strictly more digits from further left.
-            for start in 0..self.runs.len() {
-                if !self.runs[start].0 {
-                    continue;
-                }
+            debug_assert!(!self.runs[0].0);
+            for start in (1..self.runs.len()).step_by(2) {
                 let Some(c) = self.try_from(start) else { continue };
                 let (count, x0, x1, y0, y1) = {
                     let e = self
@@ -236,35 +260,27 @@ fn pattern_digit(widths: &[u8; 5]) -> Option<u8> {
         return None;
     }
     // D2OF5 patterns encode 1 = wide, 0 = narrow.
-    let key: String = widths.iter().map(|w| if *w >= 2 { '1' } else { '0' }).collect();
-    let mut cands: Vec<usize> = D2OF5
-        .iter()
-        .enumerate()
-        .filter(|(_, p)| **p == key)
-        .map(|(i, _)| i)
-        .collect();
-    if cands.len() == 1 {
-        return Some(cands[0] as u8);
+    let mut key = 0u8;
+    for (i, &w) in widths.iter().enumerate() {
+        if w >= 2 {
+            key |= 1 << i;
+        }
+    }
+    if let Some(i) = D2OF5_BITS.iter().position(|&p| p == key) {
+        return Some(i as u8);
     }
     // distance-1: the table's minimum inter-code distance is 2, so a unique
     // nearest code corrects one misclassified element.
+    let mut found: Option<u8> = None;
     for i in 0..5 {
-        let mut flipped = key.clone();
-        flipped.replace_range(i..i + 1, if key.as_bytes()[i] == b'1' { "0" } else { "1" });
-        let hits: Vec<usize> = D2OF5
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| **p == flipped)
-            .map(|(i, _)| i)
-            .collect();
-        if hits.len() == 1 {
-            cands.push(hits[0]);
+        if let Some(j) = D2OF5_BITS.iter().position(|&p| p == key ^ (1 << i)) {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(j as u8);
         }
     }
-    if cands.len() == 1 {
-        return Some(cands[0] as u8);
-    }
-    None
+    found
 }
 
 /// GS1/I2of5 check: weights 3,1,3,1,... from the left; valid if total ≡ 0 mod 10.

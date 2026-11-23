@@ -94,7 +94,23 @@ impl DataBarExpandedDecoder {
         self.votes.clear();
         for y in 0..image.height {
             self.scan_row(image, y);
-            for start in 0..self.runs.len() {
+            if self.runs.len() < 15 {
+                continue; // >= 10 prefix runs + 5 start runs (start is even >= 10)
+            }
+            debug_assert!(!self.runs[0].0);
+            // START opens with a paper run (even index) and needs 9 prefix
+            // runs behind it, so valid starts are even indices >= 10.
+            for start in (10..=(self.runs.len() - 5)).step_by(2) {
+                // Exact START [1, 8, 4, 1, 1] pre-filter: under 0.45 module
+                // rounding, run 1 is [7.55u, 8.45u], run 2 is [3.55u, 4.45u],
+                // and runs 0/3/4 are [0.55u, 1.45u], so s1 > s2 and
+                // s1 >= 5*s0 (7.55/1.45 = 5.207).
+                let s0 = self.runs[start].1;
+                let s1 = self.runs[start + 1].1;
+                let s2 = self.runs[start + 2].1;
+                if s0 == 0 || s1 <= s2 || s1 < 5 * s0 {
+                    continue;
+                }
                 let Some((text, x_start, x_end)) = self.try_symbol(start) else {
                     continue;
                 };
@@ -129,12 +145,11 @@ impl DataBarExpandedDecoder {
             return None;
         }
         let start_runs = &self.runs[start..start + 5];
-        let colors = [false, true, false, true, false];
-        if start_runs.iter().zip(colors).any(|(r, c)| r.0 != c) {
+        if start_runs[0].0 {
             return None;
         }
         let unit = module_unit(start_runs, 15);
-        if quantize(start_runs, unit)? != [1, 8, 4, 1, 1] {
+        if quantize_fixed::<5>(start_runs, unit)? != [1, 8, 4, 1, 1] {
             return None;
         }
         // Backwards: guard bar (1 module), then the check character. The
@@ -142,11 +157,11 @@ impl DataBarExpandedDecoder {
         if start < 9 || !self.runs[start - 9].0 {
             return None;
         }
-        if quantize(&self.runs[start - 9..start - 8], unit)? != [1] {
+        if quantize_fixed::<1>(&self.runs[start - 9..start - 8], unit)? != [1] {
             return None;
         }
         let check_runs = &self.runs[start - 8..start];
-        let check_widths = quantize(check_runs, module_unit(check_runs, 17))?;
+        let check_widths = quantize_fixed::<8>(check_runs, module_unit(check_runs, 17))?;
         if check_widths.iter().sum::<u32>() != 17 {
             return None;
         }
@@ -155,7 +170,7 @@ impl DataBarExpandedDecoder {
         let mut j = start + 5;
         while j + 8 <= self.runs.len() {
             let char_runs = &self.runs[j..j + 8];
-            let Some(widths) = quantize(char_runs, module_unit(char_runs, 17)) else {
+            let Some(widths) = quantize_fixed::<8>(char_runs, module_unit(char_runs, 17)) else {
                 break;
             };
             if widths.iter().sum::<u32>() != 17 {
@@ -168,7 +183,7 @@ impl DataBarExpandedDecoder {
             j += 8;
             if values.len() % 2 == 0 && j + 5 <= self.runs.len() {
                 // Optional 15-module block after each pair.
-                if let Some(b) = quantize(&self.runs[j..j + 5], module_unit(&self.runs[j..j + 5], 15)) {
+                if let Some(b) = quantize_fixed::<5>(&self.runs[j..j + 5], module_unit(&self.runs[j..j + 5], 15)) {
                     if b.iter().sum::<u32>() == 15 {
                         j += 5;
                     }
@@ -205,19 +220,22 @@ fn module_unit(runs: &[Run], modules: u32) -> f32 {
     total as f32 / modules as f32
 }
 
-/// Quantize a run window to module widths. Requires at least 0.5 px per
-/// module and clean rounding; returns `None` for any non-symbol window.
-fn quantize(runs: &[Run], unit: f32) -> Option<Vec<u32>> {
+/// Quantize a fixed-length run window to module widths on the stack.
+/// Requires at least 0.5 px per module and clean rounding; returns `None`
+/// for any non-symbol window.
+fn quantize_fixed<const N: usize>(runs: &[Run], unit: f32) -> Option<[u32; N]> {
     if unit <= 0.0 {
         return None;
     }
-    let mut out = Vec::with_capacity(runs.len());
-    for &(_, w) in runs {
-        let m = (w as f32 / unit).round();
-        if m < 1.0 || m > 9.0 || (w as f32 / unit - m).abs() > 0.45 {
+    let inv_unit = 1.0 / unit;
+    let mut out = [0u32; N];
+    for i in 0..N {
+        let q = runs[i].1 as f32 * inv_unit;
+        let m = q.round();
+        if m < 1.0 || m > 9.0 || (q - m).abs() > 0.45 {
             return None;
         }
-        out.push(m as u32);
+        out[i] = m as u32;
     }
     Some(out)
 }

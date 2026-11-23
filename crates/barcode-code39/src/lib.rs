@@ -29,6 +29,26 @@ const TABLE: [(&str, &str); 44] = [
     ("%", "357"), ("*", "146"),
 ];
 
+/// Character -> wide-element bitmask (bit k = element k is wide), derived
+/// from `TABLE` at compile time. The per-window `String` this replaces was
+/// a measurable share of the 1D junk-frame cost.
+const TABLE_BITS: [(char, u16); 44] = {
+    let mut out = [('\0', 0u16); 44];
+    let mut i = 0;
+    while i < TABLE.len() {
+        let (c, idx) = TABLE[i];
+        let mut mask = 0u16;
+        let mut j = 0;
+        while j < idx.len() {
+            mask |= 1 << (idx.as_bytes()[j] - b'0');
+            j += 1;
+        }
+        out[i] = (c.as_bytes()[0] as char, mask);
+        i += 1;
+    }
+    out
+};
+
 /// Code 32 (Italian Pharmacode) payload alphabet: digits plus the letters
 /// of the Code 39 set minus A/E/I/O, i.e. exactly 32 symbols. Six of them
 /// are one base-32 number (0..999_999_999); the ninth decimal digit is a
@@ -168,15 +188,20 @@ impl Code39Decoder {
         let bar_mid = (bar_lo + bar_hi) as f32 / 2.0;
         let sp_mid = (sp_lo + sp_hi) as f32 / 2.0;
 
-        let mut key = String::with_capacity(3);
+        // Every Code 39 character has exactly 3 wide elements out of 9:
+        // pack the classification into a bitmask and compare it against the
+        // compile-time table (no per-window String).
+        let mut mask = 0u16;
         for (k, &len) in lens.iter().enumerate() {
             let mid = if k % 2 == 0 { bar_mid } else { sp_mid };
             if len as f32 > mid {
-                key.push(char::from(b'0' + k as u8));
+                mask |= 1 << k;
             }
         }
-        let ch = TABLE.iter().find(|(_, idx)| *idx == key).map(|(c, _)| c.chars().next().unwrap());
-        ch.map(|c| (c, sp_lo))
+        TABLE_BITS
+            .iter()
+            .find(|&(_, m)| *m == mask)
+            .map(|&(c, _)| (c, sp_lo))
     }
 
     /// Decode from run index `start`; requires a leading '*' and a closing '*'.
@@ -222,10 +247,8 @@ impl Code39Decoder {
             if self.runs.len() < 11 {
                 continue;
             }
-            for start in 0..self.runs.len() {
-                if !self.runs[start].0 {
-                    continue;
-                }
+            debug_assert!(!self.runs[0].0);
+            for start in (1..self.runs.len()).step_by(2) {
                 let Some(c) = self.try_from(start) else { continue };
                 let (count, x0, x1, y0, y1) = {
                     let e = self

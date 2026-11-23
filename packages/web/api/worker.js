@@ -93,8 +93,8 @@ const stillBinarizer = () =>
 /**
  * Families a still decodes on a CPU mask in addition to the GPU one.
  *
- * The GPU mask's floor is a fixed `luma < 0.5` rescue (see the lumaSmall
- * note in src/gpu/binarizer.js), which is load-bearing for faded thermal
+ * The GPU mask's floor is a fixed `luma < 0.5` rescue (see binarize.wgsl),
+ * which is load-bearing for faded thermal
  * receipts but force-inks a glossy label's midtone background. Two
  * measured failures share that root:
  * - the DataMatrix locator then spends the whole still budget on a glossy
@@ -590,7 +590,7 @@ const handlers = {
             let f = frame;
             if (threshold !== 0.92) {
               bin.setThreshold(threshold);
-              f = await bin.process(bitmap);
+              f = await bin.process(input);
             }
             const lin = decodeFrame(scanner, f, linear, opts);
             if (lin.length) {
@@ -728,7 +728,7 @@ const handlers = {
           if (roi.length) codes = codes.concat(roi);
           else if (!outOfTime() && typeof bin.setThreshold === "function") {
             bin.setThreshold(0.7);
-            const alt = await bin.process(bitmap);
+            const alt = await bin.process(input);
             bin.setThreshold(0.92);
             const seen = new Set(codes.map((c) => c.symbology + '\u0000' + c.text));
             codes = codes.concat(
@@ -836,7 +836,7 @@ const handlers = {
           for (const threshold of thresholds) {
             if (outOfTime()) break;
             bin.setThreshold(threshold);
-            const alt = await bin.process(bitmap);
+            const alt = await bin.process(input);
             bin.setThreshold(0.92);
             const hits = decodeFrame(scanner, alt, sweepFormats, budgetOpts()).filter(
               (c) => !seen.has(c.symbology + '\u0000' + c.text),
@@ -967,7 +967,7 @@ const handlers = {
             }
             bin.setThreshold(0.92);
           }
-          const source = lifted?.canvas ?? bitmap;
+          const source = lifted?.canvas ?? input;
           for (const deg of [-3, 3, -4, 4, -8, 8]) {
             if (codes.length || remaining() < 250 || !linear.length) break;
             const rotated = await rotateDrawable(source, deg);
@@ -1009,7 +1009,7 @@ const handlers = {
           bin.setThreshold(0.92);
           for (const deg of [45, -45]) {
             if (outOfTime()) break;
-            const rotated = await rotateDrawable(bitmap, deg);
+            const rotated = await rotateDrawable(input, deg);
             const df = await bin.process(rotated.canvas);
             const hits = decodeFrame(scanner, df, diag, budgetOpts());
             if (hits.length) {

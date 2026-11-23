@@ -651,20 +651,24 @@ const LTD_GROUPS: [(u32, u32, u32, u32, u32); 7] = [
 /// The (26,7) character capacity: the D2 domain and D1's multiplier.
 const LTD_M: u64 = 2_013_571;
 
-/// Number of compositions of `t` into `k` parts each in 1..=w (k ≤ 7).
+/// Number of compositions of `t` into `k` parts each in 1..=w (k ≤ 7, t ≤ 19).
 fn ltd_compositions(k: usize, t: u32, w: u32) -> u64 {
-    let mut dp = vec![0u64; t as usize + 1];
+    let t = t as usize;
+    let mut dp = [0u64; 20];
     dp[0] = 1;
     for _ in 0..k {
-        let mut next = vec![0u64; t as usize + 1];
-        for s in 1..=t as usize {
-            for p in 1..=w.min(s as u32) {
-                next[s] += dp[s - p as usize];
+        let mut next = [0u64; 20];
+        for s in 1..=t {
+            let lim = (w as usize).min(s);
+            let mut sum = 0u64;
+            for p in 1..=lim {
+                sum += dp[s - p];
             }
+            next[s] = sum;
         }
         dp = next;
     }
-    dp[t as usize]
+    dp[t]
 }
 
 /// Number of compositions of `t` into `k` parts in 1..=w with at least one
