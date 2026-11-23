@@ -7,7 +7,7 @@
  *   docs/live.html    bring your own video / mount
  *   docs/still.html   scan({ image })
  *   docs/render.html  render(result, opts) playground
- *   docs/worker.html  worker entry + auto entry in a worker
+ *   docs/worker.html  worker entry: page-spawned, caller-spawned, imported at the top
  *   docs/worker-shim.js  one-line same-origin import of the CDN worker
  *   docs/assets/      hashed page JS/CSS emitted by Vite; the SDK itself
  *                     (main, worker, wasm) comes from the versioned CDN

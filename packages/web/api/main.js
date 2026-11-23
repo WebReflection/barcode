@@ -42,8 +42,8 @@ import { Scanner } from '../src/scanner.js';
 import { bitmapToSVG, encodableText } from '../src/svg.js';
 import { normalizeRenderOptions } from '../src/render-options.js';
 
-/** Workers that already crossed a handshake: a second session must not
- *  post a port into a listener that no longer exists. */
+/** Workers that already bound a session: a second session must not post
+ *  a port into a listener that no longer exists. */
 const handled = new WeakSet();
 
 /**
@@ -226,10 +226,11 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
     w = new Worker(worker, { type: 'module' });
   } else if (worker instanceof Worker) {
     w = worker;
+    // a fresh Worker cannot be in `handled`: only a caller-supplied one can
+    if (handled.has(w)) throw new Error('duplicated worker');
   } else {
     throw new TypeError('barcode: worker must be a string, a URL, or a Worker');
   }
-  if (handled.has(w)) throw new Error('duplicated worker');
   handled.add(w);
   const { port1, port2 } = new MessageChannel;
   const utils = /** @type {Bindings} */ (binding(port1, {}));
