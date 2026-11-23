@@ -119,8 +119,11 @@ impl CodabarDecoder {
                 return None;
             }
         }
-        let mut widths: Vec<u32> = (0..7).map(|i| self.runs[k + i].1).collect();
-        widths.sort();
+        let mut widths = [0u32; 7];
+        for (i, w) in widths.iter_mut().enumerate() {
+            *w = self.runs[k + i].1;
+        }
+        widths.sort_unstable();
         // 2-wide split: six narrow then two wide. 3-wide: four then three.
         let splits = [
             (5usize, 2usize), // index of first wide, count of wide
@@ -193,8 +196,11 @@ impl CodabarDecoder {
             }
             // Narrow vs this char's own wide threshold: reuse the widest
             // narrow element of the char just decoded as an upper bound.
-            let mut widths: Vec<u32> = (0..7).map(|i| self.runs[k + i].1).collect();
-            widths.sort();
+            let mut widths = [0u32; 7];
+            for (i, w) in widths.iter_mut().enumerate() {
+                *w = self.runs[k + i].1;
+            }
+            widths.sort_unstable();
             if (gap.1 as f32) >= widths[4] as f32 * 1.4 {
                 return None; // gap too wide for an inter-character space
             }
@@ -212,10 +218,8 @@ impl CodabarDecoder {
             if self.runs.len() < 16 {
                 continue; // start + 1 data + stop + quiets
             }
-            for start in 0..self.runs.len() {
-                if !self.runs[start].0 {
-                    continue;
-                }
+            debug_assert!(!self.runs[0].0);
+            for start in (1..self.runs.len()).step_by(2) {
                 let Some(c) = self.try_from(start) else { continue };
                 // Scanning hygiene, not spec: a payload under 4 characters
                 // is noise. Loose start/stop pairs on random texture produce

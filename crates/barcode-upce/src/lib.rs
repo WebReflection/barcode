@@ -40,6 +40,34 @@ const PARITY_NS1: [&str; 10] = [
     "OEEOOE", "OEEEOO", "OEOEOE", "OEOEEO", "OEEOEO",
 ];
 
+const GUARDS: [usize; 9] = [0, 1, 2, 27, 28, 29, 30, 31, 32];
+
+const fn seg_of(s: &str) -> u8 {
+    let bytes = s.as_bytes();
+    let mut v = 0u8;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'1' {
+            v |= 1 << i;
+        }
+        i += 1;
+    }
+    v
+}
+
+const fn build_bits(table: &[&str; 10]) -> [u8; 10] {
+    let mut out = [0u8; 10];
+    let mut i = 0;
+    while i < 10 {
+        out[i] = seg_of(table[i]);
+        i += 1;
+    }
+    out
+}
+
+const L_BITS: [u8; 10] = build_bits(&L_CODES);
+const G_BITS: [u8; 10] = build_bits(&G_CODES);
+
 struct Candidate {
     text: [u8; 12],
     x_start: u32,
@@ -51,6 +79,7 @@ pub struct UpceDecoder {
     min_rows: usize,
     runs: Vec<(bool, u32)>,
     offsets: Vec<u32>,
+    prefix: Vec<u32>,
     votes: HashMap<[u8; 12], (usize, u32, u32, u32, u32)>,
 }
 
@@ -60,6 +89,7 @@ impl UpceDecoder {
             min_rows: min_rows.max(1),
             runs: Vec::with_capacity(256),
             offsets: Vec::with_capacity(256),
+            prefix: Vec::with_capacity(257),
             votes: HashMap::new(),
         }
     }
@@ -87,6 +117,13 @@ impl UpceDecoder {
             self.runs.push((cur, n));
             self.offsets.push(image.width - n);
         }
+        self.prefix.clear();
+        self.prefix.push(0);
+        let mut acc = 0u32;
+        for &(_, w) in &self.runs {
+            acc += w;
+            self.prefix.push(acc);
+        }
     }
 
     fn try_at(&self, start: usize) -> Option<Candidate> {
@@ -96,17 +133,37 @@ impl UpceDecoder {
         if !self.runs[start].0 {
             return None; // symbols begin with a bar
         }
-        let mut total = 0u32;
-        for k in 0..33 {
-            total += self.runs[start + k].1;
-        }
+        let total = self.prefix[start + 33] - self.prefix[start];
         let n_mod = total as f32 / 51.0;
         if !(0.8..=64.0).contains(&n_mod) {
             return None;
         }
+        // Exact guard envelope across f in [0.8, 1.2]: rejects >99% of junk
+        // windows before entering the 11-scale quantize loop.
+        let lo_env = 0.43 * n_mod;
+        let hi_env = 1.75 * n_mod;
+        for &g in &GUARDS {
+            let len = self.runs[start + g].1 as f32;
+            if len < lo_env || len > hi_env {
+                return None;
+            }
+        }
 
         for f in [1.0f32, 0.92, 1.08, 0.85, 1.15, 0.8, 1.2, 0.95, 1.05, 0.9, 1.1] {
             let n = n_mod * f;
+            let lo_g = 0.54 * n;
+            let hi_g = 1.46 * n;
+            let mut g_ok = true;
+            for &g in &GUARDS {
+                let len = self.runs[start + g].1 as f32;
+                if len < lo_g || len > hi_g {
+                    g_ok = false;
+                    break;
+                }
+            }
+            if !g_ok {
+                continue;
+            }
             let Some(mods) = self.quantize(start, n) else {
                 continue;
             };
@@ -126,14 +183,15 @@ impl UpceDecoder {
     /// Guards: the opening bar-space-bar and the six 1-module runs of the
     /// center guard + trailing bar.
     fn guards_ok(mods: &[u8; 33]) -> bool {
-        [0, 1, 2, 27, 28, 29, 30, 31, 32].iter().all(|&i| mods[i] == 1)
+        GUARDS.iter().all(|&i| mods[i] == 1)
     }
 
     fn quantize(&self, start: usize, n: f32) -> Option<[u8; 33]> {
         let mut mods = [0u8; 33];
         let mut sum = 0u32;
+        let inv_n = 1.0 / n;
         for k in 0..33 {
-            let m = self.runs[start + k].1 as f32 / n;
+            let m = self.runs[start + k].1 as f32 * inv_n;
             let r = m.round();
             if r < 1.0 || r > 4.0 || (m - r).abs() > 0.45 {
                 return None;
@@ -165,8 +223,8 @@ impl UpceDecoder {
         for d in 0..6 {
             let off = 3 + d * 7;
             let seg = ((bits >> off) & 0x7f) as u8;
-            let li = L_CODES.iter().position(|s| seg_of(s) == seg);
-            let gi = G_CODES.iter().position(|s| seg_of(s) == seg);
+            let li = L_BITS.iter().position(|&b| b == seg);
+            let gi = G_BITS.iter().position(|&b| b == seg);
             match (li, gi) {
                 (Some(li), None) => {
                     compressed[d] = li as u8;
@@ -181,10 +239,9 @@ impl UpceDecoder {
         }
 
         // Parity pattern -> (number system, UPC-A check digit).
-        let pat: String = parity.iter().map(|&p| p as char).collect();
-        let (ns, check) = if let Some(i) = PARITY_NS0.iter().position(|s| *s == pat) {
+        let (ns, check) = if let Some(i) = PARITY_NS0.iter().position(|s| s.as_bytes() == parity.as_slice()) {
             (0u8, i as u8)
-        } else if let Some(i) = PARITY_NS1.iter().position(|s| *s == pat) {
+        } else if let Some(i) = PARITY_NS1.iter().position(|s| s.as_bytes() == parity.as_slice()) {
             (1u8, i as u8)
         } else {
             return None;
@@ -206,10 +263,11 @@ impl UpceDecoder {
         self.votes.clear();
         for y in 0..image.height {
             self.scan_row(image, y);
-            if self.runs.len() < 33 {
-                continue;
+            if self.runs.len() < 34 {
+                continue; // leading paper run + 33 symbol runs
             }
-            for start in 0..=(self.runs.len() - 33) {
+            debug_assert!(!self.runs[0].0);
+            for start in (1..=(self.runs.len() - 33)).step_by(2) {
                 // Pre-filter: three ~equal 1-module guard runs up front.
                 let l0 = self.runs[start].1;
                 let l1 = self.runs[start + 1].1;
@@ -324,18 +382,6 @@ fn upca_check_valid(digits: &[u8; 12]) -> bool {
         sum += d as usize * if i % 2 == 0 { 3 } else { 1 };
     }
     (10 - sum % 10) % 10 == digits[11] as usize
-}
-
-/// Convert a 7-char module pattern to its bit representation (bit i = char i).
-fn seg_of(s: &str) -> u8 {
-    let bytes = s.as_bytes();
-    let mut v = 0u8;
-    for (i, &c) in bytes.iter().enumerate() {
-        if c == b'1' {
-            v |= 1 << i;
-        }
-    }
-    v
 }
 
 impl SymbologyDecoder for UpceDecoder {

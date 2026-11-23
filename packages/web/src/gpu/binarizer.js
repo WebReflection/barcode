@@ -43,15 +43,10 @@ const STAGE = /** @type {const} */ ({
   blurH: 256,
   blurV: 512,
   binarize: 768,
-  lumaSmall: 1024,
-  globalH: 1280,
-  globalV: 1536,
-  statsLuma: 1792,
-  histogram: 2048,
+  statsLuma: 1024,
+  histogram: 1280,
 });
-const UNIFORM_SLOTS = 9;
-/** Side of the tiny luma downsample the global-mean floor is computed on. */
-const SMALL = 64;
+const UNIFORM_SLOTS = 6;
 /**
  * Side of the luma probe the p2/p98 auto-levels statistic is computed on.
  * 64x64 percentiles are too noisy (they missed one synthetic dim set and,
@@ -82,8 +77,10 @@ export class GpuBinarizer {
   /** @type {number} */ #texW = 0;
   /** @type {number} */ #texH = 0;
   /** @type {number} */ #allocH = 0;
-  /** @type {{ uniform: GPUBuffer, luma: GPUBuffer, blurA: GPUBuffer, blurB: GPUBuffer, small: GPUBuffer, smallScratch: GPUBuffer, smallGlobal: GPUBuffer, statsLuma: GPUBuffer, hist: GPUBuffer, stretch: GPUBuffer, mask: GPUBuffer, staging: GPUBuffer } | null} */
+  /** @type {{ uniform: GPUBuffer, luma: GPUBuffer, blurA: GPUBuffer, blurB: GPUBuffer, statsLuma: GPUBuffer, hist: GPUBuffer, stretch: GPUBuffer, mask: GPUBuffer, staging: GPUBuffer } | null} */
   #bufs = null;
+  /** @type {{ statsLuma: GPUBindGroup, hist: GPUBindGroup, scan: GPUBindGroup, luma: GPUBindGroup, blurH: GPUBindGroup, blurV: GPUBindGroup, binarize: GPUBindGroup } | null} */
+  #groups = null;
 
   /**
    * @param {GPUDevice} device
@@ -170,6 +167,8 @@ export class GpuBinarizer {
   /** @param {number} dstW @param {number} dstH */
   #alloc(dstW, dstH) {
     const d = this.#device;
+    const srcTex = this.#srcTex;
+    if (!srcTex) throw new Error("Unreachable: texture missing.");
     const px = dstW * dstH;
     const maskBytes = Math.ceil(px / 32) * 4;
 
@@ -179,19 +178,15 @@ export class GpuBinarizer {
       old.luma.destroy();
       old.blurA.destroy();
       old.blurB.destroy();
-      old.small.destroy();
-      old.smallScratch.destroy();
-      old.smallGlobal.destroy();
       old.statsLuma.destroy();
       old.hist.destroy();
       old.stretch.destroy();
       old.mask.destroy();
       old.staging.destroy();
     }
-    const smallBytes = SMALL * SMALL * 4;
     const statsBytes = STATS * STATS * 4;
 
-    this.#bufs = {
+    const bufs = {
       uniform: d.createBuffer({
         size: 256 * UNIFORM_SLOTS,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -199,12 +194,6 @@ export class GpuBinarizer {
       luma: d.createBuffer({ size: px * 4, usage: GPUBufferUsage.STORAGE }),
       blurA: d.createBuffer({ size: px * 4, usage: GPUBufferUsage.STORAGE }),
       blurB: d.createBuffer({ size: px * 4, usage: GPUBufferUsage.STORAGE }),
-      // The global-mean floor lives on a tiny downsample: two full-extent
-      // box-mean passes over w*h pixels were O(frame) taps per pixel and
-      // saturated phone GPUs (readable as preview jank).
-      small: d.createBuffer({ size: smallBytes, usage: GPUBufferUsage.STORAGE }),
-      smallScratch: d.createBuffer({ size: smallBytes, usage: GPUBufferUsage.STORAGE }),
-      smallGlobal: d.createBuffer({ size: smallBytes, usage: GPUBufferUsage.STORAGE }),
       // Auto-levels: a 256x256 probe (never stretched itself), its histogram,
       // and the [lo, hi] the scan pass writes for the luma stage.
       statsLuma: d.createBuffer({ size: statsBytes, usage: GPUBufferUsage.STORAGE }),
@@ -221,6 +210,55 @@ export class GpuBinarizer {
         size: maskBytes,
         usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
       }),
+    };
+    this.#bufs = bufs;
+    // Cache texture view + bind groups across frames of the same geometry.
+    const srcView = srcTex.createView();
+    /** @param {number} offset @param {number} [size] */
+    const uniform = (offset, size = 16) => ({ buffer: bufs.uniform, offset, size });
+    /** @param {GPUComputePipeline} pipeline @param {GPUBindGroupEntry[]} entries */
+    const group = (pipeline, entries) =>
+      d.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries });
+    this.#groups = {
+      statsLuma: group(this.#lumaPipeline, [
+        { binding: 0, resource: srcView },
+        { binding: 1, resource: this.#sampler },
+        { binding: 2, resource: uniform(STAGE.statsLuma, 32) },
+        { binding: 3, resource: { buffer: bufs.statsLuma } },
+        { binding: 4, resource: { buffer: bufs.stretch } },
+      ]),
+      hist: group(this.#histPipeline, [
+        { binding: 0, resource: uniform(STAGE.histogram) },
+        { binding: 1, resource: { buffer: bufs.statsLuma } },
+        { binding: 2, resource: { buffer: bufs.hist } },
+      ]),
+      scan: group(this.#scanPipeline, [
+        { binding: 2, resource: { buffer: bufs.hist } },
+        { binding: 3, resource: { buffer: bufs.stretch } },
+      ]),
+      luma: group(this.#lumaPipeline, [
+        { binding: 0, resource: srcView },
+        { binding: 1, resource: this.#sampler },
+        { binding: 2, resource: uniform(STAGE.luma, 32) },
+        { binding: 3, resource: { buffer: bufs.luma } },
+        { binding: 4, resource: { buffer: bufs.stretch } },
+      ]),
+      blurH: group(this.#blurPipeline, [
+        { binding: 0, resource: uniform(STAGE.blurH) },
+        { binding: 1, resource: { buffer: bufs.luma } },
+        { binding: 2, resource: { buffer: bufs.blurA } },
+      ]),
+      blurV: group(this.#blurPipeline, [
+        { binding: 0, resource: uniform(STAGE.blurV) },
+        { binding: 1, resource: { buffer: bufs.blurA } },
+        { binding: 2, resource: { buffer: bufs.blurB } },
+      ]),
+      binarize: group(this.#binarizePipeline, [
+        { binding: 0, resource: uniform(STAGE.binarize, 32) },
+        { binding: 1, resource: { buffer: bufs.luma } },
+        { binding: 2, resource: { buffer: bufs.blurB } },
+        { binding: 3, resource: { buffer: bufs.mask } },
+      ]),
     };
     this.#allocW = dstW;
     this.#allocH = dstH;
@@ -270,8 +308,9 @@ export class GpuBinarizer {
       this.#alloc(w, h);
     }
     const bufs = this.#bufs;
+    const groups = this.#groups;
     const srcTex = this.#srcTex;
-    if (!bufs || !srcTex) throw new Error("Unreachable: buffers missing.");
+    if (!bufs || !groups || !srcTex) throw new Error("Unreachable: buffers missing.");
 
     const d = this.#device;
     const radius = Math.max(1, Math.floor(Math.min(w, h) / (2 * this.#windowDivisor)));
@@ -281,9 +320,7 @@ export class GpuBinarizer {
     const u = d.queue;
     u.writeBuffer(bufs.uniform, STAGE.luma, new Uint32Array([w, h, srcW, srcH, 1]));
     // The probe pass never stretches (apply=0), or the statistic would feed
-    // back into itself frame after frame. srcW/srcH = STATS (not 0 — 0 is
-    // the deliberate all-white pad used for the FIXED 0.5 floor pass) so the
-    // shader samples the whole frame over the probe grid.
+    // back into itself frame after frame.
     u.writeBuffer(
       bufs.uniform,
       STAGE.statsLuma,
@@ -292,24 +329,13 @@ export class GpuBinarizer {
     u.writeBuffer(bufs.uniform, STAGE.histogram, new Uint32Array([STATS, STATS]));
     u.writeBuffer(bufs.uniform, STAGE.blurH, new Uint32Array([w, h, radius, 0]));
     u.writeBuffer(bufs.uniform, STAGE.blurV, new Uint32Array([w, h, radius, 1]));
+    // Fixed luma < 0.5 rescue (load-bearing for faded thermal receipts; the
+    // glossy-label DataMatrix it loses is read on the CPU mask in worker.js).
     u.writeBuffer(
       bufs.uniform,
       STAGE.binarize,
-      new Uint32Array([w, h, Math.round(this.#threshold * 1000), 1000, 500, 1000, SMALL, SMALL]),
+      new Uint32Array([w, h, Math.round(this.#threshold * 1000), 1000, 500, 1000]),
     );
-    // The tiny luma downsample (the luma stage samples normalized UV, so a
-    // 64x64 destination averages the whole frame), then full-extent box
-    // means over those 4096 pixels. Only dstW/dstH are written on purpose:
-    // the luma shader reads srcW/srcH as 0, pads the whole plane white, and
-    // the binarize floor becomes the FIXED `luma < 0.5` rescue. That fixed
-    // floor is load-bearing for faded thermal receipts (2026-11-18 field
-    // corpus: a correct 0.5 x scene mean regressed receipt-qr-112247 and
-    // shipping-itf-115030). The glossy-label DataMatrix it loses is read on
-    // the CPU mask instead (see STILL_CPU_FAMILIES in api/worker.js) — do
-    // not "fix" this uniform without re-running the field corpus.
-    u.writeBuffer(bufs.uniform, STAGE.lumaSmall, new Uint32Array([SMALL, SMALL, 0, 0, 1]));
-    u.writeBuffer(bufs.uniform, STAGE.globalH, new Uint32Array([SMALL, SMALL, SMALL, 0]));
-    u.writeBuffer(bufs.uniform, STAGE.globalV, new Uint32Array([SMALL, SMALL, SMALL, 1]));
 
     d.queue.copyExternalImageToTexture(
       { source },
@@ -324,114 +350,30 @@ export class GpuBinarizer {
     enc.clearBuffer(bufs.mask, 0, maskBytes);
     // Histogram bins accumulate with atomicAdd: clear every frame.
     enc.clearBuffer(bufs.hist, 0, BINS * 4);
-    /** @param {number} offset @param {number} [size] */
-    const uniform = (offset, size = 16) => ({ buffer: bufs.uniform, offset, size });
 
     /**
      * @param {GPUComputePipeline} pipeline
-     * @param {GPUBindGroupEntry[]} entries
+     * @param {GPUBindGroup} bindGroup
      * @param {number} [gw] dispatch grid width (default frame width)
      * @param {number} [gh] dispatch grid height (default frame height)
      */
-    const pass = (pipeline, entries, gw = w, gh = h) => {
+    const pass = (pipeline, bindGroup, gw = w, gh = h) => {
       const bg = enc.beginComputePass();
       bg.setPipeline(pipeline);
-      bg.setBindGroup(0, d.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries }));
+      bg.setBindGroup(0, bindGroup);
       bg.dispatchWorkgroups(Math.ceil(gw / 8), Math.ceil(gh / 8));
       bg.end();
     };
 
     // Auto-levels statistic first: probe -> histogram -> p2/p98 scan. The
     // scan writes the [lo, hi] the luma stage then applies.
-    pass(
-      this.#lumaPipeline,
-      [
-        { binding: 0, resource: srcTex.createView() },
-        { binding: 1, resource: this.#sampler },
-        { binding: 2, resource: uniform(STAGE.statsLuma, 32) },
-        { binding: 3, resource: { buffer: bufs.statsLuma } },
-        { binding: 4, resource: { buffer: bufs.stretch } },
-      ],
-      STATS,
-      STATS,
-    );
-    pass(
-      this.#histPipeline,
-      [
-        { binding: 0, resource: uniform(STAGE.histogram) },
-        { binding: 1, resource: { buffer: bufs.statsLuma } },
-        { binding: 2, resource: { buffer: bufs.hist } },
-      ],
-      STATS,
-      STATS,
-    );
-    pass(
-      this.#scanPipeline,
-      [
-        { binding: 2, resource: { buffer: bufs.hist } },
-        { binding: 3, resource: { buffer: bufs.stretch } },
-      ],
-      1,
-      1,
-    );
-    pass(this.#lumaPipeline, [
-      { binding: 0, resource: srcTex.createView() },
-      { binding: 1, resource: this.#sampler },
-      { binding: 2, resource: uniform(STAGE.luma, 32) },
-      { binding: 3, resource: { buffer: bufs.luma } },
-      { binding: 4, resource: { buffer: bufs.stretch } },
-    ]);
-    pass(this.#blurPipeline, [
-      { binding: 0, resource: uniform(STAGE.blurH) },
-      { binding: 1, resource: { buffer: bufs.luma } },
-      { binding: 2, resource: { buffer: bufs.blurA } },
-    ]);
-    pass(this.#blurPipeline, [
-      { binding: 0, resource: uniform(STAGE.blurV) },
-      { binding: 1, resource: { buffer: bufs.blurA } },
-      { binding: 2, resource: { buffer: bufs.blurB } },
-    ]);
-    // Global-mean floor on the tiny downsample: luma pass into 64x64, then
-    // full-extent row/column means of those.
-    pass(
-      this.#lumaPipeline,
-      [
-        { binding: 0, resource: srcTex.createView() },
-        { binding: 1, resource: this.#sampler },
-        { binding: 2, resource: uniform(STAGE.lumaSmall, 32) },
-        { binding: 3, resource: { buffer: bufs.small } },
-        { binding: 4, resource: { buffer: bufs.stretch } },
-      ],
-      SMALL,
-      SMALL,
-    );
-    pass(
-      this.#blurPipeline,
-      [
-        { binding: 0, resource: uniform(STAGE.globalH) },
-        { binding: 1, resource: { buffer: bufs.small } },
-        { binding: 2, resource: { buffer: bufs.smallScratch } },
-      ],
-      SMALL,
-      SMALL,
-    );
-    pass(
-      this.#blurPipeline,
-      [
-        { binding: 0, resource: uniform(STAGE.globalV) },
-        { binding: 1, resource: { buffer: bufs.smallScratch } },
-        { binding: 2, resource: { buffer: bufs.smallGlobal } },
-      ],
-      SMALL,
-      SMALL,
-    );
-    pass(this.#binarizePipeline, [
-      { binding: 0, resource: uniform(STAGE.binarize, 32) },
-      { binding: 1, resource: { buffer: bufs.luma } },
-      { binding: 2, resource: { buffer: bufs.blurB } },
-      { binding: 3, resource: { buffer: bufs.mask } },
-      { binding: 4, resource: { buffer: bufs.smallGlobal } },
-    ]);
+    pass(this.#lumaPipeline, groups.statsLuma, STATS, STATS);
+    pass(this.#histPipeline, groups.hist, STATS, STATS);
+    pass(this.#scanPipeline, groups.scan, 1, 1);
+    pass(this.#lumaPipeline, groups.luma);
+    pass(this.#blurPipeline, groups.blurH);
+    pass(this.#blurPipeline, groups.blurV);
+    pass(this.#binarizePipeline, groups.binarize);
 
     enc.copyBufferToBuffer(bufs.mask, 0, bufs.staging, 0, maskBytes);
     d.queue.submit([enc.finish()]);
@@ -450,9 +392,6 @@ export class GpuBinarizer {
       old.luma.destroy();
       old.blurA.destroy();
       old.blurB.destroy();
-      old.small.destroy();
-      old.smallScratch.destroy();
-      old.smallGlobal.destroy();
       old.statsLuma.destroy();
       old.hist.destroy();
       old.stretch.destroy();

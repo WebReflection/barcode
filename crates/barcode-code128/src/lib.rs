@@ -45,6 +45,15 @@ const PATTERNS: [[u8; 6]; 107] = [
 
 const STOP7: [u8; 7] = [2, 3, 3, 1, 1, 1, 2];
 
+/// The three start values (103/104/105) as `(pattern, value)`. A bar window
+/// can only start a symbol when it matches one of these, so the start check
+/// never pays for the 107-pattern data search.
+const START_PATTERNS: [([u8; 6], u8); 3] = [
+    (PATTERNS[103], 103),
+    (PATTERNS[104], 104),
+    (PATTERNS[105], 105),
+];
+
 /// Closest-pattern tolerance (module units, squared for the averages):
 /// a character's six elements must average within 0.55 modules² and no
 /// single element may be off by more than 1.4 modules. Clean renders are
@@ -273,6 +282,73 @@ impl Code128Decoder {
         closest_pattern(&raw).map(|(err, v)| (v, unit, false, err))
     }
 
+    /// The start-only variant of [`char_value`]: bounds, unit, quiet zone,
+    /// then the three start patterns (exact rounding, else closest within
+    /// the same tolerances). Returns `(value, unit, exact, error)`.
+    fn start_value(&self, k: usize) -> Option<(u8, f32, bool, f32)> {
+        if k + 6 > self.runs.len() {
+            return None;
+        }
+        let sum: u32 = (0..6).map(|i| self.runs[k + i].1).sum();
+        let unit = sum as f32 / 11.0;
+        if unit < 1.0 {
+            return None;
+        }
+        // ISO/IEC 15417 quiet zone: the start must be preceded by white
+        // space, not by another symbol's bar. Without this, any 1D row with
+        // the right transition rhythm can supply a start pattern and the
+        // 1/103 checksum decides; `pharma-box` decoded `:52620` that way.
+        if k == 0
+            || self.runs[k - 1].0
+            || (self.runs[k - 1].1 as f32) < QUIET_MODULES * unit
+        {
+            return None;
+        }
+        let mut raw = [0f32; 6];
+        let mut exact = true;
+        for i in 0..6 {
+            raw[i] = self.runs[k + i].1 as f32 / unit;
+            let m = raw[i].round();
+            if !(1.0..=4.0).contains(&m) {
+                exact = false;
+            }
+        }
+        if exact {
+            let w = raw.map(|v| v.round() as u8);
+            if let Some((_, v)) = START_PATTERNS.iter().find(|(p, _)| *p == w) {
+                return Some((*v, unit, true, 0.0));
+            }
+        }
+        // Same cheap junk-window reject as `char_value`.
+        if raw.iter().any(|&v| v < 0.5 || v > 4.5) {
+            return None;
+        }
+        // Only pay for the full 107-pattern search when one of the three
+        // start patterns is actually within tolerance, then verify via
+        // `closest_pattern` that the start really IS the closest of all
+        // 107 patterns (exact equivalence with `char_value`, avoiding fuzzy
+        // false positives where a data pattern fits better than 103..=105).
+        let mut near_start = false;
+        for &(p, _) in START_PATTERNS.iter() {
+            let mut err = 0.0f32;
+            let mut worst = 0.0f32;
+            for i in 0..6 {
+                let d = raw[i] - p[i] as f32;
+                err += d * d;
+                worst = worst.max(d.abs());
+            }
+            if err / 6.0 <= CHAR_AVG_VARIANCE && worst <= ELEMENT_VARIANCE {
+                near_start = true;
+                break;
+            }
+        }
+        if !near_start {
+            return None;
+        }
+        let (err, v) = closest_pattern(&raw)?;
+        matches!(v, 103..=105).then_some((v, unit, false, err))
+    }
+
     /// The 7-run stop: 2,3,3,1,1,1,2 modules. Same closest-pattern
     /// tolerance as a character — the stop's shape is the end-of-symbol
     /// confirmation, and a ±1 module smear on the receipt must not lose an
@@ -320,21 +396,16 @@ impl Code128Decoder {
     }
 
     /// Decode a symbol whose first bar run is at `start`.
+    ///
+    /// The start is gated cheaply, in this order: enough runs → unit →
+    /// the ISO/IEC 15417 quiet zone → the three start patterns. The old
+    /// order ran the 107-pattern closest search on EVERY bar window of a
+    /// junk frame before the quiet zone could reject it; that search is
+    /// the 1D tier's dominant junk-frame cost.
     fn try_from(&self, start: usize) -> Option<Candidate> {
-        let (first, unit, mut exact, first_err) = self.char_value(start)?;
-        if !matches!(first, 103..=105) {
+        let Some((first, _unit, mut exact, first_err)) = self.start_value(start) else {
             return None;
-        }
-        // ISO/IEC 15417 quiet zone: the start must be preceded by white
-        // space, not by another symbol's bar. Without this, any 1D row with
-        // the right transition rhythm can supply a start pattern and the
-        // 1/103 checksum decides; `pharma-box` decoded `:52620` that way.
-        if start == 0
-            || self.runs[start - 1].0
-            || (self.runs[start - 1].1 as f32) < QUIET_MODULES * unit
-        {
-            return None;
-        }
+        };
         let _set = match first {
             103 => Set::A,
             104 => Set::B,
@@ -402,10 +473,8 @@ impl Code128Decoder {
             if self.runs.len() < 25 {
                 continue; // minimum: start + 1 data + check + stop
             }
-            for start in 0..self.runs.len() {
-                if !self.runs[start].0 {
-                    continue;
-                }
+            debug_assert!(!self.runs[0].0);
+            for start in (1..self.runs.len()).step_by(2) {
                 let Some(c) = self.try_from(start) else { continue };
                 let (count, exact, x0, x1, y0, y1, _score) = {
                     let e = self

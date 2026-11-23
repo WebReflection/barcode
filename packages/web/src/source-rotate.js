@@ -60,8 +60,10 @@ export async function rotateDrawable(source, deg) {
    * @param {{x: number, y: number}[]} points
    */
   const map = (fw, fh, points) => {
-    const sx = cw / fw;
-    const sy = ch / fh;
+    // The binarizer pads fitting sources 1:1 (fw >= cw) and only downscales
+    // sources larger than maxSize; mirror cropDrawable/mirrorDrawable.
+    const sx = cw <= fw ? 1 : cw / fw;
+    const sy = ch <= fh ? 1 : ch / fh;
     const cos = Math.cos(-rad);
     const sin = Math.sin(-rad);
     return points.map(({ x, y }) => {
