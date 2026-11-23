@@ -1,12 +1,13 @@
 [package]
 name = "barcode-microqr"
-description = "Clean-room Micro QR encoder (M1/M2 numeric, level L), MIT licensed"
+description = "Clean-room ISO/IEC 18004 Micro QR Code encoder and decoder, MIT licensed"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 barcode-core = { path = "../barcode-core" }
+barcode-qr = { path = "../barcode-qr" }
 
 [dev-dependencies]
 barcode-fixtures = { path = "../barcode-fixtures" }

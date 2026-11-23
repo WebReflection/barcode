@@ -91,6 +91,7 @@ version = "0.1.0"
 dependencies = [
  "barcode-core",
  "barcode-fixtures",
+ "barcode-qr",
 ]
 
 [[package]]

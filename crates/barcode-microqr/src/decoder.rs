@@ -1,17 +1,15 @@
-//! Micro QR decoder: single-finder detection → grid sampling →
-//! frame-matching decode.
-//!
-//! Design note: instead of parsing the format word, the decoder tries
-//! every (frame, mask class) candidate of the detected version and lets
-//! GF(2) consistency plus an exact re-encode comparison arbitrate. A
-//! symbol decodes iff some frame's affine model `cells = G·f ⊕ K`
-//! explains every data cell AND the rebuilt matrix matches the sampled
-//! grid exactly — the ECC embedded in G provides the redundancy.
+//! Micro QR decoder: single-finder detection → rolled grid sampling →
+//! ISO/IEC 18004 BCH format decode → GF(2^8) Reed-Solomon correction →
+//! multi-segment bitstream decode.
 
 use barcode_core::geometry as geom;
-use barcode_core::{BitImage, DecodeResult, Point, Symbology};
+use barcode_core::{BitImage, DecodeResult, Point, RowRuns, Symbology};
+use barcode_qr::rs::{rs_correct, rs_encode, Gf};
 
-use crate::frames::{self, Frame, FRAMES};
+use crate::{
+    count_bits, format_word, is_function, mask_bit, mode_bits, term_bits, Spec, Version, ALNUM,
+    FORMAT_COORDS, SPECS,
+};
 
 /// A located finder pattern: pixel coords of the symbol's module (0,0)
 /// top-left corner and the module pitch.
@@ -32,10 +30,15 @@ const FINDER_PAT: [[u8; 7]; 7] = [
     [1, 1, 1, 1, 1, 1, 1],
 ];
 
-/// Sample the ink at a pixel point (single pixel; canvas/quantized
-/// inputs are phase-correct by construction of the finder pitch).
+/// Sample the ink at a pixel point, returning `false` outside image bounds.
+#[inline]
 fn sample(image: &BitImage, x: f32, y: f32) -> bool {
-    image.ink(x.round() as u32, y.round() as u32)
+    let (xi, yi) = (x.round() as i64, y.round() as i64);
+    xi >= 0
+        && yi >= 0
+        && xi < i64::from(image.width)
+        && yi < i64::from(image.height)
+        && image.ink(xi as u32, yi as u32)
 }
 
 /// Verify the 7x7 finder pattern whose top-left module starts at
@@ -57,70 +60,45 @@ fn verify_finder(image: &BitImage, x0: f32, y0: f32, pitch: f32) -> bool {
     true
 }
 
-/// Locate the single Micro QR finder (top-left of the symbol).
+/// Locate the single Micro QR finder (7x7 1:1:3:1:1 pattern).
 pub fn find_finder(image: &BitImage) -> Option<Finder> {
+    let mut row = RowRuns::with_capacity(256);
     for y in 0..image.height {
-        let runs: Vec<(bool, u32)> = image.row_runs(y).collect();
-        if runs.len() < 5 {
+        row.scan_row(image, y);
+        let n = row.runs.len();
+        if n < 6 {
             continue;
         }
-        // prefix sums: left edge of run i
-        let mut edges = vec![0u32; runs.len() + 1];
-        for (i, (_, r)) in runs.iter().enumerate() {
-            edges[i + 1] = edges[i] + r;
-        }
-        for w in 0..=runs.len() - 5 {
-            let (c1, d1) = runs[w];
-            let (c2, l1) = runs[w + 1];
-            let (c3, d2) = runs[w + 2];
-            let (c4, l2) = runs[w + 3];
-            let (c5, d3) = runs[w + 4];
-            let matched = c1 && !c2 && c3 && !c4 && c5;
+        // In `RowRuns`, odd indices are always ink runs (index 0 is background).
+        let mut w = 1usize;
+        while w + 4 < n {
+            let d1 = row.runs[w].1;
+            let l1 = row.runs[w + 1].1;
+            let d2 = row.runs[w + 2].1;
+            let l2 = row.runs[w + 3].1;
+            let d3 = row.runs[w + 4].1;
             let u = d2 as f32 / 3.0;
             let ok = |v: u32, t: f32| (v as f32 - t).abs() <= 0.4 * u;
-            if !(matched && u >= 1.0 && ok(d1, u) && ok(l1, u) && ok(l2, u) && ok(d3, u))
-            {
-                continue;
-            }
-            let pitch = (d1 + l1 + d2 + l2 + d3) as f32 / 7.0;
-            let x = edges[w];
-            // the candidate row is finder row 2..=4; find the top edge
-            for top_off in 2..=4u32 {
-                let y0 = y as f32 - top_off as f32 * pitch;
-                if verify_finder(image, x as f32, y0, pitch) {
-                    return Some(Finder { x0: x as f32, y0, pitch });
+            if u >= 1.0 && ok(d1, u) && ok(l1, u) && ok(l2, u) && ok(d3, u) {
+                let pitch = (d1 + l1 + d2 + l2 + d3) as f32 / 7.0;
+                let x = row.offsets[w];
+                // Candidate row is finder row 2..=4; find the top edge.
+                for top_off in 2..=4u32 {
+                    let y0 = y as f32 - top_off as f32 * pitch;
+                    if verify_finder(image, x as f32, y0, pitch) {
+                        return Some(Finder { x0: x as f32, y0, pitch });
+                    }
                 }
             }
+            w += 2;
         }
     }
     None
 }
 
-/// Sample the module grid of a symbol whose module (0,0) starts at
-/// (fx, fy) with the given pitch; row-major 0/1 cells.
-fn sample_grid(image: &BitImage, fx: f32, fy: f32, pitch: f32, size: usize) -> Vec<u8> {
-    let mut cells = vec![0u8; size * size];
-    for j in 0..size {
-        for i in 0..size {
-            let px = fx + (i as f32 + 0.5) * pitch;
-            let py = fy + (j as f32 + 0.5) * pitch;
-            cells[j * size + i] = sample(image, px, py) as u8;
-        }
-    }
-    cells
-}
-
-/// The finder's frame: the symbol's in-plane roll and its module (0,0)
+/// The finder's frame: the symbol's in-plane roll and its finder (0,0)
 /// corner (origin), both from the two finder edges that border the quiet
-/// zone.
-///
-/// A rolled symbol defeats an axis-aligned sampler: at pitch 4 an 11-module
-/// symbol drifts a whole module across its far side by 4° (the phone tilt
-/// bank missed MicroQR at ±4°). The finder's outer top and left edges are
-/// straight lines against the quiet zone and are long (7 modules), so a
-/// least-squares fit gives the roll to ~0.5° at the smallest supported
-/// pitch; their intersection is the symbol's own corner. Only the roll is
-/// searched around this seed (the decode match is the arbiter).
+/// zone / separator, plus pitch from the central 3x3 block area.
 fn finder_frame(image: &BitImage, f: &Finder) -> Option<(f32, (f32, f32), f32)> {
     let p = f.pitch;
     if p <= 0.0 {
@@ -128,9 +106,6 @@ fn finder_frame(image: &BitImage, f: &Finder) -> Option<(f32, (f32, f32), f32)> 
     }
     let span = (7.0 * p).round() as i64;
     let (x0, y0) = (f.x0.round() as i64, f.y0.round() as i64);
-    // Scan domain: the finder's box with a couple of pixels of slack. The
-    // *middle* 60% restriction applies to the positions along the edge
-    // (away from the rounded corners), never to the scan depth.
     let (sx0, sy0) = ((x0 - 2).max(0), (y0 - 2).max(0));
     let (sx1, sy1) = (
         (x0 + span + 2).min(i64::from(image.width) - 1),
@@ -197,9 +172,6 @@ fn finder_frame(image: &BitImage, f: &Finder) -> Option<(f32, (f32, f32), f32)> 
     }
     let c = (m * uxy - uy * ux) / den2;
     let d = (ux - c * uy) / m;
-    // Perpendicular edges: their slopes must disagree by ~0° after
-    // mirroring (top slope = tan θ, left dx/dy = -tan θ). A large
-    // disagreement means one fit latched onto data/noise.
     let theta = 0.5 * (a.atan() - c.atan());
     if theta.abs() > 0.35 || (a.atan() + c.atan()).abs() > 0.1 {
         return None;
@@ -210,11 +182,6 @@ fn finder_frame(image: &BitImage, f: &Finder) -> Option<(f32, (f32, f32), f32)> 
     }
     let ox = ((c * b + d) / den3) as f32;
     let oy = (a * ox as f64 + b) as f32;
-    // Pitch from the finder's central 3x3 block area (~9p²). The run
-    // lengths that `find_finder` measures along a horizontal chord are
-    // quantised by ~7 pixel boundaries and read up to 4% long on a rolled
-    // symbol — enough to drift a module across the far side. Three
-    // modules' worth of area averages that error down to ~0.3%.
     let area = center_block_area(image, f);
     if area < 3.0 * p * p || area > 16.0 * p * p {
         return None;
@@ -226,8 +193,7 @@ fn finder_frame(image: &BitImage, f: &Finder) -> Option<(f32, (f32, f32), f32)> 
     Some((theta as f32, (ox, oy), pitch))
 }
 
-/// Area (pixels) of the finder's central 3x3 block: an isolated dark
-/// component one light ring away from the finder ring.
+/// Area (pixels) of the finder's central 3x3 block.
 fn center_block_area(image: &BitImage, f: &Finder) -> f32 {
     let p = f.pitch;
     let (sx, sy) = (
@@ -270,11 +236,8 @@ fn center_block_area(image: &BitImage, f: &Finder) -> f32 {
     n as f32
 }
 
-/// Sample a `size`x`size` symbol through an affine map that follows the
-/// symbol's own module axes (`theta` = in-plane roll), anchored on the
-/// finder's centre block. Uses the shared 3x3-majority sampler, so a
-/// one-pixel edge wobble does not flip a module. Returns the cells plus
-/// the symbol quad for the result position.
+/// Sample a `size`x`size` symbol through an affine map anchored at `anchor`
+/// with module pitch `pitch` and roll `theta` (radians).
 fn sample_rolled(
     image: &BitImage,
     anchor: (f32, f32),
@@ -296,18 +259,12 @@ fn sample_rolled(
         1.0,
     ];
     let cells: Vec<u8> = if pitch >= 6.0 {
-        // Field-scale modules: the shared 3x3-majority sampler absorbs a
-        // one-pixel print/camera wobble.
         geom::sample_grid(image, &h, size as u32, size as u32)
             .bits
             .iter()
             .map(|&b| b as u8)
             .collect()
     } else {
-        // At a 4px module a 3x3 window covers 75% of the cell, so any
-        // drift of a few tenths of a pixel flips the vote (measured: one
-        // module at p+0.01). The centre pixel is the faithful sample
-        // there, exactly as the old axis-aligned sampler did.
         let mut cells = Vec::with_capacity(size * size);
         for v in 0..size {
             for u in 0..size {
@@ -333,207 +290,330 @@ fn sample_rolled(
     (cells, quad)
 }
 
-/// Solve G·f = r over GF(2). G is N rows (cells) x C columns; None if
-/// inconsistent.
-fn solve_gf2(g: &[u8], n: usize, c: usize, r: &[u8]) -> Option<Vec<u8>> {
-    // augmented rows: c coefficient bits + 1 rhs bit, bit-packed
-    let words = (c + 1).div_ceil(64);
-    let mut aug: Vec<(Vec<u64>, bool)> = Vec::with_capacity(n);
-    for i in 0..n {
-        let mut row = vec![0u64; words];
-        for j in 0..c {
-            if g[i * c + j] == 1 {
-                row[j / 64] |= 1 << (j % 64);
+/// BCH(15, 5) format decode (min Hamming distance 7 → unique up to 3 bit errors).
+fn decode_format(cells: &[u8], size: usize, version: Version) -> Option<(&'static Spec, u8)> {
+    let mut raw = 0u16;
+    for &(x, y) in &FORMAT_COORDS {
+        raw = (raw << 1) | u16::from(cells[y * size + x] & 1);
+    }
+    let mut best_dist = u32::MAX;
+    let mut best = (0u8, 0u8);
+    for sym in 0..8u8 {
+        for mask in 0..4u8 {
+            let d = (raw ^ format_word(sym, mask)).count_ones();
+            if d < best_dist {
+                best_dist = d;
+                best = (sym, mask);
             }
         }
-        aug.push((row, r[i] == 1));
     }
-    let mut pivots = vec![usize::MAX; c];
-    let mut used = vec![false; n];
-    let mut rank = 0usize;
-    for col in 0..c {
-        let Some(pi) = (0..n).find(|&ri| !used[ri] && (aug[ri].0[col / 64] >> (col % 64)) & 1 == 1)
-        else {
-            continue;
-        };
-        aug.swap(rank, pi);
-        used[rank] = true;
-        let prow = aug[rank].0.clone();
-        for ri in 0..n {
-            if ri != rank && (aug[ri].0[col / 64] >> (col % 64)) & 1 == 1 {
-                for w in 0..words {
-                    aug[ri].0[w] ^= prow[w];
-                }
-                aug[ri].1 ^= aug[rank].1;
-            }
+    if best_dist > 3 {
+        return None;
+    }
+    let spec = &SPECS[best.0 as usize];
+    if spec.version != version {
+        return None;
+    }
+    Some((spec, best.1))
+}
+
+/// Parse ISO/IEC 18004 Micro QR data segments and verify terminator + padding.
+fn parse_bits(data_cws: &[u8], spec: &Spec) -> Option<Vec<u8>> {
+    // Expand data codewords back into exact `spec.data_bits` bits.
+    let full_bytes = spec.dc - usize::from(spec.half_last);
+    let mut bits = Vec::with_capacity(spec.data_bits);
+    for &byte in &data_cws[..full_bytes] {
+        for i in (0..8).rev() {
+            bits.push((byte >> i) & 1);
         }
-        pivots[col] = rank;
-        rank += 1;
     }
-    for (row, rbit) in &aug {
-        let coeff_zero = (0..c).all(|j| (row[j / 64] >> (j % 64)) & 1 == 0);
-        if coeff_zero && *rbit {
+    if spec.half_last {
+        let last = data_cws[full_bytes];
+        // The 4 low bits of M1/M3's half-codeword are structurally always 0.
+        if last & 0x0F != 0 {
             return None;
         }
-    }
-    let mut f = vec![0u8; c];
-    for (col, &pr) in pivots.iter().enumerate() {
-        if pr != usize::MAX {
-            f[col] = aug[pr].1 as u8;
+        for i in (4..8).rev() {
+            bits.push((last >> i) & 1);
         }
     }
-    Some(f)
-}
 
-/// Rebuild the full module matrix for a frame/field/class.
-fn build_matrix(frame: &Frame, version: u8, f: &[u8], k: &[u8]) -> Vec<u8> {
-    let (size, tmpl) = frames::tmpl(version);
-    let mut m = tmpl.to_vec();
-    for &(x, y, val) in frame.fill {
-        m[y as usize * size + x as usize] = val;
-    }
-    for (i, &(x, y)) in frame.data.iter().enumerate() {
-        let mut bit = 0u32;
-        for j in 0..frame.cols {
-            if f[j] == 1 {
-                bit ^= frame.g[i * frame.cols + j] as u32;
-            }
+    let total = bits.len();
+    let mut pos = 0usize;
+    let take = |pos: &mut usize, n: usize| -> Option<u32> {
+        if *pos + n > total {
+            return None;
         }
-        m[y as usize * size + x as usize] = (bit ^ k[i] as u32) as u8;
-    }
-    m
-}
+        let mut v = 0u32;
+        for _ in 0..n {
+            v = (v << 1) | u32::from(bits[*pos]);
+            *pos += 1;
+        }
+        Some(v)
+    };
 
-/// Decode a sampled module grid (row-major 0/1) of the given size;
-/// returns the payload bytes.
-fn decode_grid(cells: &[u8], size: usize) -> Option<Vec<u8>> {
-    let version = match size {
-        11 => 1,
-        13 => 2,
-        15 => 3,
-        17 => 4,
-        _ => return None,
-    };
-    let levels: &[u8] = match version {
-        1 => &[1],
-        2 => &[1, 2],
-        3 => &[1, 2],
-        _ => &[1, 2, 3],
-    };
-    for (key, frame) in FRAMES.iter() {
-        let (v, lv, _mode, _len) = (key[0], key[1], key[2], key[3]);
-        if v != version || !levels.contains(&lv) {
-            continue;
-        }
-        let n = frame.data.len();
-        // Cheap reject: the fixed modules (finder, format/timing) are
-        // listed in `fill` for every frame. A wrong version hypothesis or
-        // a mis-rolled sample dies here for ~70 comparisons instead of
-        // paying for the GF(2) solve on every frame — the roll search
-        // makes that path hot.
-        if frame
-            .fill
-            .iter()
-            .any(|&(x, y, val)| cells[y as usize * size + x as usize] != val)
-        {
-            continue;
-        }
-        for k in frame.ks {
-            let mut r = vec![0u8; n];
-            for (i, &(x, y)) in frame.data.iter().enumerate() {
-                r[i] = cells[y as usize * size + x as usize] ^ k[i];
-            }
-            let Some(f) = solve_gf2(frame.g, n, frame.cols, &r) else {
-                continue;
-            };
-            let Some(payload) = fields_to_payload(frame, &f) else {
-                continue;
-            };
-            if build_matrix(frame, version, &f, k) == cells {
-                return Some(payload);
-            }
-        }
-    }
-    None
-}
+    let mb = mode_bits(spec.version);
+    let tb = term_bits(spec.version);
+    let mut out = Vec::new();
 
-/// Decode the field values out of a solved f vector; payload bytes if
-/// every field value is in range.
-fn fields_to_payload(frame: &Frame, f: &[u8]) -> Option<Vec<u8>> {
-    let mode = frame.mode;
-    let len = frame.len as usize;
-    let mode = match mode {
-        0 => crate::Mode::Numeric,
-        1 => crate::Mode::Alnum,
-        _ => crate::Mode::Byte,
-    };
-    let fw = crate::fields(len, mode);
-    const ALNUM: &[u8; 45] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
-    let mut out = Vec::with_capacity(len);
-    let mut idx = 0usize;
-    for &(n, width) in &fw {
-        let mut v: u32 = 0;
-        for e in 0..width {
-            let bit = if frame.msb_first { f[idx + width - 1 - e] } else { f[idx + e] };
-            if bit == 1 {
-                v |= 1 << e;
+    while pos < total {
+        let rem = total - pos;
+        if rem < tb {
+            // Truncated terminator at end of capacity: remaining bits must be 0.
+            if bits[pos..total].iter().any(|&b| b != 0) {
+                return None;
             }
+            pos = total;
+            break;
         }
-        idx += width;
+        // Full terminator: `tb` consecutive zero bits (equivalently mode=0, count=0).
+        if bits[pos..pos + tb].iter().all(|&b| b == 0) {
+            pos += tb;
+            break;
+        }
+        let mode = if mb == 0 { 0u8 } else { take(&mut pos, mb)? as u8 };
+        let cb = count_bits(spec.version, mode)?;
+        let count = take(&mut pos, cb)? as usize;
+        if count == 0 {
+            return None;
+        }
         match mode {
-            crate::Mode::Numeric => {
-                if v >= 10u32.pow(n as u32) {
-                    return None;
+            0 => {
+                // Numeric
+                let mut left = count;
+                while left >= 3 {
+                    let v = take(&mut pos, 10)?;
+                    if v >= 1000 {
+                        return None;
+                    }
+                    out.push(b'0' + (v / 100) as u8);
+                    out.push(b'0' + ((v / 10) % 10) as u8);
+                    out.push(b'0' + (v % 10) as u8);
+                    left -= 3;
                 }
-                let mut ds = [0u8; 3];
-                let mut vv = v;
-                for k in (0..n).rev() {
-                    ds[k] = b'0' + (vv % 10) as u8;
-                    vv /= 10;
+                if left == 2 {
+                    let v = take(&mut pos, 7)?;
+                    if v >= 100 {
+                        return None;
+                    }
+                    out.push(b'0' + (v / 10) as u8);
+                    out.push(b'0' + (v % 10) as u8);
+                } else if left == 1 {
+                    let v = take(&mut pos, 4)?;
+                    if v >= 10 {
+                        return None;
+                    }
+                    out.push(b'0' + v as u8);
                 }
-                out.extend_from_slice(&ds[..n]);
             }
-            crate::Mode::Alnum => {
-                if n == 2 {
+            1 => {
+                // Alphanumeric
+                let mut left = count;
+                while left >= 2 {
+                    let v = take(&mut pos, 11)?;
                     if v >= 45 * 45 {
                         return None;
                     }
                     out.push(ALNUM[(v / 45) as usize]);
                     out.push(ALNUM[(v % 45) as usize]);
-                } else {
+                    left -= 2;
+                }
+                if left == 1 {
+                    let v = take(&mut pos, 6)?;
                     if v >= 45 {
                         return None;
                     }
                     out.push(ALNUM[v as usize]);
                 }
             }
-            crate::Mode::Byte => out.push(v as u8),
+            2 => {
+                // Byte
+                for _ in 0..count {
+                    out.push(take(&mut pos, 8)? as u8);
+                }
+            }
+            _ => return None,
         }
     }
+
+    if out.is_empty() {
+        return None;
+    }
+
+    // Verify ISO/IEC 18004 padding after terminator:
+    // 1) zero bit-padding up to the next 8-bit boundary (or end of capacity)
+    let full_bits = full_bytes * 8;
+    if pos < full_bits {
+        let pad_zero_end = (pos.div_ceil(8) * 8).min(full_bits);
+        if bits[pos..pad_zero_end].iter().any(|&b| b != 0) {
+            return None;
+        }
+        pos = pad_zero_end;
+        // 2) alternating 0xEC / 0x11 pad codewords
+        let mut pad_idx = 0usize;
+        while pos < full_bits {
+            let cw = take(&mut pos, 8)? as u8;
+            let want = if pad_idx % 2 == 0 { 0xEC } else { 0x11 };
+            if cw != want {
+                return None;
+            }
+            pad_idx += 1;
+        }
+    }
+    // 3) trailing 4-bit codeword padding (M1/M3) must be all zeros
+    if bits[pos..total].iter().any(|&b| b != 0) {
+        return None;
+    }
+
     Some(out)
 }
 
-/// Decode Micro QR symbols from a bilevel image. Returns all decodes
-/// (normally 0 or 1).
+/// Decode a sampled module grid (row-major 0/1) of the given size (`11, 13, 15, 17`);
+/// returns the decoded payload bytes.
+pub fn decode_grid(cells: &[u8], size: usize) -> Option<Vec<u8>> {
+    let version = match size {
+        11 => Version::M1,
+        13 => Version::M2,
+        15 => Version::M3,
+        17 => Version::M4,
+        _ => return None,
+    };
+    if cells.len() != size * size {
+        return None;
+    }
+
+    // Cheap structural reject: verify timing patterns and finder separator.
+    let max_timing_err = if version == Version::M1 { 1 } else { 2 };
+    let mut timing_err = 0usize;
+    for k in 8..size {
+        let want = u8::from(k % 2 == 0);
+        if cells[k] != want {
+            timing_err += 1;
+        }
+        if cells[k * size] != want {
+            timing_err += 1;
+        }
+        if timing_err > max_timing_err {
+            return None;
+        }
+    }
+    let max_sep_err = if version == Version::M1 { 2 } else { 3 };
+    let mut sep_err = 0usize;
+    for k in 0..=7 {
+        if cells[7 * size + k] != 0 {
+            sep_err += 1;
+        }
+        if k < 7 && cells[k * size + 7] != 0 {
+            sep_err += 1;
+        }
+        if sep_err > max_sep_err {
+            return None;
+        }
+    }
+
+    // 1. Decode 15-bit BCH format word (spec + mask).
+    let (spec, mask) = decode_format(cells, size, version)?;
+
+    // 2. Read zigzag stream and unmask.
+    let total_bits = spec.data_bits + spec.ec * 8;
+    let mut stream = Vec::with_capacity(total_bits);
+    let mut up = true;
+    let mut col = size - 1;
+    while col >= 1 {
+        for step in 0..size - 1 {
+            let y = if up { size - 1 - step } else { 1 + step };
+            for x in [col, col - 1] {
+                if is_function(x, y) {
+                    continue;
+                }
+                let bit = (cells[y * size + x] & 1) ^ u8::from(mask_bit(mask, x, y));
+                stream.push(bit);
+            }
+        }
+        up = !up;
+        if col < 2 {
+            break;
+        }
+        col -= 2;
+    }
+    if stream.len() != total_bits {
+        return None;
+    }
+
+    // 3. Pack data + EC codewords (M1/M3's 4-bit codeword in the upper nibble).
+    let full_bytes = spec.dc - usize::from(spec.half_last);
+    let mut cws = Vec::with_capacity(spec.dc + spec.ec);
+    for chunk in stream[..full_bytes * 8].chunks_exact(8) {
+        cws.push(chunk.iter().fold(0u8, |acc, &b| (acc << 1) | b));
+    }
+    if spec.half_last {
+        let nib = stream[full_bytes * 8..spec.data_bits]
+            .iter()
+            .fold(0u8, |acc, &b| (acc << 1) | b);
+        cws.push(nib << 4);
+    }
+    for chunk in stream[spec.data_bits..].chunks_exact(8) {
+        cws.push(chunk.iter().fold(0u8, |acc, &b| (acc << 1) | b));
+    }
+
+    // 4. Reed-Solomon verification / error correction via `barcode_qr::rs`.
+    let gf = Gf::new();
+    if spec.ec == 2 {
+        // M1 is error detection only (ISO/IEC 18004 Table 1): require 0 errors.
+        if rs_encode(&gf, &cws[..spec.dc], 2) != cws[spec.dc..] {
+            return None;
+        }
+    } else {
+        rs_correct(&gf, &mut cws, spec.ec)?;
+    }
+
+    // 5. Decode data segments and strictly verify terminator + padding.
+    parse_bits(&cws[..spec.dc], spec)
+}
+
+/// Try all 4 cardinal orientations around a located finder frame `(origin, pitch, theta)`.
+fn try_orientations(
+    image: &BitImage,
+    origin: (f32, f32),
+    pitch: f32,
+    theta: f32,
+) -> Option<(Vec<u8>, [Point; 4])> {
+    let (s, c) = (theta.sin(), theta.cos());
+    let span = 7.0 * pitch;
+    // Finder local corners (0,0), (7,0), (7,7), (0,7) for 0°/90°/180°/270° CW.
+    let orientations = [
+        (origin, theta),
+        ((origin.0 + span * c, origin.1 + span * s), theta + std::f32::consts::FRAC_PI_2),
+        (
+            (origin.0 + span * (c - s), origin.1 + span * (s + c)),
+            theta + std::f32::consts::PI,
+        ),
+        (
+            (origin.0 - span * s, origin.1 + span * c),
+            theta + 3.0 * std::f32::consts::FRAC_PI_2,
+        ),
+    ];
+    for (anchor, angle) in orientations {
+        for size in [11usize, 13, 15, 17] {
+            let (cells, quad) = sample_rolled(image, anchor, pitch, angle, size);
+            if let Some(payload) = decode_grid(&cells, size) {
+                return Some((payload, quad));
+            }
+        }
+    }
+    None
+}
+
+/// Decode Micro QR symbols from a bilevel image. Returns 0 or 1 result.
 pub fn decode(image: &BitImage) -> Vec<DecodeResult> {
     let mut out = Vec::new();
     let Some(finder) = find_finder(image) else {
         return out;
     };
-    // Users hold phones, not tripods. The centre block pins the grid
-    // exactly and seeds the roll; refine that seed by ±2° and let the
-    // exact frame match arbitrate. The old axis-aligned sampler tolerated
-    // only ~2° at the smallest pitch — beyond that the far side of an
-    // 11-module symbol drifts a whole module (the phone tilt bank missed
-    // MicroQR at ±4°, where a desktop GPU happened to get away with it).
     if let Some((seed, origin, pitch)) = finder_frame(image, &finder) {
         for off in [0.0f32, -0.5, 0.5, -1.0, 1.0, -1.5, 1.5, -2.0, 2.0] {
             let theta = seed + f32::to_radians(off);
-            for size in [11usize, 13, 15, 17] {
-                let (cells, quad) = sample_rolled(image, origin, pitch, theta, size);
-                let Some(payload) = decode_grid(&cells, size) else {
-                    continue;
-                };
+            if let Some((payload, quad)) = try_orientations(image, origin, pitch, theta) {
                 let text = barcode_core::payload_text(&payload);
                 out.push(DecodeResult {
                     symbology: Symbology::QRCodeMicro,
@@ -546,34 +626,15 @@ pub fn decode(image: &BitImage) -> Vec<DecodeResult> {
         }
         return out;
     }
-    // No isolated centre block (the finder's white ring is broken, e.g. a
-    // heavy smear): keep the axis-aligned sampler as a last resort.
-    for size in [11usize, 13, 15, 17] {
-        let cells = sample_grid(image, finder.x0, finder.y0, finder.pitch, size);
-        let Some(payload) = decode_grid(&cells, size) else {
-            continue;
-        };
+    // Fallback axis-aligned sampler when the finder's central block is smeared.
+    if let Some((payload, quad)) = try_orientations(image, (finder.x0, finder.y0), finder.pitch, 0.0) {
         let text = barcode_core::payload_text(&payload);
-        let p = finder.pitch;
-        let e = finder.x0 + size as f32 * p;
-        let s = finder.y0 + size as f32 * p;
         out.push(DecodeResult {
             symbology: Symbology::QRCodeMicro,
             raw: payload,
             text,
-            position: [
-                Point { x: finder.x0, y: finder.y0 },
-                Point { x: e, y: finder.y0 },
-                Point { x: e, y: s },
-                Point { x: finder.x0, y: s },
-            ],
+            position: quad,
         });
-        break;
     }
     out
-}
-
-/// Debug access (examples/tests): expose the solver.
-pub fn solve_gf2_pub(g: &[u8], n: usize, c: usize, r: &[u8]) -> Option<Vec<u8>> {
-    solve_gf2(g, n, c, r)
 }
