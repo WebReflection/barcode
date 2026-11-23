@@ -632,6 +632,20 @@ mod tests {
         let canvas = barcode_fixtures::encode_ean13("0036000291452", 3, 24, 33);
         assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some("0036000291452"));
     }
+
+    /// The UPC-A report trims the EAN-13 leading 0 from BOTH the text and
+    /// the exact payload bytes; a stale `raw` re-encoded a different code.
+    #[test]
+    fn upca_report_trims_raw_too() {
+        let canvas = barcode_fixtures::encode_ean13("0036000291452", 3, 24, 33);
+        let bits = canvas.bits();
+        let img = BitImage::new(canvas.width, canvas.height, &bits);
+        let mut d = UpcaDecoder::new(1);
+        let got = d.decode(&img).into_iter().next().expect("upca");
+        assert_eq!(got.symbology, Symbology::UPCA);
+        assert_eq!(got.text, "036000291452");
+        assert_eq!(got.raw, b"036000291452");
+    }
 }
 
 #[cfg(test)]
@@ -772,6 +786,9 @@ impl SymbologyDecoder for UpcaDecoder {
             .map(|mut r| {
                 r.symbology = Symbology::UPCA;
                 r.text.remove(0);
+                // `raw` is the exact payload bytes: for a linear symbology
+                // that is the trimmed text, never the EAN-13 form.
+                r.raw = r.text.as_bytes().to_vec();
                 r
             })
             .collect()

@@ -424,7 +424,12 @@ impl BarcodeScanner {
             // diagonal still gets its slice.
             if two_d.is_empty() && diagonal_sensitive {
                 let budget = if still {
-                    diagonal_budget
+                    // A slow primary sweep can already have spent this
+                    // polarity's wall budget (its fixed per-step costs are
+                    // not sample-charged); the two ±45° supersampled passes
+                    // must not run past the caller's deadline.
+                    let left = still_budget_ms.saturating_sub(now_ms().saturating_sub(start));
+                    diagonal_budget.min(left)
                 } else {
                     let elapsed = now_ms().saturating_sub(t0);
                     LIVE_DIAGONAL_MS.min(LIVE_DIAGONAL_DEADLINE_MS.saturating_sub(elapsed))
@@ -594,9 +599,9 @@ fn rotated_supersampled(img: &BitImage, deg: f64) -> Vec<u8> {
     data
 }
 
-/// The canonical symbology names, in a stable order. Results carry these
-/// (title-cased via the debug format); the `formats` API accepts the
-/// lowercase forms with "qr" accepted as an alias for "qrcode".
+/// The canonical symbology names, in a stable order. Results carry exactly
+/// these lowercase names; the `formats` API accepts the same forms with
+/// "qr" accepted as an alias for "qrcode".
 pub const SYMBOLOGIES: [&str; 19] = [
     "qrcode", "microqr", "upca", "datamatrix", "aztec", "pdf417", "ean13", "ean8", "upce", "code39",
     "code32", "code93", "code128", "itf", "codabar", "databar", "databarltd", "databarstk",

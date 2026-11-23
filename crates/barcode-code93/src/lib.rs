@@ -278,7 +278,8 @@ fn pair_ascii(shift: u8, base: u8) -> Option<char> {
     let b = basic_char(base);
     let c = match shift {
         43 => match b {
-            'A'..='Z' => b'A' as u32 + (b as u32 - 'A' as u32) + 1,
+            // ($)A..=Z carry U+0001..=U+001A, not the shifted letters.
+            'A'..='Z' => (b as u32 - 'A' as u32) + 1,
             _ => return None,
         },
         44 => match b {
@@ -433,6 +434,21 @@ mod tests {
         // lowercase letters and punctuation need shift pairs
         let canvas = barcode_fixtures::encode_code93("Invoice-A1 (net 42)", 3, 30);
         assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some("Invoice-A1 (net 42)"));
+    }
+
+    /// The ($)A..=Z pair carries U+0001..=U+001A. The decoder used to map
+    /// those to the shifted letters ('B'..='['), so control-byte payloads
+    /// read back as garbage — the round-trip was broken, not the encoder.
+    #[test]
+    fn round_trip_control_bytes() {
+        for text in ["\u{01}", "\u{1a}", "\u{01}\u{1a}AB", "\u{0a}\u{0d}"] {
+            let canvas = barcode_fixtures::encode_code93(text, 4, 30);
+            assert_eq!(
+                decode_canvas(&canvas, 2).as_deref(),
+                Some(text),
+                "{text:?}"
+            );
+        }
     }
 
     #[test]
