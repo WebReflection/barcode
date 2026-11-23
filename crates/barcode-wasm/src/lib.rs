@@ -1628,7 +1628,10 @@ pub fn qr_brute_force_format(width: usize, height: usize, data: &[u8]) -> Result
 
 /// Smallest Micro QR tier that accepts `text`, rendered with a 4-module
 /// quiet zone. Shared by the fixture arm and the round-trip test.
-fn microqr_canvas(text: &str, module: u32) -> Result<Canvas, JsValue> {
+fn microqr_canvas(text: &str, module: u32) -> Result<Canvas, String> {
+    if module == 0 || module > 64 {
+        return Err("module must be 1..=64".into());
+    }
     use barcode_microqr::{encode, Level, Version};
     const TIERS: [(Version, Level); 8] = [
         (Version::M1, Level::L),
@@ -1643,7 +1646,7 @@ fn microqr_canvas(text: &str, module: u32) -> Result<Canvas, JsValue> {
     let sym = TIERS
         .iter()
         .find_map(|&(v, l)| encode(text, v, l, None))
-        .ok_or_else(|| JsValue::from_str("payload too large for Micro QR"))?;
+        .ok_or_else(|| "payload too large for Micro QR".to_string())?;
     let quiet = 4u32;
     let dim = (sym.size as u32 + 2 * quiet) * module;
     let mut c = Canvas::new(dim, dim);
@@ -1706,25 +1709,24 @@ impl Default for EncOptions {
 }
 
 impl EncOptions {
-    fn validate(self) -> Result<Self, JsValue> {
-        let bad = |m: &str| JsValue::from_str(m);
+    fn validate(self) -> Result<Self, String> {
         if !(-1..=3).contains(&self.ec) {
-            return Err(bad("ec must be L, M, Q or H"));
+            return Err("ec must be L, M, Q or H".into());
         }
         if !(-1..=7).contains(&self.mask) {
-            return Err(bad("mask must be 0..7"));
+            return Err("mask must be 0..7".into());
         }
         if !(0..=40).contains(&self.version) {
-            return Err(bad("version must be 1..40"));
+            return Err("version must be 1..40".into());
         }
         if !(-1..=8).contains(&self.level) {
-            return Err(bad("level must be 0..8 (PDF417)"));
+            return Err("level must be 0..8 (PDF417)".into());
         }
         if !(0..=30).contains(&self.columns) {
-            return Err(bad("columns must be 1..30 (PDF417)"));
+            return Err("columns must be 1..30 (PDF417)".into());
         }
         if self.rows < 0 || self.cols < 0 || (self.rows == 0) != (self.cols == 0) {
-            return Err(bad("rows and cols must both be set, or both 0"));
+            return Err("rows and cols must both be set, or both 0".into());
         }
         Ok(self)
     }
@@ -1778,76 +1780,81 @@ pub fn encode_fixture_opts(
     rows: i32,
     cols: i32,
 ) -> Result<JsValue, JsValue> {
-    let o = EncOptions { ec, mask, version, level, columns, rows, cols }.validate()?;
-    encode_fixture_impl(symbology, text, module, height, o)
+    let o = EncOptions { ec, mask, version, level, columns, rows, cols }
+        .validate()
+        .map_err(|e| JsValue::from_str(&e))?;
+    let canvas = encode_text_canvas(symbology, text, module, height, o)
+        .map_err(|e| JsValue::from_str(&e))?;
+    fixture_enc(canvas)
 }
 
-fn encode_fixture_impl(
+/// Panic-free text specimen builder (natively testable, returns `Result<Canvas, String>`).
+fn encode_text_canvas(
     symbology: &str,
     text: &str,
     module: u32,
     height: u32,
     o: EncOptions,
-) -> Result<JsValue, JsValue> {
+) -> Result<Canvas, String> {
+    if module == 0 || module > 64 || height == 0 || height > 8192 {
+        return Err("invalid render dimensions".into());
+    }
+    if text.is_empty() {
+        return Err("empty payload".into());
+    }
     let quiet = 10 * module;
-    let canvas = match symbology {
-        "ean13" => barcode_fixtures::encode_ean13(text, module, height, quiet),
-        "code39" => barcode_fixtures::encode_code39(text, module, 3.0, height),
-        "code32" => {
-            let raw = code32_raw(text)
-                .ok_or_else(|| JsValue::from_str("code32 needs A + 9 digits with a valid check digit"))?;
-            barcode_fixtures::encode_code39(&raw, module, 3.0, height)
+    let parse_databar13 = || -> Result<u64, &'static str> {
+        if text.len() != 13 || !text.bytes().all(|b| b.is_ascii_digit()) {
+            return Err("invalid databar payload");
         }
-        "itf" => barcode_fixtures::encode_itf(text, module, 2.5, height),
-        "code128" => barcode_fixtures::encode_code128(text, module, height),
-        "code93" => barcode_fixtures::encode_code93(text, module, height),
-        "codabar" => barcode_fixtures::encode_codabar(text, module, 2.5, height),
-        "ean8" => barcode_fixtures::encode_ean8(text, module, height, 10 * module),
-        "upce" => barcode_fixtures::encode_upce(text, module, height, 10 * module),
-        "upca" => barcode_fixtures::encode_upca(text, module, height, 10 * module),
+        text.parse::<u64>().map_err(|_| "invalid databar payload")
+    };
+    let canvas = match symbology {
+        "ean13" => barcode_fixtures::try_encode_ean13(text, module, height, quiet)?,
+        "code39" => barcode_fixtures::try_encode_code39(text, module, 3.0, height)?,
+        "code32" => {
+            let raw = code32_raw(text).ok_or("invalid code32 payload")?;
+            barcode_fixtures::try_encode_code39(&raw, module, 3.0, height)?
+        }
+        "itf" => barcode_fixtures::try_encode_itf(text, module, 2.5, height)?,
+        "code128" => barcode_fixtures::try_encode_code128(text, module, height)?,
+        "code93" => barcode_fixtures::try_encode_code93(text, module, height)?,
+        "codabar" => barcode_fixtures::try_encode_codabar(text, module, 2.5, height)?,
+        "ean8" => barcode_fixtures::try_encode_ean8(text, module, height, quiet)?,
+        "upce" => barcode_fixtures::try_encode_upce(text, module, height, quiet)?,
+        "upca" => barcode_fixtures::try_encode_upca(text, module, height, quiet)?,
         "databar" | "databaromni" => {
-            if text.len() != 13 || !text.bytes().all(|b| b.is_ascii_digit()) {
-                return Err(JsValue::from_str("databar needs exactly 13 digits"));
-            }
-            let v: u64 = text.parse().map_err(|_| JsValue::from_str("bad databar value"))?;
-            let runs = barcode_fixtures::databar_omni_runs(v);
-            barcode_fixtures::databar_omni_canvas(&runs, module, height, 10 * module)
+            let v = parse_databar13()?;
+            let runs = barcode_fixtures::try_databar_omni_runs(v)?;
+            barcode_fixtures::databar_omni_canvas(&runs, module, height, quiet)
         }
         "databarltd" | "databarlimited" => {
-            if text.len() != 13 || !text.bytes().all(|b| b.is_ascii_digit()) {
-                return Err(JsValue::from_str("databarltd needs exactly 13 digits"));
-            }
-            let v: u64 = text.parse().map_err(|_| JsValue::from_str("bad databar value"))?;
-            let runs = barcode_fixtures::databar_ltd_runs(v);
-            barcode_fixtures::databar_ltd_canvas(&runs, module, height, 10 * module)
+            let v = parse_databar13()?;
+            let runs = barcode_fixtures::try_databar_ltd_runs(v)?;
+            barcode_fixtures::databar_ltd_canvas(&runs, module, height, quiet)
         }
         "databarstk" | "databarstacked" => {
-            let v: u64 = text.parse().map_err(|_| JsValue::from_str("bad databar value"))?;
-            let runs = barcode_fixtures::databar_omni_runs(v);
-            barcode_fixtures::databar_stacked_canvas(&runs, module, 10 * module, false)
+            let v = parse_databar13()?;
+            let runs = barcode_fixtures::try_databar_omni_runs(v)?;
+            barcode_fixtures::databar_stacked_canvas(&runs, module, quiet, false)
         }
         "databarstackomni" => {
-            let v: u64 = text.parse().map_err(|_| JsValue::from_str("bad databar value"))?;
-            let runs = barcode_fixtures::databar_omni_runs(v);
-            barcode_fixtures::databar_stacked_canvas(&runs, module, 10 * module, true)
+            let v = parse_databar13()?;
+            let runs = barcode_fixtures::try_databar_omni_runs(v)?;
+            barcode_fixtures::databar_stacked_canvas(&runs, module, quiet, true)
         }
         "databarexpanded" | "databarexp" | "gs1databarexpanded" | "rssexpanded" => {
-            barcode_fixtures::databar_exp::encode_databarexpanded(text, module, height)
-                .map_err(|e| JsValue::from_str(&e))?
+            barcode_fixtures::databar_exp::encode_databarexpanded(text, module, height)?
         }
         // QR: EC M / mask 2 / smallest version by default; all three are
         // overridable. `height` is meaningless for 2D and ignored.
         "qr" | "qrcode" => barcode_fixtures::encode_qr_text_version(
             text, o.qr_ec(), o.qr_mask(), o.qr_version(), module,
         )
-        .ok_or_else(|| JsValue::from_str("payload too large for QR at the requested version/EC"))?,
-        // Micro QR: full encoder in barcode-microqr — pick the smallest
-        // version/level tier that accepts the payload (auto mode, class 0).
+        .ok_or_else(|| "payload too large for QR at the requested version/EC".to_string())?,
+        // Micro QR: algorithmic ISO/IEC 18004 encoder in barcode-microqr.
         "microqr" => microqr_canvas(text, module)?,
-        // Datamatrix: the real ECC200 encoder (ASCII + upper shift mode,
-        // smallest symbol that fits). Aztec / PDF417: encoder half not
-        // written yet — render a frozen oracle specimen
-        // (barcode_fixtures::oracle_matrices).
+        // Datamatrix: the real ECC200 encoder.
         "datamatrix" => {
             let sized = o.rows > 0;
             let enc = (if sized {
@@ -1856,11 +1863,11 @@ fn encode_fixture_impl(
                 barcode_dm::encode::encode(text.as_bytes())
             })
             .ok_or_else(|| {
-                JsValue::from_str(if sized {
-                    "payload does not fit the requested DataMatrix size"
+                if sized {
+                    "payload does not fit the requested DataMatrix size".to_string()
                 } else {
-                    "payload too large for DataMatrix"
-                })
+                    "payload too large for DataMatrix".to_string()
+                }
             })?;
             let (r, c) = (enc.spec.rows, enc.spec.cols);
             let mut canvas = Canvas::new((c as u32 + 8) * module, (r as u32 + 8) * module);
@@ -1873,12 +1880,10 @@ fn encode_fixture_impl(
             }
             canvas
         }
-        // Aztec: the real encoder (mode machine + window-relative stuff
-        // model + RS over raw windows; byte-identical to zint for clean
-        // payloads). `height` is meaningless for 2D and ignored.
+        // Aztec: the real encoder.
         "aztec" => {
             let (spec, matrix) = barcode_aztec::encode::encode(text.as_bytes())
-                .map_err(|_| JsValue::from_str("payload too large for Aztec"))?;
+                .map_err(|_| "payload too large for Aztec".to_string())?;
             let (r, c) = (spec.rows as usize, spec.cols as usize);
             let mut canvas = Canvas::new((c as u32 + 8) * module, (r as u32 + 8) * module);
             for y in 0..r {
@@ -1890,8 +1895,7 @@ fn encode_fixture_impl(
             }
             canvas
         }
-        // PDF417: the real encoder (TC/BC/NC compaction, GF(929) ECC,
-        // zint-fitted geometry). `height` is meaningless for 2D.
+        // PDF417: the real encoder.
         "pdf417" => {
             let level = o.pdf_level();
             let sym = (if o.columns > 0 {
@@ -1899,7 +1903,7 @@ fn encode_fixture_impl(
             } else {
                 barcode_pdf417::encode::encode_full(text.as_bytes(), level)
             })
-            .map_err(|_| JsValue::from_str("payload too large for PDF417 at the requested level/columns"))?;
+            .map_err(|_| "payload too large for PDF417 at the requested level/columns".to_string())?;
             let mut canvas = Canvas::new(sym.width as u32 * module, sym.height as u32 * module);
             for y in 0..sym.height {
                 for x in 0..sym.width {
@@ -1910,9 +1914,9 @@ fn encode_fixture_impl(
             }
             canvas
         }
-        _ => return Err(JsValue::from_str("unknown symbology")),
+        _ => return Err(format!("unknown symbology: {symbology}")),
     };
-    fixture_enc(canvas)
+    Ok(canvas)
 }
 
 /// Shared `Enc` serialization for the fixture builders.
@@ -1934,21 +1938,26 @@ fn fixture_enc(canvas: Canvas) -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&enc).map_err(|_| JsValue::from_str("serialize failed"))
 }
 
-/// Binary specimen canvas builder shared by `encode_fixture_hex` and
-/// `encode_fixture_raw`. QR frames the bytes as a byte-mode segment
-/// (smallest fitting version, EC M); MicroQR, DataMatrix, Aztec and
-/// PDF417 take the bytes through their real encoders.
+/// Binary specimen canvas builder shared by `encode_fixture_hex`,
+/// `encode_fixture_raw`, and `encode_fixture_raw_opts`. Returns `Result<Canvas, String>`
+/// so it is panic-free and natively testable.
 fn fixture_bytes_canvas(
     symbology: &str,
     data: &[u8],
     module: u32,
     o: EncOptions,
-) -> Result<Canvas, JsValue> {
+) -> Result<Canvas, String> {
+    if module == 0 || module > 64 {
+        return Err("module must be 1..=64".into());
+    }
+    if data.is_empty() {
+        return Err("empty payload".into());
+    }
     Ok(match symbology {
         "qr" | "qrcode" => {
-            // Byte mode (4-bit mode + count + bytes). The count indicator
-            // is 8 bits for v1-9 and 16 bits for v10-40. `o.version`
-            // forces a version; otherwise the smallest that fits.
+            if data.len() > 2953 {
+                return Err("payload too large for QR at the requested version/EC".into());
+            }
             let ec = o.qr_ec();
             let mask = o.qr_mask();
             let forced = o.qr_version();
@@ -1964,7 +1973,7 @@ fn fixture_bytes_canvas(
                 }
             }
             let Some((version, cap, count_bits)) = found else {
-                return Err(JsValue::from_str("payload too large for QR at the requested version/EC"));
+                return Err("payload too large for QR at the requested version/EC".into());
             };
             let mut bits: Vec<bool> = vec![false, true, false, false]; // mode 4
             for i in (0..count_bits).rev() {
@@ -1992,16 +2001,16 @@ fn fixture_bytes_canvas(
         "datamatrix" => {
             let sized = o.rows > 0;
             let enc = (if sized {
-                barcode_dm::encode::encode_as(&data, o.rows as usize, o.cols as usize)
+                barcode_dm::encode::encode_as(data, o.rows as usize, o.cols as usize)
             } else {
-                barcode_dm::encode::encode(&data)
+                barcode_dm::encode::encode(data)
             })
             .ok_or_else(|| {
-                JsValue::from_str(if sized {
-                    "payload does not fit the requested DataMatrix size"
+                if sized {
+                    "payload does not fit the requested DataMatrix size".to_string()
                 } else {
-                    "payload too large for DataMatrix"
-                })
+                    "payload too large for DataMatrix".to_string()
+                }
             })?;
             let (r, c) = (enc.spec.rows, enc.spec.cols);
             let mut canvas = Canvas::new((c as u32 + 8) * module, (r as u32 + 8) * module);
@@ -2015,8 +2024,8 @@ fn fixture_bytes_canvas(
             canvas
         }
         "aztec" => {
-            let (spec, matrix) = barcode_aztec::encode::encode(&data)
-                .map_err(|_| JsValue::from_str("payload too large for Aztec"))?;
+            let (spec, matrix) = barcode_aztec::encode::encode(data)
+                .map_err(|_| "payload too large for Aztec".to_string())?;
             let (r, c) = (spec.rows as usize, spec.cols as usize);
             let mut canvas = Canvas::new((c as u32 + 8) * module, (r as u32 + 8) * module);
             for y in 0..r {
@@ -2031,11 +2040,11 @@ fn fixture_bytes_canvas(
         "pdf417" => {
             let level = o.pdf_level();
             let sym = (if o.columns > 0 {
-                barcode_pdf417::encode::encode_full_opts(&data, level, o.columns as u8)
+                barcode_pdf417::encode::encode_full_opts(data, level, o.columns as u8)
             } else {
-                barcode_pdf417::encode::encode_full(&data, level)
+                barcode_pdf417::encode::encode_full(data, level)
             })
-            .map_err(|_| JsValue::from_str("payload too large for PDF417 at the requested level/columns"))?;
+            .map_err(|_| "payload too large for PDF417 at the requested level/columns".to_string())?;
             let mut canvas = Canvas::new(sym.width as u32 * module, sym.height as u32 * module);
             for y in 0..sym.height {
                 for x in 0..sym.width {
@@ -2061,7 +2070,7 @@ fn fixture_bytes_canvas(
             let sym = TIERS
                 .iter()
                 .find_map(|&(v, l)| encode_bytes(data, v, l, Some(Mode::Byte), None))
-                .ok_or_else(|| JsValue::from_str("payload too large for Micro QR"))?;
+                .ok_or_else(|| "payload too large for Micro QR".to_string())?;
             let quiet = 4u32;
             let dim = (sym.size as u32 + 2 * quiet) * module;
             let mut c = Canvas::new(dim, dim);
@@ -2075,9 +2084,7 @@ fn fixture_bytes_canvas(
             c
         }
         _ => {
-            return Err(JsValue::from_str(&format!(
-                "binary render not supported for {symbology}"
-            )))
+            return Err(format!("binary render not supported for {symbology}"));
         }
     })
 }
@@ -2094,7 +2101,9 @@ pub fn encode_fixture_hex(symbology: &str, hex: &str, module: u32, _height: u32)
         .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16))
         .collect::<Result<_, _>>()
         .map_err(|_| JsValue::from_str("bad hex payload"))?;
-    fixture_enc(fixture_bytes_canvas(symbology, &data, module, EncOptions::default())?)
+    let canvas = fixture_bytes_canvas(symbology, &data, module, EncOptions::default())
+        .map_err(|e| JsValue::from_str(&e))?;
+    fixture_enc(canvas)
 }
 
 /// Render an exact byte payload — the encode half of `Code.raw`. Same
@@ -2103,7 +2112,9 @@ pub fn encode_fixture_hex(symbology: &str, hex: &str, module: u32, _height: u32)
 #[cfg(feature = "debug")]
 #[wasm_bindgen]
 pub fn encode_fixture_raw(symbology: &str, raw: &[u8], module: u32, _height: u32) -> Result<JsValue, JsValue> {
-    fixture_enc(fixture_bytes_canvas(symbology, raw, module, EncOptions::default())?)
+    let canvas = fixture_bytes_canvas(symbology, raw, module, EncOptions::default())
+        .map_err(|e| JsValue::from_str(&e))?;
+    fixture_enc(canvas)
 }
 
 /// [`encode_fixture_raw`] with the same layout options as
@@ -2123,8 +2134,12 @@ pub fn encode_fixture_raw_opts(
     rows: i32,
     cols: i32,
 ) -> Result<JsValue, JsValue> {
-    let o = EncOptions { ec, mask, version, level, columns, rows, cols }.validate()?;
-    fixture_enc(fixture_bytes_canvas(symbology, raw, module, o)?)
+    let o = EncOptions { ec, mask, version, level, columns, rows, cols }
+        .validate()
+        .map_err(|e| JsValue::from_str(&e))?;
+    let canvas = fixture_bytes_canvas(symbology, raw, module, o)
+        .map_err(|e| JsValue::from_str(&e))?;
+    fixture_enc(canvas)
 }
 
 #[cfg(test)]
@@ -2146,6 +2161,76 @@ mod upside_down_tests {
             assert_eq!(hits.len(), 1, "{sym}: expected exactly one hit, got {:?}", hits.iter().map(|h| (&h.text, h.raw.len())).collect::<Vec<_>>());
             assert_eq!(hits[0].raw, data, "{sym}: raw mismatch");
         }
+    }
+
+    /// Invalid inputs to text and binary render must return Err, never panic/trap WASM.
+    #[test]
+    fn render_rejects_invalid_inputs_without_panicking() {
+        let def = EncOptions::default();
+        let bad_text_cases: &[(&str, &str)] = &[
+            ("ean13", ""),
+            ("ean13", "abc"),
+            ("ean13", "123456789012"),
+            ("ean13", "4006381333930"), // bad check digit
+            ("ean13", "400638133393a"),
+            ("upca", "123"),
+            ("upca", "036000291450"), // bad check digit
+            ("upca", "03600029145a"),
+            ("ean8", "123"),
+            ("ean8", "96385070"), // bad check digit
+            ("ean8", "9638507x"),
+            ("upce", "123"),
+            ("upce", "242100005264"), // bad number system
+            ("upce", "042100005260"), // bad check digit
+            ("upce", "036000291452"), // valid UPC-A but not compressible to UPC-E
+            ("code39", ""),
+            ("code39", "BAD@CHAR"),
+            ("code39", "A*B"),
+            ("code39", "café"),
+            ("code32", "BAD"),
+            ("code32", "A000000001"), // bad check digit
+            ("itf", ""),
+            ("itf", "123"), // odd digits
+            ("itf", "12AB"),
+            ("code128", ""),
+            ("code128", "café"),
+            ("code128", "hello 🚀"),
+            ("code93", ""),
+            ("code93", "café"),
+            ("codabar", ""),
+            ("codabar", "HELLO"),
+            ("codabar", "12x34"),
+            ("databar", "123"),
+            ("databar", "123456789012a"),
+            ("databarltd", "4006381333931"), // indicator >= 2
+            ("databarstk", "12345678901234"), // 14 digits (> 10^13)
+            ("databarstackomni", "not-digits"),
+            ("databarexpanded", ""),
+            ("qrcode", ""),
+            ("microqr", ""),
+            ("microqr", "WAY-TOO-LONG-FOR-MICRO-QR-CAPACITY-1234567890"),
+            ("datamatrix", ""),
+            ("aztec", ""),
+            ("pdf417", ""),
+            ("unknown-sym", "123"),
+        ];
+        for &(sym, text) in bad_text_cases {
+            assert!(
+                encode_text_canvas(sym, text, 4, 120, def).is_err(),
+                "expected Err for text render ({sym:?}, {text:?})"
+            );
+        }
+        // Invalid module / height bounds must also return Err, never panic.
+        assert!(encode_text_canvas("code128", "OK", 0, 120, def).is_err());
+        assert!(encode_text_canvas("code128", "OK", 65, 120, def).is_err());
+        assert!(encode_text_canvas("code128", "OK", 4, 0, def).is_err());
+        assert!(encode_text_canvas("code128", "OK", 4, 9000, def).is_err());
+        // Invalid binary inputs.
+        assert!(fixture_bytes_canvas("qrcode", &[], 4, def).is_err());
+        assert!(fixture_bytes_canvas("qrcode", &[0u8; 4000], 4, def).is_err());
+        assert!(fixture_bytes_canvas("qrcode", b"ok", 0, def).is_err());
+        assert!(fixture_bytes_canvas("ean13", b"4006381333931", 4, def).is_err());
+        assert!(fixture_bytes_canvas("microqr", &[0u8; 100], 4, def).is_err());
     }
 
     /// Binary payloads through the 2D tiers: `raw` must carry the exact

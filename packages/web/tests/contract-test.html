@@ -126,6 +126,34 @@ try {
   const expCode = await guarded((async () =>
     await s1.scan({ image: await specimen(s1, expText, 'databarexpanded'), type: 'barcode' }))());
   row('type barcode reads databarexpanded', expCode?.symbology === 'databarexpanded' && expCode?.text === expText, JSON.stringify({ sym: expCode?.symbology, text: expCode?.text }));
+
+  // ---- 10. invalid render() inputs reject cleanly without killing the warm worker ----
+  const badRenders = [
+    { symbology: 'ean13', text: 'not-digits' },
+    { symbology: 'ean13', text: '4006381333930' },
+    { symbology: 'upce', text: '036000291452' },
+    { symbology: 'itf', text: '123' },
+    { symbology: 'code39', text: 'BAD@CHAR' },
+    { symbology: 'code128', text: 'café' },
+    { symbology: 'code93', text: 'café' },
+    { symbology: 'codabar', text: 'HELLO' },
+    { symbology: 'databarltd', text: '4006381333931' },
+  ];
+  let rejectedCleanly = 0;
+  for (const input of badRenders) {
+    try {
+      await s1.render(input);
+    } catch (e) {
+      if (!/unreachable/i.test(String(e))) rejectedCleanly++;
+    }
+  }
+  const afterBad = await guarded((async () =>
+    await s1.scan({ image: await specimen(s1, 'CT-WARM-ALIVE') }))());
+  row(
+    'invalid render rejects cleanly, worker stays alive',
+    rejectedCleanly === badRenders.length && afterBad?.text === 'CT-WARM-ALIVE',
+    `${rejectedCleanly}/${badRenders.length} clean rejects; rescan=${afterBad?.text ?? 'none'}`,
+  );
 } catch (err) {
   row('harness', false, String((err && err.stack) || err));
 }

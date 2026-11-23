@@ -85,40 +85,37 @@ pub fn ean13_check_digit(digits12: &str) -> char {
     char::from(b'0' + ((10 - sum % 10) % 10) as u8)
 }
 
-/// Encode a UPC-A symbol (12 digits, the last being its check digit) into a
-/// canvas. UPC-A is structurally an EAN-13 with a leading 0: the same
-/// 95-module pattern. Guards here are full-height; height is cosmetic.
-/// `narrow` = module width in px, `quiet` = quiet zone in modules.
-pub fn encode_upca(digits12: &str, narrow: u32, height: u32, quiet: u32) -> Canvas {
+/// Encode a UPC-A symbol (12 ASCII digits, valid check digit) into a canvas.
+/// Returns `Err` instead of panicking on invalid input.
+pub fn try_encode_upca(digits12: &str, narrow: u32, height: u32, quiet: u32) -> Result<Canvas, &'static str> {
+    if narrow == 0 || height == 0 {
+        return Err("invalid render dimensions");
+    }
     let bytes = digits12.as_bytes();
-    assert_eq!(bytes.len(), 12, "UPC-A needs 12 digits");
+    if bytes.len() != 12 || !bytes.iter().all(|b| b.is_ascii_digit()) {
+        return Err("invalid upca payload");
+    }
     // check over the 11 data digits = EAN-13 check of "0" + 11 data
-    let mut with0 = String::with_capacity(13);
+    let mut with0 = String::with_capacity(12);
     with0.push('0');
     with0.push_str(&digits12[..11]);
-    assert_eq!(
-        ean13_check_digit(&with0),
-        digits12[11..12].chars().next().unwrap(),
-        "UPC-A check digit mismatch"
-    );
+    if ean13_check_digit(&with0) != bytes[11] as char {
+        return Err("invalid upca payload");
+    }
     let mut d = [0u8; 13];
-    for (i, b) in bytes.iter().enumerate() {
+    for (i, &b) in bytes.iter().enumerate() {
         d[1 + i] = b - b'0';
     }
-    let modules = ean13_modules(&d);
-    assert_eq!(modules.len(), 95);
-    let width = (95 + 2 * quiet) * narrow;
-    let mut canvas = Canvas::new(width, height);
-    let x0 = quiet * narrow;
-    for (i, m) in modules.bytes().enumerate() {
-        if m == b'1' {
-            canvas.fill(x0 + i as u32 * narrow, 0, narrow, height);
-        }
-    }
-    canvas
+    Ok(encode_ean13_raw(&d, narrow, height, quiet))
 }
 
-/// Build the 95-module string of an EAN-13 symbol (digits must be 13 chars).
+/// Encode a UPC-A symbol (12 digits, the last being its check digit) into a
+/// canvas. Panics on invalid input (test convenience wrapper around [`try_encode_upca`]).
+pub fn encode_upca(digits12: &str, narrow: u32, height: u32, quiet: u32) -> Canvas {
+    try_encode_upca(digits12, narrow, height, quiet).expect("encode_upca")
+}
+
+/// Build the 95-module string of an EAN-13 symbol (digits must be 13 values in 0..=9).
 fn ean13_modules(digits: &[u8; 13]) -> String {
     let mut s = String::with_capacity(95);
     s.push_str("101"); // start guard
@@ -129,19 +126,36 @@ fn ean13_modules(digits: &[u8; 13]) -> String {
     }
     s.push_str("01010"); // center guard
     for d in 0..6 {
-        s.push_str(&EAN_R[digits[7 + d] as usize]);
+        s.push_str(EAN_R[digits[7 + d] as usize]);
     }
     s.push_str("101"); // end guard
     s
 }
 
-/// Encode a full 13-digit string (must include a valid check digit) into a
-/// canvas. `narrow` = module width in px, `quiet` = quiet zone in modules.
-pub fn encode_ean13(digits: &str, narrow: u32, height: u32, quiet: u32) -> Canvas {
+/// Encode a full 13-digit EAN-13 string (must include a valid check digit)
+/// into a canvas. Returns `Err` instead of panicking on invalid input.
+pub fn try_encode_ean13(digits: &str, narrow: u32, height: u32, quiet: u32) -> Result<Canvas, &'static str> {
+    if narrow == 0 || height == 0 {
+        return Err("invalid render dimensions");
+    }
     let bytes = digits.as_bytes();
-    assert_eq!(bytes.len(), 13, "EAN-13 needs 13 digits");
-    let d: [u8; 13] = bytes.iter().map(|b| (b - b'0') as u8).collect::<Vec<_>>().try_into().unwrap();
-    encode_ean13_raw(&d, narrow, height, quiet)
+    if bytes.len() != 13 || !bytes.iter().all(|b| b.is_ascii_digit()) {
+        return Err("invalid ean13 payload");
+    }
+    if ean13_check_digit(&digits[..12]) != bytes[12] as char {
+        return Err("invalid ean13 payload");
+    }
+    let mut d = [0u8; 13];
+    for (i, &b) in bytes.iter().enumerate() {
+        d[i] = b - b'0';
+    }
+    Ok(encode_ean13_raw(&d, narrow, height, quiet))
+}
+
+/// Encode a full 13-digit string (must include a valid check digit) into a
+/// canvas. Panics on invalid input (test convenience wrapper around [`try_encode_ean13`]).
+pub fn encode_ean13(digits: &str, narrow: u32, height: u32, quiet: u32) -> Canvas {
+    try_encode_ean13(digits, narrow, height, quiet).expect("encode_ean13")
 }
 
 /// Encode from raw digits (no validation), for negative tests.
@@ -186,26 +200,35 @@ fn c39_pattern(ch: char) -> Option<&'static str> {
 }
 
 /// Encode text (without start/stop; '*' is added) into a canvas.
-/// `narrow` in px, `ratio` = wide/narrow (spec: 2.0..3.0).
-pub fn encode_code39(text: &str, narrow: u32, ratio: f32, height: u32) -> Canvas {
+/// Returns `Err` instead of panicking on invalid input.
+pub fn try_encode_code39(text: &str, narrow: u32, ratio: f32, height: u32) -> Result<Canvas, &'static str> {
+    if text.is_empty() || text.contains('*') {
+        return Err("invalid code39 payload");
+    }
     let wide = (narrow as f32 * ratio).round() as u32;
-    assert!((2.0..=3.0).contains(&ratio) && wide > narrow);
+    if narrow == 0 || height == 0 || !(2.0..=3.0).contains(&ratio) || wide <= narrow {
+        return Err("invalid render dimensions");
+    }
 
-    // Total width: per char 9 elements + 1 gap element, plus quiet zones (10x).
     let full = format!("*{text}*");
+    let mut patterns: Vec<&'static str> = Vec::with_capacity(full.len());
     let mut total_elements = 0u32;
     for ch in full.chars() {
-        let p = c39_pattern(ch).expect("unsupported char");
-        total_elements += p.bytes().map(|b| if b == b'1' { wide } else { narrow }).sum::<u32>();
-        total_elements += narrow; // intercharacter gap
+        let p = c39_pattern(ch).ok_or("invalid code39 payload")?;
+        patterns.push(p);
+        total_elements = total_elements
+            .checked_add(p.bytes().map(|b| if b == b'1' { wide } else { narrow }).sum::<u32>())
+            .and_then(|v| v.checked_add(narrow))
+            .ok_or("invalid render dimensions")?;
     }
     let quiet = 10 * narrow;
-    let width = total_elements - narrow + 2 * quiet; // no gap after the stop char
+    let width = (total_elements - narrow)
+        .checked_add(2 * quiet)
+        .ok_or("invalid render dimensions")?;
     let mut canvas = Canvas::new(width, height);
 
     let mut x = quiet;
-    for (n, ch) in full.chars().enumerate() {
-        let p = c39_pattern(ch).unwrap();
+    for (n, p) in patterns.iter().enumerate() {
         for (k, b) in p.bytes().enumerate() {
             let w = if b == b'1' { wide } else { narrow };
             if k % 2 == 0 {
@@ -213,11 +236,17 @@ pub fn encode_code39(text: &str, narrow: u32, ratio: f32, height: u32) -> Canvas
             }
             x += w;
         }
-        if n + 1 < full.len() {
+        if n + 1 < patterns.len() {
             x += narrow; // gap
         }
     }
-    canvas
+    Ok(canvas)
+}
+
+/// Encode text (without start/stop; '*' is added) into a canvas.
+/// Panics on invalid input (test convenience wrapper around [`try_encode_code39`]).
+pub fn encode_code39(text: &str, narrow: u32, ratio: f32, height: u32) -> Canvas {
+    try_encode_code39(text, narrow, ratio, height).expect("encode_code39")
 }
 
 // ---------------------------------------------------------------------------
@@ -231,30 +260,30 @@ const I25: [&str; 10] = [
 ];
 
 /// Encode an even-length digit string as ITF/I2of5.
-pub fn encode_itf(text: &str, narrow: u32, ratio: f32, height: u32) -> Canvas {
+/// Returns `Err` instead of panicking on invalid input.
+pub fn try_encode_itf(text: &str, narrow: u32, ratio: f32, height: u32) -> Result<Canvas, &'static str> {
     let wide = (narrow as f32 * ratio).round() as u32;
-    assert!((2.0..=3.0).contains(&ratio) && wide > narrow);
+    if narrow == 0 || height == 0 || !(2.0..=3.0).contains(&ratio) || wide <= narrow {
+        return Err("invalid render dimensions");
+    }
     let bytes = text.as_bytes();
-    assert!(bytes.len() % 2 == 0, "ITF needs an even digit count");
-    assert!(bytes.iter().all(|b| b.is_ascii_digit()));
+    if bytes.is_empty() || bytes.len() % 2 != 0 || !bytes.iter().all(|b| b.is_ascii_digit()) {
+        return Err("invalid itf payload");
+    }
 
     let elem = |i: usize, pat: &str| -> u32 {
         if pat.as_bytes()[i] == b'1' { wide } else { narrow }
     };
 
-    // total width: start 4 narrow + pairs (10 elems) + stop 3 + quiet zones
     let pairs = bytes.len() / 2;
-    let total_elems = 4 + pairs * 10 + 3;
-    // compute precisely
-    let mut widths: Vec<(bool, u32)> = vec![]; // (ink, width)
-    // start
+    let mut widths: Vec<(bool, u32)> = Vec::with_capacity(7 + pairs * 10);
     widths.push((true, narrow));
     widths.push((false, narrow));
     widths.push((true, narrow));
     widths.push((false, narrow));
     for p in 0..pairs {
-        let a = &I25[(bytes[p * 2] - b'0') as usize];
-        let b = &I25[(bytes[p * 2 + 1] - b'0') as usize];
+        let a = I25[(bytes[p * 2] - b'0') as usize];
+        let b = I25[(bytes[p * 2 + 1] - b'0') as usize];
         for i in 0..5 {
             widths.push((true, elem(i, a)));
             widths.push((false, elem(i, b)));
@@ -265,9 +294,14 @@ pub fn encode_itf(text: &str, narrow: u32, ratio: f32, height: u32) -> Canvas {
     widths.push((false, narrow));
     widths.push((true, narrow));
 
-    let sym_width: u32 = widths.iter().map(|(_, w)| w).sum();
+    let sym_width: u32 = widths
+        .iter()
+        .try_fold(0u32, |acc, &(_, w)| acc.checked_add(w))
+        .ok_or("invalid render dimensions")?;
     let quiet = 10 * narrow;
-    let width = sym_width + 2 * quiet;
+    let width = sym_width
+        .checked_add(2 * quiet)
+        .ok_or("invalid render dimensions")?;
     let mut canvas = Canvas::new(width, height);
 
     let mut x = quiet;
@@ -277,8 +311,13 @@ pub fn encode_itf(text: &str, narrow: u32, ratio: f32, height: u32) -> Canvas {
         }
         x += w;
     }
-    let _ = total_elems;
-    canvas
+    Ok(canvas)
+}
+
+/// Encode an even-length digit string as ITF/I2of5.
+/// Panics on invalid input (test convenience wrapper around [`try_encode_itf`]).
+pub fn encode_itf(text: &str, narrow: u32, ratio: f32, height: u32) -> Canvas {
+    try_encode_itf(text, narrow, ratio, height).expect("encode_itf")
 }
 
 
@@ -315,7 +354,7 @@ const C128: [&str; 107] = [
 /// A, printable characters use set B, and GS (`0x1D`, the decoded form of
 /// FNC1) is emitted as FNC1 so a GS1-128 payload round-trips. FNC1 is
 /// valid in every code set and does not change it.
-fn code128_mixed(bytes: &[u8]) -> Vec<u8> {
+fn code128_mixed(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
     let mut out = Vec::with_capacity(bytes.len() + 8);
     let mut set = b'B';
     for &b in bytes {
@@ -335,17 +374,22 @@ fn code128_mixed(bytes: &[u8]) -> Vec<u8> {
                 }
                 out.push(b - 32);
             }
-            b => panic!("char U+{b:04X} not encodable in Code 128"),
+            _ => return Err("invalid code128 payload"),
         }
     }
-    out
+    Ok(out)
 }
 
 /// Encode `text` as Code 128 and render it at `module` px per unit.
-/// Code set C for all-digit, even-length text of 4+ digits; set B for the
-/// printable fast path; mixed A/B values for controls and GS1 FNC1.
-pub fn encode_code128(text: &str, module: u32, height: u32) -> Canvas {
+/// Returns `Err` instead of panicking on invalid input.
+pub fn try_encode_code128(text: &str, module: u32, height: u32) -> Result<Canvas, &'static str> {
+    if module == 0 || height == 0 {
+        return Err("invalid render dimensions");
+    }
     let bytes = text.as_bytes();
+    if bytes.is_empty() {
+        return Err("invalid code128 payload");
+    }
     let use_c = bytes.len() >= 4
         && bytes.len() % 2 == 0
         && bytes.iter().all(|b| b.is_ascii_digit());
@@ -357,7 +401,7 @@ pub fn encode_code128(text: &str, module: u32, height: u32) -> Canvas {
         // Fast path: set B alone covers printable ASCII (and DEL).
         (104, bytes.iter().map(|&b| b - b' ').collect())
     } else {
-        (104, code128_mixed(bytes))
+        (104, code128_mixed(bytes)?)
     };
     // check digit: (start + sum i*value_i) mod 103
     let check = ((start as usize
@@ -366,7 +410,7 @@ pub fn encode_code128(text: &str, module: u32, height: u32) -> Canvas {
     values.push(check);
 
     // widths: start + values + stop (6 elements + 2-module final bar)
-    let mut widths: Vec<(bool, u32)> = vec![];
+    let mut widths: Vec<(bool, u32)> = Vec::with_capacity((values.len() + 2) * 6 + 1);
     let push = |v: u8, widths: &mut Vec<(bool, u32)>| {
         let pat = C128[v as usize];
         for (i, ch) in pat.bytes().enumerate() {
@@ -382,8 +426,14 @@ pub fn encode_code128(text: &str, module: u32, height: u32) -> Canvas {
     }
 
     let quiet = 10 * module;
-    let sym: u32 = widths.iter().map(|(_, w)| w).sum();
-    let mut canvas = Canvas::new(sym + 2 * quiet, height);
+    let sym: u32 = widths
+        .iter()
+        .try_fold(0u32, |acc, &(_, w)| acc.checked_add(w))
+        .ok_or("invalid render dimensions")?;
+    let width = sym
+        .checked_add(2 * quiet)
+        .ok_or("invalid render dimensions")?;
+    let mut canvas = Canvas::new(width, height);
     let mut x = quiet;
     for (ink, w) in widths {
         if ink {
@@ -391,7 +441,13 @@ pub fn encode_code128(text: &str, module: u32, height: u32) -> Canvas {
         }
         x += w;
     }
-    canvas
+    Ok(canvas)
+}
+
+/// Encode `text` as Code 128 and render it at `module` px per unit.
+/// Panics on invalid input (test convenience wrapper around [`try_encode_code128`]).
+pub fn encode_code128(text: &str, module: u32, height: u32) -> Canvas {
+    try_encode_code128(text, module, height).expect("encode_code128")
 }
 
 
@@ -416,7 +472,7 @@ const C93: [[u8; 6]; 48] = [
 
 /// Map a char to its Code 93 value sequence (1 or 2 values, using the
 /// Full ASCII shift prefixes for characters outside the basic 43-char set).
-fn code93_values(c: char) -> Vec<u8> {
+fn code93_values(c: char) -> Result<Vec<u8>, &'static str> {
     let basic = |c: char| -> Option<u8> {
         match c {
             '0'..='9' => Some(c as u8 - b'0'),
@@ -432,7 +488,7 @@ fn code93_values(c: char) -> Vec<u8> {
         }
     };
     if let Some(v) = basic(c) {
-        return vec![v];
+        return Ok(vec![v]);
     }
     // Full ASCII pairs (inverse of the extended table): (shift value,
     // base value). Base values: A=10 .. Z=35.
@@ -452,17 +508,23 @@ fn code93_values(c: char) -> Vec<u8> {
         'a'..='z' => (46, 10 + (u - 97)),            // (+)A..=Z -> 97..=122
         '{'..='~' => (44, 25 + (u - 123)),           // (%)P..=S -> 123..=126
         '\u{7f}' => (44, 29),                        // (%)T
-        _ => panic!("char {c:?} not encodable in Code 93"),
+        _ => return Err("invalid code93 payload"),
     };
-    vec![pair.0 as u8, pair.1 as u8]
+    Ok(vec![pair.0 as u8, pair.1 as u8])
 }
 
 /// Encode `text` as Code 93 (with C and K check characters) rendered at
-/// `module` px per element unit.
-pub fn encode_code93(text: &str, module: u32, height: u32) -> Canvas {
-    let mut values: Vec<u8> = vec![];
+/// `module` px per element unit. Returns `Err` instead of panicking.
+pub fn try_encode_code93(text: &str, module: u32, height: u32) -> Result<Canvas, &'static str> {
+    if module == 0 || height == 0 {
+        return Err("invalid render dimensions");
+    }
+    if text.is_empty() {
+        return Err("invalid code93 payload");
+    }
+    let mut values: Vec<u8> = Vec::with_capacity(text.len() + 2);
     for c in text.chars() {
-        values.extend(code93_values(c));
+        values.extend(code93_values(c)?);
     }
     // C check: weights 1..20 from the right-most data char, mod 47.
     let c = values.iter().rev().enumerate()
@@ -473,7 +535,7 @@ pub fn encode_code93(text: &str, module: u32, height: u32) -> Canvas {
     values.push(c as u8);
     values.push(k as u8);
 
-    let mut widths: Vec<(bool, u32)> = vec![];
+    let mut widths: Vec<(bool, u32)> = Vec::with_capacity((values.len() + 2) * 6 + 1);
     for &v in std::iter::once(&47u8)
         .chain(values.iter())
         .chain(std::iter::once(&47u8))
@@ -485,8 +547,14 @@ pub fn encode_code93(text: &str, module: u32, height: u32) -> Canvas {
     widths.push((true, module)); // termination bar
 
     let quiet = 10 * module;
-    let sym: u32 = widths.iter().map(|(_, w)| w).sum();
-    let mut canvas = Canvas::new(sym + 2 * quiet, height);
+    let sym: u32 = widths
+        .iter()
+        .try_fold(0u32, |acc, &(_, w)| acc.checked_add(w))
+        .ok_or("invalid render dimensions")?;
+    let width = sym
+        .checked_add(2 * quiet)
+        .ok_or("invalid render dimensions")?;
+    let mut canvas = Canvas::new(width, height);
     let mut x = quiet;
     for (ink, w) in widths {
         if ink {
@@ -494,7 +562,13 @@ pub fn encode_code93(text: &str, module: u32, height: u32) -> Canvas {
         }
         x += w;
     }
-    canvas
+    Ok(canvas)
+}
+
+/// Encode `text` as Code 93 (with C and K check characters) rendered at
+/// `module` px per element unit. Panics on invalid input (test wrapper).
+pub fn encode_code93(text: &str, module: u32, height: u32) -> Canvas {
+    try_encode_code93(text, module, height).expect("encode_code93")
 }
 
 
@@ -528,41 +602,50 @@ pub const CODABAR_CHARS: [(char, [u8; 4], [u8; 3]); 20] = [
     ('+', [0, 1, 1, 1], [0, 0, 0]),
 ];
 
-/// Encode `body` as Codabar wrapped in `start`/`stop` (A-D), rendered at
-/// `narrow` px per narrow element and the given narrow:wide ratio (2.25-3.0).
-pub fn encode_codabar(body: &str, narrow: u32, ratio: f32, height: u32) -> Canvas {
-    encode_codabar_wrapped(body, "A", "B", narrow, ratio, height)
+/// Encode `body` as Codabar wrapped in `A`/`B`, returning `Err` on invalid input.
+pub fn try_encode_codabar(body: &str, narrow: u32, ratio: f32, height: u32) -> Result<Canvas, &'static str> {
+    try_encode_codabar_wrapped(body, "A", "B", narrow, ratio, height)
 }
 
-/// Like [`encode_codabar`] but with explicit start/stop characters.
-pub fn encode_codabar_wrapped(
+/// Encode `body` as Codabar wrapped in `start`/`stop` (A-D).
+/// Panics on invalid input (test convenience wrapper around [`try_encode_codabar`]).
+pub fn encode_codabar(body: &str, narrow: u32, ratio: f32, height: u32) -> Canvas {
+    try_encode_codabar(body, narrow, ratio, height).expect("encode_codabar")
+}
+
+/// Like [`try_encode_codabar`] but with explicit start/stop characters.
+pub fn try_encode_codabar_wrapped(
     body: &str,
     start: &str,
     stop: &str,
     narrow: u32,
     ratio: f32,
     height: u32,
-) -> Canvas {
+) -> Result<Canvas, &'static str> {
+    if body.is_empty() {
+        return Err("invalid codabar payload");
+    }
     let wide = (narrow as f32 * ratio).round() as u32;
-    assert!((2.25..=3.0).contains(&ratio) && wide > narrow);
-    let find = |c: char| {
-        CODABAR_CHARS
-            .iter()
-            .find(|(ch, _, _)| *ch == c)
-            .unwrap_or_else(|| panic!("char {c} not in Codabar set"))
-    };
-    let mut seq: Vec<char> = vec![];
+    if narrow == 0 || height == 0 || !(2.25..=3.0).contains(&ratio) || wide <= narrow {
+        return Err("invalid render dimensions");
+    }
+    let mut seq: Vec<char> = Vec::with_capacity(body.len() + 2);
     seq.extend(start.chars());
     seq.extend(body.chars());
     seq.extend(stop.chars());
-    assert_eq!(seq.len(), 2 + body.chars().count());
-    assert!(is_start_stop_like(seq[0]) && is_start_stop_like(seq[seq.len() - 1]));
+    if seq.len() != 2 + body.chars().count()
+        || !is_start_stop_like(seq[0])
+        || !is_start_stop_like(seq[seq.len() - 1])
+    {
+        return Err("invalid codabar payload");
+    }
 
-    let mut widths: Vec<(bool, u32)> = vec![];
+    let mut widths: Vec<(bool, u32)> = Vec::with_capacity(seq.len() * 8);
     for (i, &c) in seq.iter().enumerate() {
-        let (_, bars, spaces) = find(c);
-        // Element sequence B S B S B S B: even elements are bars, odd are
-        // spaces.
+        let (_, bars, spaces) = CODABAR_CHARS
+            .iter()
+            .find(|(ch, _, _)| *ch == c)
+            .ok_or("invalid codabar payload")?;
         for ei in 0..7 {
             let w = if ei % 2 == 0 { bars[ei / 2] } else { spaces[(ei - 1) / 2] };
             widths.push((ei % 2 == 0, if w == 1 { wide } else { narrow }));
@@ -573,8 +656,14 @@ pub fn encode_codabar_wrapped(
     }
 
     let quiet = 10 * narrow;
-    let sym: u32 = widths.iter().map(|(_, w)| w).sum();
-    let mut canvas = Canvas::new(sym + 2 * quiet, height);
+    let sym: u32 = widths
+        .iter()
+        .try_fold(0u32, |acc, &(_, w)| acc.checked_add(w))
+        .ok_or("invalid render dimensions")?;
+    let width = sym
+        .checked_add(2 * quiet)
+        .ok_or("invalid render dimensions")?;
+    let mut canvas = Canvas::new(width, height);
     let mut x = quiet;
     for (ink, w) in widths {
         if ink {
@@ -582,7 +671,19 @@ pub fn encode_codabar_wrapped(
         }
         x += w;
     }
-    canvas
+    Ok(canvas)
+}
+
+/// Like [`encode_codabar`] but with explicit start/stop characters (test wrapper).
+pub fn encode_codabar_wrapped(
+    body: &str,
+    start: &str,
+    stop: &str,
+    narrow: u32,
+    ratio: f32,
+    height: u32,
+) -> Canvas {
+    try_encode_codabar_wrapped(body, start, stop, narrow, ratio, height).expect("encode_codabar")
 }
 
 fn is_start_stop_like(c: char) -> bool {
@@ -606,13 +707,25 @@ pub fn ean8_check_digit(digits7: &str) -> char {
 }
 
 /// Encode an 8-digit EAN-8 (must include a valid check digit).
-pub fn encode_ean8(digits: &str, narrow: u32, height: u32, quiet: u32) -> Canvas {
+/// Returns `Err` instead of panicking on invalid input.
+pub fn try_encode_ean8(digits: &str, narrow: u32, height: u32, quiet: u32) -> Result<Canvas, &'static str> {
+    if narrow == 0 || height == 0 {
+        return Err("invalid render dimensions");
+    }
     let bytes = digits.as_bytes();
-    assert_eq!(bytes.len(), 8, "EAN-8 needs 8 digits");
-    assert!(bytes.iter().all(|b| b.is_ascii_digit()));
-    let check = ean8_check_digit(&digits[..7]);
-    assert_eq!(check, digits.as_bytes()[7] as char, "bad EAN-8 check digit");
-    encode_ean8_raw(digits, narrow, height, quiet)
+    if bytes.len() != 8 || !bytes.iter().all(|b| b.is_ascii_digit()) {
+        return Err("invalid ean8 payload");
+    }
+    if ean8_check_digit(&digits[..7]) != bytes[7] as char {
+        return Err("invalid ean8 payload");
+    }
+    Ok(encode_ean8_raw(digits, narrow, height, quiet))
+}
+
+/// Encode an 8-digit EAN-8 (must include a valid check digit).
+/// Panics on invalid input (test convenience wrapper around [`try_encode_ean8`]).
+pub fn encode_ean8(digits: &str, narrow: u32, height: u32, quiet: u32) -> Canvas {
+    try_encode_ean8(digits, narrow, height, quiet).expect("encode_ean8")
 }
 
 /// Encode from raw digits (no validation), for negative tests.
@@ -654,44 +767,43 @@ pub fn encode_ean8_raw(digits: &str, narrow: u32, height: u32, quiet: u32) -> Ca
 // ---------------------------------------------------------------------------
 
 /// Encode `upc_a` (12 digits, number system 0 or 1, valid check digit) as
-/// its zero-compressed UPC-E symbol. Structure: 101 + 6 digits + 01010 + 1
-/// = 51 modules.
-pub fn encode_upce(upc_a: &str, narrow: u32, height: u32, quiet: u32) -> Canvas {
+/// its zero-compressed UPC-E symbol. Returns `Err` instead of panicking.
+pub fn try_encode_upce(upc_a: &str, narrow: u32, height: u32, quiet: u32) -> Result<Canvas, &'static str> {
+    if narrow == 0 || height == 0 {
+        return Err("invalid render dimensions");
+    }
     let bytes = upc_a.as_bytes();
-    assert_eq!(bytes.len(), 12, "UPC-E encoder needs a 12-digit UPC-A");
-    assert!(bytes.iter().all(|b| b.is_ascii_digit()));
+    if bytes.len() != 12 || !bytes.iter().all(|b| b.is_ascii_digit()) {
+        return Err("invalid upce payload");
+    }
     let d: Vec<u8> = bytes.iter().map(|b| b - b'0').collect();
-    assert!(d[0] == 0 || d[0] == 1, "UPC-E number system must be 0 or 1");
+    if d[0] != 0 && d[0] != 1 {
+        return Err("invalid upce payload");
+    }
 
     // check digit must be consistent
     let mut sum = 0usize;
     for (i, &v) in d.iter().enumerate().take(11) {
         sum += v as usize * if i % 2 == 0 { 3 } else { 1 };
     }
-    assert_eq!((10 - sum % 10) % 10, d[11] as usize, "bad UPC-A check digit");
+    if (10 - sum % 10) % 10 != d[11] as usize {
+        return Err("invalid upce payload");
+    }
 
-    // compress (rules as published — the UPC-E last digit is M3 for
-    // manufacturers ending 000/100/200, else 3 for M ending 00, else 4
-    // for M ending 0, else the last product digit which must be 5-9)
     let m = &d[1..6];   // manufacturer
     let p = &d[6..11];  // product
-    let u: Vec<u8> = if m[3] == 0 && m[4] == 0 && m[2] <= 2 && p[0] == 0 && p[1] == 0 {
-        // AB000-00HIJ / AB100-00HIJ / AB200-00HIJ -> ABHIJ{M3}
-        vec![m[0], m[1], p[2], p[3], p[4], m[2]]
+    let u: [u8; 6] = if m[3] == 0 && m[4] == 0 && m[2] <= 2 && p[0] == 0 && p[1] == 0 {
+        [m[0], m[1], p[2], p[3], p[4], m[2]]
     } else if m[3] == 0 && m[4] == 0 && p[0] == 0 && p[1] == 0 && p[2] == 0 {
-        // AB300-000IJ .. AB900-000IJ -> AB{M3}IJ3
-        vec![m[0], m[1], m[2], p[3], p[4], 3]
+        [m[0], m[1], m[2], p[3], p[4], 3]
     } else if m[4] == 0 && m[3] != 0 && p[0] == 0 && p[1] == 0 && p[2] == 0 && p[3] == 0 {
-        // ABCD0-0000J -> ABCDJ4
-        vec![m[0], m[1], m[2], m[3], p[4], 4]
+        [m[0], m[1], m[2], m[3], p[4], 4]
     } else if m[4] != 0 && p[0] == 0 && p[1] == 0 && p[2] == 0 && p[3] == 0 && p[4] >= 5 {
-        // ABCDE-0000P (P in 5-9) -> ABCDEP
-        vec![m[0], m[1], m[2], m[3], m[4], p[4]]
+        [m[0], m[1], m[2], m[3], m[4], p[4]]
     } else {
-        panic!("UPC-A {upc_a} is not compressible to UPC-E");
+        return Err("invalid upce payload");
     };
 
-    // parity pattern from (NS, check digit)
     let parity = if d[0] == 0 {
         ["EEEOOO", "EEOEOO", "EEOOEO", "EEOOOE", "EOEEOO", "EOOEEO", "EOOOEE", "EOEOEO", "EOEOOE", "EOOEOE"]
             [d[11] as usize]
@@ -704,13 +816,13 @@ pub fn encode_upce(upc_a: &str, narrow: u32, height: u32, quiet: u32) -> Canvas 
              "0101111", "0111011", "0110111", "0001011"];
     let g = ["0100111", "0110011", "0011011", "0100001", "0011101", "0111001",
              "0000101", "0010001", "0001001", "0010111"];
-    let mut modules = String::from("101");
+    let mut modules = String::with_capacity(51);
+    modules.push_str("101");
     for (i, &digit) in u.iter().enumerate() {
         let table = if parity.as_bytes()[i] == b'O' { &l } else { &g };
         modules.push_str(table[digit as usize]);
     }
     modules.push_str("010101");
-    assert_eq!(modules.len(), 51);
 
     let width = (51 + 2 * quiet) * narrow;
     let mut canvas = Canvas::new(width, height);
@@ -720,7 +832,13 @@ pub fn encode_upce(upc_a: &str, narrow: u32, height: u32, quiet: u32) -> Canvas 
             canvas.fill(x0 + i as u32 * narrow, 0, narrow, height);
         }
     }
-    canvas
+    Ok(canvas)
+}
+
+/// Encode `upc_a` as its zero-compressed UPC-E symbol.
+/// Panics on invalid input (test convenience wrapper around [`try_encode_upce`]).
+pub fn encode_upce(upc_a: &str, narrow: u32, height: u32, quiet: u32) -> Canvas {
+    try_encode_upce(upc_a, narrow, height, quiet).expect("encode_upce")
 }
 
 
@@ -1473,8 +1591,11 @@ fn finder_triples(runs: &[u32; 46]) -> ([u32; 3], [u32; 3]) {
 }
 
 /// Build the 46 run widths of a DataBar Omnidirectional symbol for the
-/// 13-digit value `v`. Sum is always 96 (paper module + 95 symbol modules).
-pub fn databar_omni_runs(v: u64) -> [u32; 46] {
+/// 13-digit value `v` (`< 10^13`). Returns `Err` instead of panicking.
+pub fn try_databar_omni_runs(v: u64) -> Result<[u32; 46], &'static str> {
+    if v >= 10_000_000_000_000 {
+        return Err("invalid databar payload");
+    }
     let (r1, r2, r3, r4) = databar_split(v);
     let mut runs = [0u32; 46];
     runs[0] = 1; // leading paper module m0
@@ -1489,7 +1610,13 @@ pub fn databar_omni_runs(v: u64) -> [u32; 46] {
     runs[31] = 1;
     runs[32] = 1;
     runs[33..36].copy_from_slice(&fr);
-    runs
+    Ok(runs)
+}
+
+/// Build the 46 run widths of a DataBar Omnidirectional symbol for the
+/// 13-digit value `v`. Panics if `v >= 10^13` (test wrapper).
+pub fn databar_omni_runs(v: u64) -> [u32; 46] {
+    try_databar_omni_runs(v).expect("databar_omni_runs")
 }
 
 // ---------------------------------------------------------------------------
@@ -1606,12 +1733,11 @@ fn ltd_checksum(a: &[u32; 14], c: &[u32; 14]) -> usize {
 }
 
 /// Build the 46 run widths of a DataBar Limited symbol for the 13-digit
-/// value `v` (indicator digit 0 or 1, i.e. v < 2·10^12). Sum is always 74.
-pub fn databar_ltd_runs(v: u64) -> [u32; 46] {
-    assert!(
-        v < 2_000_000_000_000,
-        "DataBar Limited encodes 13-digit values with indicator 0/1 only"
-    );
+/// value `v` (indicator digit 0 or 1, i.e. v < 2·10^12). Returns `Err` instead of panicking.
+pub fn try_databar_ltd_runs(v: u64) -> Result<[u32; 46], &'static str> {
+    if v >= 2_000_000_000_000 {
+        return Err("invalid databarltd payload");
+    }
     let interleave = |(sp, br): ([u32; 7], [u32; 7])| {
         let mut out = [0u32; 14];
         for i in 0..7 {
@@ -1630,7 +1756,13 @@ pub fn databar_ltd_runs(v: u64) -> [u32; 46] {
         runs[16 + i] = u32::from(w);
     }
     runs[30..44].copy_from_slice(&c);
-    runs
+    Ok(runs)
+}
+
+/// Build the 46 run widths of a DataBar Limited symbol for the 13-digit
+/// value `v`. Panics if `v >= 2·10^12` (test wrapper).
+pub fn databar_ltd_runs(v: u64) -> [u32; 46] {
+    try_databar_ltd_runs(v).expect("databar_ltd_runs")
 }
 
 /// Render the 46 run widths of a DataBar Limited symbol as a Canvas.
