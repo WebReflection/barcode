@@ -114,7 +114,7 @@ impl CodabarDecoder {
                 for i in 0..3 {
                     spaces[i] = (runs[k + 2 * i + 1].1 as f32 >= thr) as u8;
                 }
-                result = Some((bars, spaces, widths[4]));
+                result = Some((bars, spaces, widths[first_wide - 1]));
             }
         }
         result
@@ -148,9 +148,13 @@ impl CodabarDecoder {
         if b0 == 0 || s_lo == 0 || b_hi * 5 < b0 * 7 || s1 * 5 < s_lo * 7 {
             return None;
         }
-        let (bars, spaces, _) = Self::classify(runs, start)?;
+        let (bars, spaces, start_w4) = Self::classify(runs, start)?;
         let first = Self::lookup(bars, spaces)?;
         if !is_start_stop(first) {
+            return None;
+        }
+        // Left quiet zone: flush left edge or >= 5 narrow modules before start.
+        if start > 1 && (runs[start - 1].0 || (runs[start - 1].1 as f32) < start_w4 as f32 * 5.0) {
             return None;
         }
         let mut k = start + 8;
@@ -159,7 +163,15 @@ impl CodabarDecoder {
             let (bars, spaces, w4) = Self::classify(runs, k)?;
             let c = Self::lookup(bars, spaces)?;
             if is_start_stop(c) {
-                if row.last_ink_run != k + 6 || text.is_empty() {
+                if text.is_empty() {
+                    return None;
+                }
+                let quiet_right = k + 6 == row.last_ink_run
+                    || runs
+                        .get(k + 7)
+                        .map(|r| !r.0 && (r.1 as f32) >= w4 as f32 * 5.0)
+                        .unwrap_or(true);
+                if !quiet_right {
                     return None;
                 }
                 let x_start = row.offsets[start];
@@ -329,6 +341,16 @@ mod tests {
         let x0 = canvas.width - 10 * 4 - 4;
         canvas.clear(x0, 0, 4, 30);
         assert_eq!(decode_canvas(&canvas, 2), None);
+    }
+
+    #[test]
+    fn ink_beside_symbol_does_not_hide_stop() {
+        let mut canvas = barcode_fixtures::encode_codabar("40156", 4, 2.5, 30);
+        // Simulate label borders printed outside both quiet zones.
+        canvas.fill(2, 0, 4, 30);
+        let border_x = canvas.width - 6;
+        canvas.fill(border_x, 0, 4, 30);
+        assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some("40156"));
     }
 }
 

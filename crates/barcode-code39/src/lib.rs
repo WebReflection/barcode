@@ -217,10 +217,12 @@ impl Code39Decoder {
                 text.push(ch);
             }
             j += 9;
-            // Intercharacter gap: a narrow background run.
-            if j < runs.len() && !runs[j].0 && runs[j].1 <= sp_lo * 3 / 2 {
-                j += 1;
+            // Intercharacter gap: must be a narrow-to-moderate background run
+            // (never skip leaving `j` on a space run, which would invert polarity).
+            if j >= runs.len() || runs[j].0 || runs[j].1 > (sp_lo * 3).max(sp_lo + 2) {
+                return None;
             }
+            j += 1;
             if j + 9 > runs.len() {
                 return None;
             }
@@ -354,5 +356,28 @@ mod tests {
             TABLE.iter().map(|(c, _)| *c).filter(|c| *c != "*").collect();
         let canvas = barcode_fixtures::encode_code39(&all, 3, 2.5, 30);
         assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some(all.as_str()));
+    }
+
+    #[test]
+    fn wide_intercharacter_gap_bails_instead_of_inverting_polarity() {
+        // Construct a row whose start '*' is followed by a huge quiet-zone
+        // space (10x narrow) and another character: try_from must bail
+        // cleanly instead of leaving `j` on the space run.
+        let mut row = RowRuns::with_capacity(64);
+        let star = barcode_fixtures::encode_code39("A", 3, 2.5, 10);
+        let img = BitImage::new(star.width, star.height, star.bits());
+        row.scan_row(&img, 5);
+        // Widen the first inter-character space (run index 10) to 30px (10x narrow).
+        row.runs[10].1 = 30;
+        let mut acc = 0u32;
+        row.offsets.clear();
+        row.prefix.clear();
+        row.prefix.push(0);
+        for &(_, len) in &row.runs {
+            row.offsets.push(acc);
+            acc += len;
+            row.prefix.push(acc);
+        }
+        assert!(Code39Decoder::try_from(&row, 1).is_none());
     }
 }

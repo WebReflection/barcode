@@ -225,3 +225,50 @@ fn inverted_code_on_a_light_page_reads_still() {
         hits.iter().map(|h| &h.text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn still_inverted_does_not_leak_polarity_and_live_ttl_decays() {
+    let code = barcode_fixtures::encode_code128("INV-LEAK-1", 4, 80);
+    let inv = inverted(&code);
+    let tiers = Tiers { code128: true, ..Default::default() };
+
+    // 1. A still inverted read must NOT set remembered polarity for future live scans.
+    let mut sc = BarcodeScanner::new();
+    let hits = sc.decode_still_core(code.width as usize, code.height as usize, &inv, tiers, 4000);
+    assert!(hits.iter().any(|h| h.text == "INV-LEAK-1"));
+    // Construct a light-page inverted island (<50% ink): if polarity had
+    // leaked from the still scan, decode_live_core would try inverted first
+    // and decode it; without a leak, live does not invert a <50% ink frame.
+    let island = inverted_on_white_page(&code, 1056);
+    let leaked = sc.decode_live_core(island.width as usize, island.height as usize, island.bits(), tiers);
+    assert!(leaked.is_empty(), "still inverted leaked polarity into live scan");
+
+    // 2. A live inverted hit remembers polarity for close-up confirmation,
+    //    then decays cleanly after a few blank misses so it does not linger.
+    let mut sc2 = BarcodeScanner::new();
+    let full_inv = inverted(&{
+        let mut f = Canvas::new(1056, 1056);
+        let x0 = (1056 - code.width) / 2;
+        let y0 = (1056 - code.height) / 2;
+        for y in 0..code.height {
+            for x in 0..code.width {
+                let i = y as usize * code.bytes_per_row + (x as usize >> 3);
+                if (code.bits()[i] >> (x & 7)) & 1 == 1 {
+                    f.fill(x0 + x, y0 + y, 1, 1);
+                }
+            }
+        }
+        f
+    });
+    assert!(sc2.decode_live_core(1056, 1056, &full_inv, tiers).iter().any(|h| h.text == "INV-LEAK-1"));
+    // Feed 3 blank (normal white) frames to expire the TTL.
+    let blank = Canvas::new(128, 128);
+    for _ in 0..3 {
+        assert!(sc2.decode_live_core(128, 128, blank.bits(), tiers).is_empty());
+    }
+    // After decay, a <50% ink inverted island is no longer decoded via stale polarity.
+    assert!(
+        sc2.decode_live_core(island.width as usize, island.height as usize, island.bits(), tiers).is_empty(),
+        "live inverted TTL failed to decay after blank misses"
+    );
+}
