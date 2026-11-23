@@ -117,12 +117,12 @@ await new Promise((r) => setTimeout(r, 8000));
 // return PNG data URLs. Batched in one evaluate to amortize round trips.
 const WASM_MODULE = "/@fs" + process.cwd() + "/src/wasm/pkg/barcode_wasm.js";
 const EXPR = `(async () => {
-  const { encode_fixture } = await import(${JSON.stringify(WASM_MODULE)});
+  const { encode_fixture_opts } = await import(${JSON.stringify(WASM_MODULE)});
   await (await import(${JSON.stringify(WASM_MODULE)})).default();
   const VARIANTS = ${JSON.stringify(VARIANTS)};
   const out = [];
   for (const v of VARIANTS) {
-    const enc = encode_fixture(v.symbology, v.text, v.module, v.height || 320);
+    const enc = encode_fixture_opts(v.symbology, v.text, v.module, v.height || 320, -1, -1, 0, -1, 0, 0, 0);
     const c = document.createElement("canvas");
     c.width = ${SHEET_W}; c.height = ${SHEET_H};
     const ctx = c.getContext("2d");

@@ -1474,6 +1474,7 @@ impl WasmResult {
 /// pipeline gets on one frame and what each stage produced. The finders
 /// are (x, y, module) triples in detection order; `stage_failed` names the
 /// first stage that returned nothing.
+#[cfg(feature = "debug")]
 #[derive(Serialize)]
 struct QrDiag {
     finders: Option<Vec<[f32; 3]>>,
@@ -1486,6 +1487,7 @@ struct QrDiag {
     stage_failed: String,
 }
 
+#[cfg(feature = "debug")]
 #[derive(Serialize)]
 struct GridInfo {
     size: u32,
@@ -1494,6 +1496,7 @@ struct GridInfo {
     step_y: [f32; 2],
 }
 
+#[cfg(feature = "debug")]
 #[wasm_bindgen]
 pub fn qr_debug_stages(width: usize, height: usize, data: &[u8]) -> Result<JsValue, JsValue> {
     let img = BitImage::new(width as u32, height as u32, data);
@@ -1577,6 +1580,7 @@ pub fn qr_debug_stages(width: usize, height: usize, data: &[u8]) -> Result<JsVal
 /// Brute-force (EC, mask) diagnostic: reports which combinations give
 /// RS-valid codewords on the detected grid, with parsed text. The format
 /// read should match the first entry.
+#[cfg(feature = "debug")]
 #[wasm_bindgen]
 pub fn qr_brute_force_format(width: usize, height: usize, data: &[u8]) -> Result<JsValue, JsValue> {
     let img = BitImage::new(width as u32, height as u32, data);
@@ -1745,6 +1749,7 @@ impl EncOptions {
 ///
 /// This is the no-options form. [`encode_fixture_opts`] is the same
 /// builder with QR/PDF417/DataMatrix layout options.
+#[cfg(feature = "debug")]
 #[wasm_bindgen]
 pub fn encode_fixture(symbology: &str, text: &str, module: u32, height: u32) -> Result<JsValue, JsValue> {
     encode_fixture_opts(symbology, text, module, height, -1, -1, 0, -1, 0, 0, 0)
@@ -1784,14 +1789,6 @@ fn encode_fixture_impl(
     height: u32,
     o: EncOptions,
 ) -> Result<JsValue, JsValue> {
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Enc {
-        width: u32,
-        height: u32,
-        bytes_per_row: usize,
-        data: Vec<u8>,
-    }
     let quiet = 10 * module;
     let canvas = match symbology {
         "ean13" => barcode_fixtures::encode_ean13(text, module, height, quiet),
@@ -1915,13 +1912,7 @@ fn encode_fixture_impl(
         }
         _ => return Err(JsValue::from_str("unknown symbology")),
     };
-    let enc = Enc {
-        width: canvas.width,
-        height: canvas.height,
-        bytes_per_row: canvas.bytes_per_row,
-        data: canvas.bits().to_vec(),
-    };
-    serde_wasm_bindgen::to_value(&enc).map_err(|_| JsValue::from_str("serialize failed"))
+    fixture_enc(canvas)
 }
 
 /// Shared `Enc` serialization for the fixture builders.
@@ -2093,6 +2084,7 @@ fn fixture_bytes_canvas(
 
 /// Render a synthetic binary specimen (hex payload) for the self-test
 /// harness — same mask layout as `encode_fixture`.
+#[cfg(feature = "debug")]
 #[wasm_bindgen]
 pub fn encode_fixture_hex(symbology: &str, hex: &str, module: u32, _height: u32) -> Result<JsValue, JsValue> {
     if hex.len() % 2 != 0 || hex.bytes().any(|b| !b.is_ascii_hexdigit()) {
@@ -2108,6 +2100,7 @@ pub fn encode_fixture_hex(symbology: &str, hex: &str, module: u32, _height: u32)
 /// Render an exact byte payload — the encode half of `Code.raw`. Same
 /// mask layout as `encode_fixture`; symbologies without binary encoders
 /// error here (the caller falls back to the text path).
+#[cfg(feature = "debug")]
 #[wasm_bindgen]
 pub fn encode_fixture_raw(symbology: &str, raw: &[u8], module: u32, _height: u32) -> Result<JsValue, JsValue> {
     fixture_enc(fixture_bytes_canvas(symbology, raw, module, EncOptions::default())?)

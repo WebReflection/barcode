@@ -16,7 +16,7 @@
 // it off this display. Specimen comes from the same WASM encoder the test
 // harness uses — guaranteed valid round-trip input.
 // Usage: /show.html?s=ean13&t=4006381333931
-import init, { encode_fixture } from "../src/wasm/pkg/barcode_wasm.js";
+import init, { encode_fixture_opts } from "../src/wasm/pkg/barcode_wasm.js";
 
 const q = new URLSearchParams(location.search);
 const symbology = q.get("s") ?? "ean13";
@@ -26,10 +26,10 @@ await init();
 /** @type {any} */
 let fx;
 try {
-  fx = encode_fixture(symbology, text, Number(q.get("m") ?? 4), 400);
+  fx = encode_fixture_opts(symbology, text, Number(q.get("m") ?? 4), 400, -1, -1, 0, -1, 0, 0, 0);
 } catch (err) {
   document.title = "FIXTURE ERROR";
-  document.getElementById("label").textContent = `encode_fixture(${symbology}, ${text}): ${err?.message ?? err}`;
+  document.getElementById("label").textContent = `encode_fixture_opts(${symbology}, ${text}): ${err?.message ?? err}`;
   throw err;
 }
 

@@ -38,7 +38,7 @@
 
 import binding, { options as transfer } from '@webreflection/bindings/message-port';
 import { svg } from '@webreflection/utils/dom/content';
-import { Scanner } from '../src/scanner.js';
+import { LiveScanner } from '../src/live-scanner.js';
 import { bitmapToSVG, encodableText } from '../src/svg.js';
 import { normalizeRenderOptions } from '../src/render-options.js';
 
@@ -350,7 +350,7 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
       /** @type {HTMLElement | null} */ let zoomLabel = null;
       /** @type {HTMLElement | null} */ let zoomText = null;
       /** @type {HTMLElement | null} */ let progressFill = null;
-      /** @type {Scanner | null} */ let scanner;
+      /** @type {LiveScanner | null} */ let scanner;
       /**
        * Digital zoom must be visible: the preview shows exactly the
        * center crop the decoder receives. Native track zoom already
@@ -469,7 +469,7 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
               const factor = pendingZoom;
               pendingZoom = null;
               if (!scanner || settled) break;
-              await scanner.zoomTo(factor, false);
+              await scanner.zoomTo(factor);
             }
           } catch {
             // camera closed mid-gesture: teardown already owns the exit
@@ -535,7 +535,7 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
         dialog.addEventListener('touchmove', stopPageZoom, { passive: false });
       }
 
-      scanner = new Scanner({
+      scanner = new LiveScanner({
         video: /** @type {HTMLVideoElement} */ (v),
         budget: latency ?? 500,
         formats: resolveType(type),
@@ -596,13 +596,13 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
       try {
         await scanner.start();
         // The slider exists only when the camera cannot zoom natively;
-        // pinch drives both paths (see zoomTo in scanner.js).
+        // pinch drives both paths (see zoomTo in live-scanner.js).
         if (!video && zoomLabel && zoomInput && !scanner.hasZoom()) {
           const slider = /** @type {HTMLInputElement} */ (zoomInput);
           /** @type {HTMLElement} */ (zoomLabel).hidden = false;
           slider.addEventListener('input', () => {
             syncPreview(Number(slider.value));
-            void scanner.zoomTo(Number(slider.value), false);
+            void scanner.zoomTo(Number(slider.value));
           });
         }
         // the torch toggle only exists when the track can actually do it

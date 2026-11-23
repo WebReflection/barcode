@@ -21,7 +21,11 @@ const STILL_BUDGET_MS = 5000;
 import { createSVG } from "../src/svg.js";
 import { createBinarizer } from "../src/binarizer-factory.js";
 import { CpuBinarizer } from "../src/cpu-binarizer.js";
-import { encode_fixture, encode_fixture_hex } from "../src/wasm/pkg/barcode_wasm.js";
+import { encode_fixture_opts, encode_fixture_raw_opts } from "../src/wasm/pkg/barcode_wasm.js";
+const encodeFixture = (/** @type {string} */ sym, /** @type {string} */ text, /** @type {number} */ mod, /** @type {number} */ h) =>
+  encode_fixture_opts(sym, text, mod, h, -1, -1, 0, -1, 0, 0, 0);
+const encodeFixtureRaw = (/** @type {string} */ sym, /** @type {Uint8Array} */ raw, /** @type {number} */ mod, /** @type {number} */ h) =>
+  encode_fixture_raw_opts(sym, raw, mod, h, -1, -1, 0, -1, 0, 0, 0);
 import rawCases from "../tools/e2e/cases.json";
 
 /**
@@ -156,7 +160,7 @@ async function runWorker() {
     const t0 = performance.now();
     let row;
     try {
-      const enc = /** @type {Fixture} */ (await (hex ? encode_fixture_hex(sym, hex, module, 320) : encode_fixture(sym, text, module, 320)));
+      const enc = /** @type {Fixture} */ (await (bytes ? encodeFixtureRaw(sym, bytes, module, 320) : encodeFixture(sym, text, module, 320)));
       const source = scaled(maskToCanvas(enc), scale);
       const msg = await decodeInWorker(source);
       const hit = msg.results.find((/** @type {DecodedCode} */ r) => r.text === text && (!bytes || bufEq(r.raw, bytes)));
@@ -217,7 +221,7 @@ async function run() {
     const t0 = performance.now();
     let row;
     try {
-      const enc = /** @type {Fixture} */ (await (hex ? encode_fixture_hex(sym, hex, module, 320) : encode_fixture(sym, text, module, 320)));
+      const enc = /** @type {Fixture} */ (await (bytes ? encodeFixtureRaw(sym, bytes, module, 320) : encodeFixture(sym, text, module, 320)));
       const source = scaled(maskToCanvas(enc), scale);
       const code = await api.scan({ image: source });
       const hit = code?.text === text && (!bytes || bufEq(code?.raw, /** @type {Uint8Array} */ (bytes))) ? code : null;
