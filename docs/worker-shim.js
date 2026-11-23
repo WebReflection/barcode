@@ -1,1 +1,1 @@
-import "https://cdn.jsdelivr.net/npm/@webreflection/barcode@0.2.11/dist/worker.js";
+import "https://cdn.jsdelivr.net/npm/@webreflection/barcode@0.2.12/dist/worker.js";

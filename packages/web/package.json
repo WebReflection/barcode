@@ -1,6 +1,6 @@
 {
   "name": "@webreflection/barcode",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "WebGPU-accelerated barcode and QR scanning for the web: clean-room Rust/WASM decoders, native JS with JSDoc types, one static dist folder.",
   "type": "module",
   "license": "MIT",
