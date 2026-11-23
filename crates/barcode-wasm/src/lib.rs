@@ -67,11 +67,12 @@ pub struct BarcodeScanner {
     databarltd: DataBarLtdDecoder,
     databarstk: DataBarStackedDecoder,
     databarexpanded: DataBarExpandedDecoder,
-    /// Polarity of the last successful read. Camera frames keep their
-    /// polarity, and the confirmation re-check crops to the quad — that
-    /// close-up of an inverted symbol is ~46% ink, below the full-frame
-    /// heuristic. Remembering the polarity makes the close-up cheap.
-    inverted: bool,
+    /// Remaining live frames that should try inverted polarity first.
+    /// Set on a live inverted read so the confirmation close-up (~46% ink,
+    /// below the full-frame heuristic) stays cheap, decays on live misses,
+    /// clears on normal hits, and is ignored/untouched by still scans so
+    /// polarity never leaks across unrelated scans.
+    inverted_ttl: u8,
 }
 
 #[wasm_bindgen]
@@ -92,7 +93,7 @@ impl BarcodeScanner {
             databarltd: DataBarLtdDecoder::new(2),
             databarstk: DataBarStackedDecoder::new(1),
             databarexpanded: DataBarExpandedDecoder::new(2),
-            inverted: false,
+            inverted_ttl: 0,
         }
     }
 
@@ -198,35 +199,29 @@ impl BarcodeScanner {
         still: bool,
         still_budget_ms: u64,
     ) -> Vec<barcode_core::DecodeResult> {
-        let bits: Vec<u8> = img.data.iter().map(|b| !b).collect();
-        let inv = BitImage::new(img.width, img.height, &bits);
-        // Remembered polarity first: a camera frame keeps its polarity, and
-        // the confirmation close-up crops to the quad — an inverted bar
-        // strip measures ~46% ink, below the full-frame heuristic.
-        if self.inverted {
-            let out = self.scan_polarity(&inv, tiers, still, still_budget_ms / 2);
+        // Remembered polarity applies ONLY to consecutive live camera frames
+        // (confirming an inverted close-up whose ink fraction dropped below 50%).
+        // Stills are independent one-shot photos and never read or mutate it.
+        if !still && self.inverted_ttl > 0 {
+            let bits: Vec<u8> = img.data.iter().map(|b| !b).collect();
+            let inv = BitImage::new(img.width, img.height, &bits);
+            let out = self.scan_polarity(&inv, tiers, false, still_budget_ms / 2);
             if !out.is_empty() {
+                self.inverted_ttl = 3;
                 return out;
             }
-            let out = self.scan_polarity(img, tiers, still, still_budget_ms / 2);
+            self.inverted_ttl -= 1;
+            let out = self.scan_polarity(img, tiers, false, still_budget_ms / 2);
             if !out.is_empty() {
-                self.inverted = false;
+                self.inverted_ttl = 0;
             }
             return out;
         }
         // A mostly-ink mask is worth a second sweep on the live path. A
         // still image ALWAYS gets one: a gallery photo may frame a
         // white-on-black code with light margins, keeping the ink fraction
-        // low (a 4% island), and the remembered polarity starts false.
-        // The budget is split up-front so the pair still respects the
-        // caller's deadline (a dark scene pays the same total for two
-        // opinions).
+        // low (a 4% island).
         let suspicious = still || ink_fraction(img) >= 0.5;
-        // The inverted second opinion is the common failure mode for a
-        // still (a white-on-black code on a light page), and its DataMatrix
-        // ladder alone can need ~2s, so the still primary gets a third and
-        // the retry two thirds. Live keeps the even split: a frame that
-        // already looks dark should not starve the primary polarity.
         let first_budget = if suspicious {
             if still {
                 still_budget_ms / 3
@@ -241,11 +236,6 @@ impl BarcodeScanner {
         if !out.is_empty() || !suspicious {
             return out;
         }
-        // A still's fixed per-polarity costs (rotation/locator setup) are
-        // not charged to the sample budget. Cap the inverted retry to both
-        // its planned share AND the wall time actually left in the caller's
-        // deadline so an overshoot in polarity 1 cannot double the budget
-        // (and an early finish in polarity 1 never inflates polarity 2).
         let inv_budget = if still {
             let left = still_budget_ms.saturating_sub(now_ms().saturating_sub(started));
             if left == 0 {
@@ -255,9 +245,11 @@ impl BarcodeScanner {
         } else {
             still_budget_ms - first_budget
         };
+        let bits: Vec<u8> = img.data.iter().map(|b| !b).collect();
+        let inv = BitImage::new(img.width, img.height, &bits);
         let out = self.scan_polarity(&inv, tiers, still, inv_budget);
-        if !out.is_empty() {
-            self.inverted = true;
+        if !still && !out.is_empty() {
+            self.inverted_ttl = 3;
         }
         out
     }

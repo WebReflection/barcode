@@ -82,10 +82,11 @@ impl Code93Decoder {
     }
 
     /// Stop: the start/stop pattern followed by a 1-module termination
-    /// bar which must be the row's last ink run.
+    /// bar and a right quiet zone (either end of ink on the row or >= 5
+    /// modules of paper before any neighbouring print/border).
     fn stop_at(row: &RowRuns, k: usize) -> bool {
         let runs = &row.runs;
-        if k + 7 > runs.len() || k + 6 != row.last_ink_run {
+        if k + 7 > runs.len() {
             return false;
         }
         let sum = row.prefix[k + 6] - row.prefix[k];
@@ -104,7 +105,14 @@ impl Code93Decoder {
             }
         }
         let term = runs[k + 6];
-        term.0 && (term.1 as f32 * inv_unit).round() == 1.0
+        if !(term.0 && (term.1 as f32 * inv_unit).round() == 1.0) {
+            return false;
+        }
+        k + 6 == row.last_ink_run
+            || runs
+                .get(k + 7)
+                .map(|r| !r.0 && (r.1 as f32) >= 5.0 * unit)
+                .unwrap_or(true)
     }
 
     /// Decode a symbol whose first bar run is at `start`.
@@ -451,6 +459,15 @@ mod tests {
         let x0 = canvas.width - 10 * 3 - 3;
         canvas.clear(x0, 0, 3, 30);
         assert_eq!(decode_canvas(&canvas, 2), None);
+    }
+
+    #[test]
+    fn ink_beside_symbol_does_not_hide_stop() {
+        let mut canvas = barcode_fixtures::encode_code93("TEST93", 3, 30);
+        // Simulate a label border / text printed outside the right quiet zone.
+        let border_x = canvas.width - 6;
+        canvas.fill(border_x, 0, 4, 30);
+        assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some("TEST93"));
     }
 }
 
