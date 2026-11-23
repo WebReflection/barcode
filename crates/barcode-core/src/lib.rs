@@ -188,6 +188,66 @@ impl<'a> BitImage<'a> {
         data
     }
 
+    /// Packed bits of a 90° clockwise rotation (`dw = height`, `dh = width`,
+    /// `dst(height - 1 - y, x) = src(x, y)`). Processes 8×8 bit blocks via
+    /// SWAR transpose (12 bitwise ops per 64 pixels), with scalar fallback
+    /// for edge strips when dimensions are not multiples of 8.
+    pub fn rot90_cw(&self) -> Vec<u8> {
+        let w = self.width as usize;
+        let h = self.height as usize;
+        let dbpr = h.div_ceil(8).div_ceil(4) * 4;
+        let mut out = vec![0u8; dbpr * w];
+        let bpr = self.bytes_per_row;
+        let full_bx = w / 8;
+        let full_by = h / 8;
+
+        // Fast 8x8 SWAR bit-block transpose: covers all complete 8x8 blocks
+        // aligned to destination bytes (dst_x = 0, 8, ... from src_y = h-1 down).
+        for dx_blk in 0..full_by {
+            let dx_base = dx_blk * 8;
+            for dy_blk in 0..full_bx {
+                let dy_base = dy_blk * 8;
+                // Pack 8 source bytes from rows (h-1-dx_base) down to (h-8-dx_base)
+                // at source byte column `dy_blk` into a u64 (byte r = row r).
+                let mut x = 0u64;
+                for r in 0..8 {
+                    let sy = h - 1 - (dx_base + r);
+                    x |= u64::from(self.data[sy * bpr + dy_blk]) << (r * 8);
+                }
+                let t = transpose8x8(x);
+                for c in 0..8 {
+                    out[(dy_base + c) * dbpr + dx_blk] = (t >> (c * 8)) as u8;
+                }
+            }
+        }
+
+        // Scalar tail for bottom strip (src_y < h % 8, i.e. dst_x >= full_by*8)
+        let rem_h = h - full_by * 8;
+        if rem_h > 0 {
+            for y in 0..rem_h {
+                let dx = h - 1 - y;
+                for x in 0..w {
+                    if self.ink(x as u32, y as u32) {
+                        out[x * dbpr + (dx >> 3)] |= 1 << (dx & 7);
+                    }
+                }
+            }
+        }
+        // Scalar tail for right strip (src_x >= full_bx*8) over the remaining rows
+        let rem_x_start = full_bx * 8;
+        if rem_x_start < w {
+            for y in rem_h..h {
+                let dx = h - 1 - y;
+                for x in rem_x_start..w {
+                    if self.ink(x as u32, y as u32) {
+                        out[x * dbpr + (dx >> 3)] |= 1 << (dx & 7);
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Packed bits of the bitmap rotated by `deg` degrees about the frame
     /// center (nearest neighbor, same dimensions): content appears rotated
     /// by +deg. Vehicle of the tilt-retry tier — the axis-aligned 2D
@@ -327,12 +387,197 @@ fn u8x16_swizzle_reverse(v: core::arch::wasm32::v128) -> core::arch::wasm32::v12
     i8x16_shuffle::<15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0>(v, v)
 }
 
+/// Transpose an 8×8 bit matrix packed as 8 little-endian rows in a `u64`:
+/// input bit `(r, c)` at `8*r + c` moves to output bit `8*c + r`.
+#[inline]
+fn transpose8x8(mut x: u64) -> u64 {
+    let mut t = (x ^ (x >> 7)) & 0x00AA_00AA_00AA_00AA;
+    x ^= t ^ (t << 7);
+    t = (x ^ (x >> 14)) & 0x0000_CCCC_0000_CCCC;
+    x ^= t ^ (t << 14);
+    t = (x ^ (x >> 28)) & 0x0000_0000_F0F0_F0F0;
+    x ^= t ^ (t << 28);
+    x
+}
+
+/// Extracted alternating `(ink, length)` runs of a single scanline, shared
+/// across all active 1D decoders so pixel-level bit scanning runs once per
+/// scanline instead of once per decoder per orientation.
+///
+/// Invariants:
+/// - When `width > 0`, `runs[0]` is ALWAYS `(false, len)` (possibly 0 if
+///   pixel 0 is ink), and polarities strictly alternate (`runs[i].0 == (i % 2 == 1)`).
+/// - `offsets[i]` is the x coordinate where `runs[i]` begins.
+/// - `prefix[i]` is the sum of `runs[0..i].1` (`prefix.len() == runs.len() + 1`).
+/// - `last_ink_run` is the index of the last ink run (or `0` if none).
+#[derive(Debug, Default, Clone)]
+pub struct RowRuns {
+    pub width: u32,
+    pub runs: Vec<(bool, u32)>,
+    pub offsets: Vec<u32>,
+    pub prefix: Vec<u32>,
+    pub last_ink_run: usize,
+}
+
+impl RowRuns {
+    pub fn with_capacity(cap: usize) -> Self {
+        Self {
+            width: 0,
+            runs: Vec::with_capacity(cap),
+            offsets: Vec::with_capacity(cap),
+            prefix: Vec::with_capacity(cap + 1),
+            last_ink_run: 0,
+        }
+    }
+
+    /// Extract the alternating runs of row `y` using 32-bit word scanning
+    /// (`trailing_zeros`), skipping up to 32 identical pixels per iteration.
+    /// Bit-for-bit identical to pixel-by-pixel scanning.
+    pub fn scan_row(&mut self, img: &BitImage, y: u32) {
+        self.runs.clear();
+        self.offsets.clear();
+        self.prefix.clear();
+        self.prefix.push(0);
+        self.width = img.width;
+        self.last_ink_run = 0;
+
+        let w = img.width;
+        if w == 0 || y >= img.height {
+            return;
+        }
+        let row = &img.data[y as usize * img.bytes_per_row..];
+        let mut cur = false; // invariant: first run is always background (possibly 0)
+        let mut run_start = 0u32;
+        let mut x = 0u32;
+
+        // `bytes_per_row` is a multiple of 4, so every word containing pixels
+        // in `0..w` lies fully within `row`.
+        let nwords = (w as usize).div_ceil(32);
+        for wi in 0..nwords {
+            let word_base = (wi as u32) << 5;
+            let word_end = (word_base + 32).min(w);
+            let raw = u32::from_le_bytes([
+                row[wi * 4],
+                row[wi * 4 + 1],
+                row[wi * 4 + 2],
+                row[wi * 4 + 3],
+            ]);
+            // Fast path: whole 32-pixel word matches `cur` (no transitions).
+            if word_end - word_base == 32 && ((cur && raw == u32::MAX) || (!cur && raw == 0)) {
+                x = word_end;
+                continue;
+            }
+            while x < word_end {
+                let bit_off = x - word_base;
+                let rem = word_end - x;
+                let bits = (if cur { !raw } else { raw }) >> bit_off;
+                let matched = if bits == 0 {
+                    rem
+                } else {
+                    bits.trailing_zeros().min(rem)
+                };
+                x += matched;
+                if matched < rem {
+                    let len = x - run_start;
+                    if cur {
+                        self.last_ink_run = self.runs.len();
+                    }
+                    self.runs.push((cur, len));
+                    self.offsets.push(run_start);
+                    self.prefix.push(x);
+                    run_start = x;
+                    cur = !cur;
+                }
+            }
+        }
+        if w > run_start {
+            let len = w - run_start;
+            if cur {
+                self.last_ink_run = self.runs.len();
+            }
+            self.runs.push((cur, len));
+            self.offsets.push(run_start);
+            self.prefix.push(w);
+        }
+    }
+
+    /// Populate `dst` with the exact horizontal mirror of `self` (as if
+    /// `scan_row` had run on `img.mirrored_x()`), with zero bitmap copies.
+    pub fn reverse_into(&self, dst: &mut RowRuns) {
+        dst.runs.clear();
+        dst.offsets.clear();
+        dst.prefix.clear();
+        dst.prefix.push(0);
+        dst.width = self.width;
+        dst.last_ink_run = 0;
+
+        if self.runs.is_empty() || self.width == 0 {
+            return;
+        }
+        // Drop a leading zero-length paper sentinel: after reversing it would
+        // sit at the right edge where pixel-by-pixel scanning never emits one.
+        let slice = if self.runs[0] == (false, 0) {
+            &self.runs[1..]
+        } else {
+            &self.runs[..]
+        };
+        if slice.is_empty() {
+            return;
+        }
+        // If the mirrored row starts with ink, seed the leading `(false, 0)`
+        // sentinel so `dst.runs[0]` keeps the background-first invariant.
+        if slice.last().is_some_and(|&(ink, _)| ink) {
+            dst.runs.push((false, 0));
+            dst.offsets.push(0);
+            dst.prefix.push(0);
+        }
+        let mut acc = 0u32;
+        for &(ink, len) in slice.iter().rev() {
+            if ink {
+                dst.last_ink_run = dst.runs.len();
+            }
+            dst.runs.push((ink, len));
+            dst.offsets.push(acc);
+            acc += len;
+            dst.prefix.push(acc);
+        }
+    }
+}
+
 /// A symbology decoder. Implementations must be allocation-frugal on the hot
 /// path (reuse scratch buffers internally) and must never panic on hostile
 /// input: barcodes come from an untrusted camera pointed at the world.
 pub trait SymbologyDecoder {
     fn symbology(&self) -> Symbology;
     fn decode(&mut self, image: &BitImage) -> Vec<DecodeResult>;
+}
+
+/// Row-oriented 1D decoder interface. Allows callers (e.g. `barcode-wasm`) to
+/// extract each scanline's [`RowRuns`] ONCE and feed the same slice to every
+/// active 1D decoder — and to reverse runs in-place for 180° / 270° without
+/// copying bitmaps.
+pub trait LinearDecoder: SymbologyDecoder {
+    fn reset(&mut self);
+    fn scan_line(&mut self, row: &RowRuns, y: u32) -> Option<DecodeResult>;
+    fn finish_votes(&self) -> Option<DecodeResult>;
+    /// Total votes accumulated since `reset()` (0 in O(1) when empty).
+    /// Used by strided live scanning to trigger immediate adjacent-row
+    /// (`y ± 1`) corroboration the moment any row records a vote.
+    fn vote_count(&self) -> usize;
+}
+
+/// Run a single [`LinearDecoder`] over every row of `image` using the shared
+/// word-level [`RowRuns`] extractor.
+pub fn decode_linear_single<D: LinearDecoder>(dec: &mut D, image: &BitImage) -> Vec<DecodeResult> {
+    let mut row = RowRuns::with_capacity(256);
+    dec.reset();
+    for y in 0..image.height {
+        row.scan_row(image, y);
+        if let Some(hit) = dec.scan_line(&row, y) {
+            return vec![hit];
+        }
+    }
+    dec.finish_votes().into_iter().collect()
 }
 
 #[cfg(test)]
@@ -416,5 +661,93 @@ mod tests {
             runs,
             vec![(false, 0), (true, 2), (false, 1), (true, 3), (false, 2)]
         );
+    }
+
+    fn reference_rot90_cw(img: &BitImage) -> Vec<u8> {
+        let w = img.width as usize;
+        let h = img.height as usize;
+        let dbpr = h.div_ceil(8).div_ceil(4) * 4;
+        let mut out = vec![0u8; dbpr * w];
+        for y in 0..h {
+            for x in 0..w {
+                if img.ink(x as u32, y as u32) {
+                    let dx = h - 1 - y;
+                    out[x * dbpr + (dx >> 3)] |= 1 << (dx & 7);
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn word_row_runs_reverse_and_rot90_match_reference() {
+        for &(w, h) in &[
+            (1u32, 1u32),
+            (7, 3),
+            (8, 8),
+            (13, 5),
+            (31, 9),
+            (32, 16),
+            (33, 17),
+            (64, 32),
+            (105, 41),
+            (576, 64),
+        ] {
+            let bpr = (w.div_ceil(8).div_ceil(4) * 4) as usize;
+            let mut data = vec![0u8; bpr * h as usize];
+            let mut seed = 0x9e3779b9u32 ^ (w << 8) ^ h;
+            for y in 0..h as usize {
+                for x in 0..w {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    // Cover all-0, all-1, and mixed rows.
+                    let ink = match y {
+                        0 => false,
+                        1 if h > 2 => true,
+                        _ => (seed & 0x3) == 0,
+                    };
+                    if ink {
+                        data[y * bpr + (x >> 3) as usize] |= 1 << (x & 7);
+                    }
+                }
+            }
+            let img = BitImage::new(w, h, &data);
+            assert_eq!(img.rot90_cw(), reference_rot90_cw(&img), "rot90_cw {w}x{h}");
+
+            let mirrored = img.mirrored_x();
+            let mimg = BitImage::new(w, h, &mirrored);
+            let mut row = RowRuns::with_capacity(64);
+            let mut rev = RowRuns::with_capacity(64);
+            let mut mrow = RowRuns::with_capacity(64);
+            for y in 0..h {
+                row.scan_row(&img, y);
+                let expected: Vec<_> = img.row_runs(y).collect();
+                assert_eq!(row.runs, expected, "scan_row {w}x{h} y={y}");
+                // Check offsets, prefix, last_ink_run invariants.
+                let mut acc = 0u32;
+                let mut last_ink = 0usize;
+                assert_eq!(row.prefix.len(), row.runs.len() + 1);
+                assert_eq!(row.prefix[0], 0);
+                for (i, &(ink, len)) in row.runs.iter().enumerate() {
+                    assert_eq!(row.offsets[i], acc);
+                    acc += len;
+                    assert_eq!(row.prefix[i + 1], acc);
+                    if ink {
+                        last_ink = i;
+                    }
+                }
+                assert_eq!(acc, w);
+                assert_eq!(row.last_ink_run, last_ink);
+
+                // Check reverse_into against scanning the mirrored bitmap.
+                row.reverse_into(&mut rev);
+                mrow.scan_row(&mimg, y);
+                assert_eq!(rev.runs, mrow.runs, "reverse runs {w}x{h} y={y}");
+                assert_eq!(rev.offsets, mrow.offsets, "reverse offsets {w}x{h} y={y}");
+                assert_eq!(rev.prefix, mrow.prefix, "reverse prefix {w}x{h} y={y}");
+                assert_eq!(rev.last_ink_run, mrow.last_ink_run, "reverse last_ink {w}x{h} y={y}");
+            }
+        }
     }
 }

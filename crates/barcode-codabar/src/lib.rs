@@ -16,7 +16,10 @@
 
 use std::collections::HashMap;
 
-use barcode_core::{BitImage, DecodeResult, Point, Symbology, SymbologyDecoder};
+use barcode_core::{
+    decode_linear_single, BitImage, DecodeResult, LinearDecoder, Point, RowRuns, Symbology,
+    SymbologyDecoder,
+};
 
 /// (bars, spaces) wide-bit patterns per character, transcribed from the
 /// published Codabar table. Bars are a 4-bit pattern B1..B4, spaces a
@@ -59,9 +62,6 @@ struct Candidate {
 #[derive(Debug)]
 pub struct CodabarDecoder {
     min_rows: usize,
-    runs: Vec<(bool, u32)>,
-    offsets: Vec<u32>,
-    last_ink_run: usize,
     votes: HashMap<String, (usize, u32, u32, u32, u32)>,
 }
 
@@ -69,64 +69,29 @@ impl CodabarDecoder {
     pub fn new(min_rows: usize) -> Self {
         Self {
             min_rows: min_rows.max(1),
-            runs: Vec::with_capacity(512),
-            offsets: Vec::with_capacity(512),
-            last_ink_run: 0,
             votes: HashMap::new(),
         }
     }
 
-    fn scan_row(&mut self, image: &BitImage, y: u32) {
-        self.runs.clear();
-        self.offsets.clear();
-        let mut cur = false;
-        let mut n = 0u32;
-        let mut run_start = 0u32;
-        let mut x = 0u32;
-        while x < image.width {
-            let ink = image.ink(x, y);
-            if ink == cur {
-                n += 1;
-            } else {
-                self.runs.push((cur, std::mem::replace(&mut n, 1)));
-                self.offsets.push(run_start);
-                run_start = x;
-                cur = ink;
-            }
-            x += 1;
-        }
-        self.last_ink_run = 0;
-        if n > 0 {
-            self.runs.push((cur, n));
-            self.offsets.push(image.width - n);
-        }
-        for (i, r) in self.runs.iter().enumerate() {
-            if r.0 {
-                self.last_ink_run = i;
-            }
-        }
-    }
-
     /// Classify one character's 7 element widths (runs[k..k+7]) into a
-    /// narrow/wide bit pattern. Returns (bars, spaces) on a clean split.
-    fn classify(&self, k: usize) -> Option<([u8; 4], [u8; 3])> {
-        if k + 7 > self.runs.len() {
+    /// narrow/wide bit pattern. Returns `(bars, spaces, widest_narrow)` on
+    /// a clean split so `try_from` can check the inter-character gap without
+    /// sorting the 7 runs a second time.
+    fn classify(runs: &[(bool, u32)], k: usize) -> Option<([u8; 4], [u8; 3], u32)> {
+        if k + 7 > runs.len() {
             return None;
         }
-        // Bars and spaces must alternate starting with a bar.
-        for i in 0..7 {
-            if self.runs[k + i].0 != (i % 2 == 0) {
-                return None;
-            }
+        // Runs strictly alternate, so checking runs[k].0 proves bar/space alternation.
+        if !runs[k].0 {
+            return None;
         }
         let mut widths = [0u32; 7];
         for (i, w) in widths.iter_mut().enumerate() {
-            *w = self.runs[k + i].1;
+            *w = runs[k + i].1;
         }
         widths.sort_unstable();
-        // 2-wide split: six narrow then two wide. 3-wide: four then three.
         let splits = [
-            (5usize, 2usize), // index of first wide, count of wide
+            (5usize, 2usize),
             (4usize, 3usize),
         ];
         let mut result = None;
@@ -144,12 +109,12 @@ impl CodabarDecoder {
                 let mut bars = [0u8; 4];
                 let mut spaces = [0u8; 3];
                 for i in 0..4 {
-                    bars[i] = (self.runs[k + 2 * i].1 as f32 >= thr) as u8;
+                    bars[i] = (runs[k + 2 * i].1 as f32 >= thr) as u8;
                 }
                 for i in 0..3 {
-                    spaces[i] = (self.runs[k + 2 * i + 1].1 as f32 >= thr) as u8;
+                    spaces[i] = (runs[k + 2 * i + 1].1 as f32 >= thr) as u8;
                 }
-                result = Some((bars, spaces));
+                result = Some((bars, spaces, widths[4]));
             }
         }
         result
@@ -163,93 +128,60 @@ impl CodabarDecoder {
     }
 
     /// Decode a symbol whose first bar run is at `start`.
-    fn try_from(&self, start: usize) -> Option<Candidate> {
-        // First char must be a start/stop character.
-        let (bars, spaces) = self.classify(start)?;
+    fn try_from(row: &RowRuns, start: usize) -> Option<Candidate> {
+        let runs = &row.runs;
+        if start + 7 > runs.len() {
+            return None;
+        }
+        // Exact pre-filter for Codabar start chars (A-D):
+        // - b0 is ALWAYS narrow, and 1 of {b1, b2, b3} is wide (ratio >= 1.4)
+        // - s1 (middle space) is ALWAYS wide, and 1 of {s0, s2} is narrow (ratio >= 1.4)
+        let b0 = runs[start].1;
+        let b1 = runs[start + 2].1;
+        let b2 = runs[start + 4].1;
+        let b3 = runs[start + 6].1;
+        let b_hi = b1.max(b2).max(b3);
+        let s0 = runs[start + 1].1;
+        let s1 = runs[start + 3].1;
+        let s2 = runs[start + 5].1;
+        let s_lo = s0.min(s2);
+        if b0 == 0 || s_lo == 0 || b_hi * 5 < b0 * 7 || s1 * 5 < s_lo * 7 {
+            return None;
+        }
+        let (bars, spaces, _) = Self::classify(runs, start)?;
         let first = Self::lookup(bars, spaces)?;
         if !is_start_stop(first) {
             return None;
         }
-        // Skip the start's 7 elements plus the inter-character space.
         let mut k = start + 8;
         let mut text = String::with_capacity(24);
         loop {
-            let (bars, spaces) = self.classify(k)?;
+            let (bars, spaces, w4) = Self::classify(runs, k)?;
             let c = Self::lookup(bars, spaces)?;
             if is_start_stop(c) {
-                // The stop character must end the row's ink.
-                if self.last_ink_run != k + 6 || text.is_empty() {
+                if row.last_ink_run != k + 6 || text.is_empty() {
                     return None;
                 }
-                let x_start = self.offsets[start];
-                let x_end = self.offsets[k + 6] + self.runs[k + 6].1;
+                let x_start = row.offsets[start];
+                let x_end = row.offsets[k + 6] + runs[k + 6].1;
                 return Some(Candidate { text, x_start, x_end });
             }
             text.push(c);
-            // Inter-character narrow space, then the next char's first bar.
-            if k + 8 > self.runs.len() {
+            if k + 8 > runs.len() {
                 return None;
             }
-            let gap = self.runs[k + 7];
+            let gap = runs[k + 7];
             if gap.0 {
-                return None; // expected a space
+                return None;
             }
-            // Narrow vs this char's own wide threshold: reuse the widest
-            // narrow element of the char just decoded as an upper bound.
-            let mut widths = [0u32; 7];
-            for (i, w) in widths.iter_mut().enumerate() {
-                *w = self.runs[k + i].1;
-            }
-            widths.sort_unstable();
-            if (gap.1 as f32) >= widths[4] as f32 * 1.4 {
-                return None; // gap too wide for an inter-character space
+            if (gap.1 as f32) >= w4 as f32 * 1.4 {
+                return None;
             }
             k += 8;
             if text.len() > 48 {
                 return None;
             }
         }
-    }
-
-    fn decode_impl(&mut self, image: &BitImage) -> Option<DecodeResult> {
-        self.votes.clear();
-        for y in 0..image.height {
-            self.scan_row(image, y);
-            if self.runs.len() < 16 {
-                continue; // start + 1 data + stop + quiets
-            }
-            debug_assert!(!self.runs[0].0);
-            for start in (1..self.runs.len()).step_by(2) {
-                let Some(c) = self.try_from(start) else { continue };
-                // Scanning hygiene, not spec: a payload under 4 characters
-                // is noise. Loose start/stop pairs on random texture produce
-                // 1-2 character junk that otherwise fires onResults and
-                // stops the scan before real symbologies get their frame.
-                if c.text.len() < 4 {
-                    continue;
-                }
-                let (count, x0, x1, y0, y1) = {
-                    let e = self
-                        .votes
-                        .entry(c.text.clone())
-                        .or_insert((0, c.x_start, c.x_end, y, y));
-                    e.0 += 1;
-                    e.1 = e.1.min(c.x_start);
-                    e.2 = e.2.max(c.x_end);
-                    e.3 = e.3.min(y);
-                    e.4 = e.4.max(y);
-                    *e
-                };
-                if count >= self.min_rows {
-                    return Some(self.finish(&c.text, x0, x1, y0, y1));
-                }
-            }
-        }
-        self.votes
-            .iter()
-            .max_by_key(|(_, v)| v.0)
-            .filter(|(_, v)| v.0 >= self.min_rows)
-            .map(|(t, v)| self.finish(t, v.1, v.2, v.3, v.4))
     }
 
     fn finish(&self, text: &str, x0: u32, x1: u32, y0: u32, y1: u32) -> DecodeResult {
@@ -267,13 +199,61 @@ impl CodabarDecoder {
     }
 }
 
+impl LinearDecoder for CodabarDecoder {
+    fn reset(&mut self) {
+        self.votes.clear();
+    }
+
+    fn scan_line(&mut self, row: &RowRuns, y: u32) -> Option<DecodeResult> {
+        let runs = &row.runs;
+        if runs.len() < 16 {
+            return None;
+        }
+        debug_assert!(!runs[0].0);
+        for start in (1..runs.len()).step_by(2) {
+            let Some(c) = Self::try_from(row, start) else { continue };
+            if c.text.len() < 4 {
+                continue;
+            }
+            let (count, x0, x1, y0, y1) = {
+                let e = self
+                    .votes
+                    .entry(c.text.clone())
+                    .or_insert((0, c.x_start, c.x_end, y, y));
+                e.0 += 1;
+                e.1 = e.1.min(c.x_start);
+                e.2 = e.2.max(c.x_end);
+                e.3 = e.3.min(y);
+                e.4 = e.4.max(y);
+                *e
+            };
+            if count >= self.min_rows {
+                return Some(self.finish(&c.text, x0, x1, y0, y1));
+            }
+        }
+        None
+    }
+
+    fn finish_votes(&self) -> Option<DecodeResult> {
+        self.votes
+            .iter()
+            .max_by_key(|(_, v)| v.0)
+            .filter(|(_, v)| v.0 >= self.min_rows)
+            .map(|(t, v)| self.finish(t, v.1, v.2, v.3, v.4))
+    }
+
+    fn vote_count(&self) -> usize {
+        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
+    }
+}
+
 impl SymbologyDecoder for CodabarDecoder {
     fn symbology(&self) -> Symbology {
         Symbology::Codabar
     }
 
     fn decode(&mut self, image: &BitImage) -> Vec<DecodeResult> {
-        self.decode_impl(image).into_iter().collect()
+        decode_linear_single(self, image)
     }
 }
 

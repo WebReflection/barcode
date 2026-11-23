@@ -10,7 +10,10 @@
 
 use std::collections::HashMap;
 
-use barcode_core::{BitImage, DecodeResult, Point, Symbology, SymbologyDecoder};
+use barcode_core::{
+    decode_linear_single, BitImage, DecodeResult, LinearDecoder, Point, RowRuns, Symbology,
+    SymbologyDecoder,
+};
 
 /// 2-of-5 digit patterns (element index 0-4, `1` = wide).
 const D2OF5: [&str; 10] = [
@@ -56,8 +59,6 @@ struct Candidate {
 #[derive(Debug)]
 pub struct ItfDecoder {
     min_rows: usize,
-    runs: Vec<(bool, u32)>,
-    offsets: Vec<u32>,
     votes: HashMap<String, (usize, u32, u32, u32, u32)>,
 }
 
@@ -65,177 +66,99 @@ impl ItfDecoder {
     pub fn new(min_rows: usize) -> Self {
         Self {
             min_rows: min_rows.max(1),
-            runs: Vec::with_capacity(512),
-            offsets: Vec::with_capacity(512),
             votes: HashMap::new(),
         }
     }
 
-    fn scan_row(&mut self, image: &BitImage, y: u32) {
-        self.runs.clear();
-        self.offsets.clear();
-        let mut cur = false;
-        let mut n = 0u32;
-        let mut run_start = 0u32;
-        let mut x = 0u32;
-        while x < image.width {
-            let ink = image.ink(x, y);
-            if ink == cur {
-                n += 1;
-            } else {
-                self.runs.push((cur, std::mem::replace(&mut n, 1)));
-                self.offsets.push(run_start);
-                run_start = x;
-                cur = ink;
-            }
-            x += 1;
-        }
-        if n > 0 {
-            self.runs.push((cur, n));
-            self.offsets.push(image.width - n);
-        }
-    }
-
     /// Decode a symbol whose first bar run is at `start`.
-    ///
-    /// Classification is per-pair: each 10-run digit pair carries exactly
-    /// 6 narrow and 4 wide elements (3+3 and 2+2 per digit), so sorting the
-    /// 10 widths and splitting between the 6th and 7th needs no module
-    /// width and no ratio — both erode and dilate under blur; counts do not.
-    /// A start bar dilated past the global threshold still classifies fine.
-    fn try_from(&self, start: usize) -> Option<Candidate> {
-        if start + 14 > self.runs.len() {
+    fn try_from(row: &RowRuns, start: usize) -> Option<Candidate> {
+        let runs = &row.runs;
+        if start + 14 > runs.len() {
+            return None;
+        }
+        // Exact pre-filter before sorting 10 runs: every start run must be
+        // < thr0, and the first digit pair has 4 wide runs >= hi > thr0, so
+        // at least 4 of runs[start+4..start+14] must exceed max(start runs).
+        let s_max = runs[start]
+            .1
+            .max(runs[start + 1].1)
+            .max(runs[start + 2].1)
+            .max(runs[start + 3].1);
+        let mut wider = 0u32;
+        for i in 4..14 {
+            if runs[start + i].1 > s_max {
+                wider += 1;
+            }
+        }
+        if wider < 4 {
             return None;
         }
         // The start's 4 runs must be narrow per the first pair's split.
-        let (thr0, _) = self.pair_threshold(start + 4)?;
+        let (thr0, _) = Self::pair_threshold(runs, start + 4)?;
         for k in 0..4 {
-            if (self.runs[start + k].1 as f32) >= thr0 {
+            if (runs[start + k].1 as f32) >= thr0 {
                 return None;
             }
         }
 
-        // Decode digit pairs greedily; stop at wide bar + narrow space +
-        // narrow bar followed by a quiet zone.
         let mut digits: Vec<u8> = Vec::with_capacity(20);
         let mut k = start + 4;
         loop {
-            if k + 10 > self.runs.len() {
+            if k + 10 > runs.len() {
                 return None;
             }
-            let (thr, narrow) = self.pair_threshold(k)?;
+            let (thr, narrow) = Self::pair_threshold(runs, k)?;
             let mut bar_w = [0u8; 5];
             let mut sp_w = [0u8; 5];
             for i in 0..5 {
-                bar_w[i] = if (self.runs[k + 2 * i].1 as f32) >= thr { 2 } else { 1 };
-                sp_w[i] = if (self.runs[k + 2 * i + 1].1 as f32) >= thr { 2 } else { 1 };
+                bar_w[i] = if (runs[k + 2 * i].1 as f32) >= thr { 2 } else { 1 };
+                sp_w[i] = if (runs[k + 2 * i + 1].1 as f32) >= thr { 2 } else { 1 };
             }
             digits.push(pattern_digit(&bar_w)?);
             digits.push(pattern_digit(&sp_w)?);
             k += 10;
 
-            // Stop: wide bar, narrow space, narrow bar (verified against a
-            // real capture), then a quiet zone. The quiet zone — not "the
-            // stop must be the row's last ink" — is what separates a real
-            // stop from a mid-symbol mimic: a label border or a printed
-            // rule beside the barcode shares the row, and requiring the
-            // stop to be last rejected the whole frame (Dompé pharma box:
-            // a valid ITF-10 with the label border to its right never
-            // decoded). A genuine stop is followed by >= 5 narrow modules
-            // of white; pair elements leave at most a wide space (2-3
-            // modules) before the next bar. No next run (the crop ends at
-            // the stop) still counts as quiet.
-            if k + 3 <= self.runs.len() {
-                let b1_ok = self.runs[k].0 && (self.runs[k].1 as f32) >= thr;
-                let s_ok = !self.runs[k + 1].0 && (self.runs[k + 1].1 as f32) < thr;
-                let b2_ok = self.runs[k + 2].0 && (self.runs[k + 2].1 as f32) < thr;
-                let quiet = self
-                    .runs
+            if k + 3 <= runs.len() {
+                let b1_ok = runs[k].0 && (runs[k].1 as f32) >= thr;
+                let s_ok = !runs[k + 1].0 && (runs[k + 1].1 as f32) < thr;
+                let b2_ok = runs[k + 2].0 && (runs[k + 2].1 as f32) < thr;
+                let quiet = runs
                     .get(k + 3)
                     .map(|r| !r.0 && (r.1 as f32) >= 5.0 * narrow)
                     .unwrap_or(true);
                 if b1_ok && s_ok && b2_ok && quiet {
-                    // A symbol needs at least three digit pairs. A GS1 check
-                    // digit is NOT required: ITF-10/ITF-12 routing labels
-                    // (parcel carriers, warehouse slips) carry plain data,
-                    // so demanding one rejected real codes outright (the
-                    // 2026-11-18 shipping slip: ITF "0074472289").
                     if digits.len() < 6 {
                         return None;
                     }
                     let text: String = digits.iter().map(|d| (b'0' + d) as char).collect();
-                    let x_start = self.offsets[start];
-                    let x_end = self.offsets[k + 2] + self.runs[k + 2].1;
+                    let x_start = row.offsets[start];
+                    let x_end = row.offsets[k + 2] + runs[k + 2].1;
                     return Some(Candidate { text, x_start, x_end });
                 }
             }
             if digits.len() > 32 {
-                return None; // implausibly long
+                return None;
             }
         }
     }
 
     /// Per-pair narrow/wide threshold: sort the 10 run widths; a valid pair
     /// has exactly 6 narrow then 4 wide with a visible gap between them.
-    /// Returns the split threshold and the widest narrow element (the
-    /// quiet-zone unit).
-    fn pair_threshold(&self, k: usize) -> Option<(f32, f32)> {
-        if k + 10 > self.runs.len() {
+    fn pair_threshold(runs: &[(bool, u32)], k: usize) -> Option<(f32, f32)> {
+        if k + 10 > runs.len() {
             return None;
         }
-        // Ten elements in a stack array: this used to allocate and sort a
-        // Vec for every candidate window on every row.
         let mut widths = [0u32; 10];
         for (i, w) in widths.iter_mut().enumerate() {
-            *w = self.runs[k + i].1;
+            *w = runs[k + i].1;
         }
         widths.sort_unstable();
         let lo = widths[5] as f32;
         let hi = widths[6] as f32;
         if hi < lo * 1.4 || lo == 0.0 {
-            return None; // no clean narrow/wide gap
+            return None;
         }
         Some(((lo + hi) / 2.0, lo))
-    }
-
-    fn decode_impl(&mut self, image: &BitImage) -> Option<DecodeResult> {
-        self.votes.clear();
-        for y in 0..image.height {
-            self.scan_row(image, y);
-            if self.runs.len() < 10 {
-                continue;
-            }
-            // Vote for the row's EARLIEST valid symbol start. A mid-symbol
-            // start also parses (it is a suffix of the real digits, still
-            // 2-of-5 and reaching the same stop), so "first one to vote
-            // twice wins" let a suffix shadow the full payload; the real
-            // start decodes strictly more digits from further left.
-            debug_assert!(!self.runs[0].0);
-            for start in (1..self.runs.len()).step_by(2) {
-                let Some(c) = self.try_from(start) else { continue };
-                let (count, x0, x1, y0, y1) = {
-                    let e = self
-                        .votes
-                        .entry(c.text.clone())
-                        .or_insert((0, c.x_start, c.x_end, y, y));
-                    e.0 += 1;
-                    e.1 = e.1.min(c.x_start);
-                    e.2 = e.2.max(c.x_end);
-                    e.3 = e.3.min(y);
-                    e.4 = e.4.max(y);
-                    *e
-                };
-                if count >= self.min_rows {
-                    return Some(self.finish(&c.text, x0, x1, y0, y1));
-                }
-                break;
-            }
-        }
-        self.votes
-            .iter()
-            .max_by_key(|(_, v)| v.0)
-            .filter(|(_, v)| v.0 >= self.min_rows)
-            .map(|(t, v)| self.finish(t, v.1, v.2, v.3, v.4))
     }
 
     fn finish(&self, text: &str, x0: u32, x1: u32, y0: u32, y1: u32) -> DecodeResult {
@@ -250,6 +173,52 @@ impl ItfDecoder {
                 Point { x: x0 as f32, y: y1 as f32 },
             ],
         }
+    }
+}
+
+impl LinearDecoder for ItfDecoder {
+    fn reset(&mut self) {
+        self.votes.clear();
+    }
+
+    fn scan_line(&mut self, row: &RowRuns, y: u32) -> Option<DecodeResult> {
+        let runs = &row.runs;
+        if runs.len() < 10 {
+            return None;
+        }
+        debug_assert!(!runs[0].0);
+        for start in (1..runs.len()).step_by(2) {
+            let Some(c) = Self::try_from(row, start) else { continue };
+            let (count, x0, x1, y0, y1) = {
+                let e = self
+                    .votes
+                    .entry(c.text.clone())
+                    .or_insert((0, c.x_start, c.x_end, y, y));
+                e.0 += 1;
+                e.1 = e.1.min(c.x_start);
+                e.2 = e.2.max(c.x_end);
+                e.3 = e.3.min(y);
+                e.4 = e.4.max(y);
+                *e
+            };
+            if count >= self.min_rows {
+                return Some(self.finish(&c.text, x0, x1, y0, y1));
+            }
+            break;
+        }
+        None
+    }
+
+    fn finish_votes(&self) -> Option<DecodeResult> {
+        self.votes
+            .iter()
+            .max_by_key(|(_, v)| v.0)
+            .filter(|(_, v)| v.0 >= self.min_rows)
+            .map(|(t, v)| self.finish(t, v.1, v.2, v.3, v.4))
+    }
+
+    fn vote_count(&self) -> usize {
+        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
     }
 }
 
@@ -299,7 +268,7 @@ impl SymbologyDecoder for ItfDecoder {
     }
 
     fn decode(&mut self, image: &BitImage) -> Vec<DecodeResult> {
-        self.decode_impl(image).into_iter().collect()
+        decode_linear_single(self, image)
     }
 }
 
@@ -400,19 +369,17 @@ mod dbg {
         let canvas = barcode_fixtures::encode_itf("800138909760034646303132", 2, 2.0, 30);
         let bits = canvas.bits();
         let img = BitImage::new(canvas.width, canvas.height, &bits);
-        let mut d = ItfDecoder::new(1);
-        d.scan_row(&img, 0);
-        eprintln!("n runs={} width={}", d.runs.len(), canvas.width);
-        eprintln!("runs: {:?}", d.runs.iter().take(24).collect::<Vec<_>>());
-        // where does try_from bail?
+        let mut row = RowRuns::with_capacity(256);
+        row.scan_row(&img, 0);
+        eprintln!("n runs={} width={}", row.runs.len(), canvas.width);
+        eprintln!("runs: {:?}", row.runs.iter().take(24).collect::<Vec<_>>());
         for start in 0..8 {
-            if !d.runs[start].0 { eprintln!("start={start}: bg"); continue; }
-            // replicate the bootstrap
-            if start + 34 > d.runs.len() { eprintln!("start={start}: too short"); continue; }
-            let mut boot: Vec<u32> = (0..34).map(|k| d.runs[start + k].1).collect();
+            if !row.runs[start].0 { eprintln!("start={start}: bg"); continue; }
+            if start + 34 > row.runs.len() { eprintln!("start={start}: too short"); continue; }
+            let mut boot: Vec<u32> = (0..34).map(|k| row.runs[start + k].1).collect();
             boot.sort();
             let thr = (boot[21] + boot[22]) as f32 / 2.0;
-            eprintln!("start={start}: boot[20..24]={:?} thr={thr:.1} startruns={:?}", &boot[20..24], (0..4).map(|k| d.runs[start + k].1).collect::<Vec<_>>());
+            eprintln!("start={start}: boot[20..24]={:?} thr={thr:.1} startruns={:?}", &boot[20..24], (0..4).map(|k| row.runs[start + k].1).collect::<Vec<_>>());
         }
     }
 }
@@ -428,10 +395,11 @@ mod dbg2 {
         let bits = canvas.bits();
         let img = BitImage::new(canvas.width, canvas.height, &bits);
         let mut d = ItfDecoder::new(1);
-        d.scan_row(&img, 0);
-        eprintln!("n={} width={}", d.runs.len(), canvas.width);
+        let mut row = RowRuns::with_capacity(256);
+        row.scan_row(&img, 0);
+        eprintln!("n={} width={}", row.runs.len(), canvas.width);
         for start in 1..3 {
-            let r = d.try_from(start);
+            let r = ItfDecoder::try_from(&row, start);
             eprintln!("try_from({start}) = {:?}", r.as_ref().map(|c| &c.text));
         }
         let res = d.decode(&img);

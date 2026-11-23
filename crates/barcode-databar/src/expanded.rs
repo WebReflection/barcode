@@ -17,7 +17,10 @@
 //! and symbol length, but every data character is independently checked
 //! against the measured width table and the field parser is exact.
 
-use barcode_core::{BitImage, DecodeResult, Point, Symbology, SymbologyDecoder};
+use barcode_core::{
+    decode_linear_single, BitImage, DecodeResult, LinearDecoder, Point, RowRuns, Symbology,
+    SymbologyDecoder,
+};
 use std::sync::OnceLock;
 
 use super::expanded_ai::AI_LENGTHS;
@@ -38,8 +41,6 @@ type Run = (bool, u32);
 #[derive(Debug)]
 pub struct DataBarExpandedDecoder {
     min_rows: usize,
-    runs: Vec<Run>,
-    offsets: Vec<u32>,
     votes: std::collections::HashMap<String, (usize, u32, u32, u32, u32)>,
 }
 
@@ -47,32 +48,7 @@ impl DataBarExpandedDecoder {
     pub fn new(min_rows: usize) -> Self {
         Self {
             min_rows: min_rows.max(1),
-            runs: Vec::with_capacity(256),
-            offsets: Vec::with_capacity(256),
             votes: std::collections::HashMap::new(),
-        }
-    }
-
-    fn scan_row(&mut self, image: &BitImage, y: u32) {
-        self.runs.clear();
-        self.offsets.clear();
-        let mut cur = false;
-        let mut n = 0u32;
-        let mut run_start = 0u32;
-        for x in 0..image.width {
-            let ink = image.ink(x, y);
-            if ink == cur {
-                n += 1;
-            } else {
-                self.runs.push((cur, std::mem::replace(&mut n, 1)));
-                self.offsets.push(run_start);
-                run_start = x;
-                cur = ink;
-            }
-        }
-        if n > 0 {
-            self.runs.push((cur, n));
-            self.offsets.push(image.width - n);
         }
     }
 
@@ -90,61 +66,14 @@ impl DataBarExpandedDecoder {
         }
     }
 
-    fn decode_impl(&mut self, image: &BitImage) -> Option<DecodeResult> {
-        self.votes.clear();
-        for y in 0..image.height {
-            self.scan_row(image, y);
-            if self.runs.len() < 15 {
-                continue; // >= 10 prefix runs + 5 start runs (start is even >= 10)
-            }
-            debug_assert!(!self.runs[0].0);
-            // START opens with a paper run (even index) and needs 9 prefix
-            // runs behind it, so valid starts are even indices >= 10.
-            for start in (10..=(self.runs.len() - 5)).step_by(2) {
-                // Exact START [1, 8, 4, 1, 1] pre-filter: under 0.45 module
-                // rounding, run 1 is [7.55u, 8.45u], run 2 is [3.55u, 4.45u],
-                // and runs 0/3/4 are [0.55u, 1.45u], so s1 > s2 and
-                // s1 >= 5*s0 (7.55/1.45 = 5.207).
-                let s0 = self.runs[start].1;
-                let s1 = self.runs[start + 1].1;
-                let s2 = self.runs[start + 2].1;
-                if s0 == 0 || s1 <= s2 || s1 < 5 * s0 {
-                    continue;
-                }
-                let Some((text, x_start, x_end)) = self.try_symbol(start) else {
-                    continue;
-                };
-                let (count, x0, x1, y0, y1) = {
-                    let e = self
-                        .votes
-                        .entry(text.clone())
-                        .or_insert((0, x_start, x_end, y, y));
-                    e.0 += 1;
-                    e.1 = e.1.min(x_start);
-                    e.2 = e.2.max(x_end);
-                    e.3 = e.3.min(y);
-                    e.4 = e.4.max(y);
-                    (e.0, e.1, e.2, e.3, e.4)
-                };
-                if count >= self.min_rows {
-                    return Some(self.finish(&text, x0, x1, y0, y1));
-                }
-            }
-        }
-        self.votes
-            .iter()
-            .max_by_key(|(_, v)| v.0)
-            .filter(|(_, v)| v.0 >= self.min_rows)
-            .map(|(t, v)| self.finish(t, v.1, v.2, v.3, v.4))
-    }
-
     /// Try a symbol whose start pattern begins at run `start`.
-    fn try_symbol(&self, start: usize) -> Option<(String, u32, u32)> {
+    fn try_symbol(row: &RowRuns, start: usize) -> Option<(String, u32, u32)> {
+        let runs = &row.runs;
         // START: space 1, bar 8, space 4, bar 1, space 1.
-        if start + 5 > self.runs.len() {
+        if start + 5 > runs.len() {
             return None;
         }
-        let start_runs = &self.runs[start..start + 5];
+        let start_runs = &runs[start..start + 5];
         if start_runs[0].0 {
             return None;
         }
@@ -152,24 +81,21 @@ impl DataBarExpandedDecoder {
         if quantize_fixed::<5>(start_runs, unit)? != [1, 8, 4, 1, 1] {
             return None;
         }
-        // Backwards: guard bar (1 module), then the check character. The
-        // guard space merges with the quiet zone, so it is not inspected.
-        if start < 9 || !self.runs[start - 9].0 {
+        if start < 9 || !runs[start - 9].0 {
             return None;
         }
-        if quantize_fixed::<1>(&self.runs[start - 9..start - 8], unit)? != [1] {
+        if quantize_fixed::<1>(&runs[start - 9..start - 8], unit)? != [1] {
             return None;
         }
-        let check_runs = &self.runs[start - 8..start];
+        let check_runs = &runs[start - 8..start];
         let check_widths = quantize_fixed::<8>(check_runs, module_unit(check_runs, 17))?;
         if check_widths.iter().sum::<u32>() != 17 {
             return None;
         }
-        // Forwards: [char][char][block] ..., with a final right guard.
         let mut values = Vec::new();
         let mut j = start + 5;
-        while j + 8 <= self.runs.len() {
-            let char_runs = &self.runs[j..j + 8];
+        while j + 8 <= runs.len() {
+            let char_runs = &runs[j..j + 8];
             let Some(widths) = quantize_fixed::<8>(char_runs, module_unit(char_runs, 17)) else {
                 break;
             };
@@ -181,9 +107,8 @@ impl DataBarExpandedDecoder {
             };
             values.push(value);
             j += 8;
-            if values.len() % 2 == 0 && j + 5 <= self.runs.len() {
-                // Optional 15-module block after each pair.
-                if let Some(b) = quantize_fixed::<5>(&self.runs[j..j + 5], module_unit(&self.runs[j..j + 5], 15)) {
+            if values.len() % 2 == 0 && j + 5 <= runs.len() {
+                if let Some(b) = quantize_fixed::<5>(&runs[j..j + 5], module_unit(&runs[j..j + 5], 15)) {
                     if b.iter().sum::<u32>() == 15 {
                         j += 5;
                     }
@@ -197,10 +122,63 @@ impl DataBarExpandedDecoder {
         let Some(text) = decode_bits(&bits) else {
             return None;
         };
-        let x_start = self.offsets[start - 9];
-        let last = j.min(self.runs.len()) - 1;
-        let x_end = self.offsets[last] + self.runs[last].1;
+        let x_start = row.offsets[start - 9];
+        let last = j.min(runs.len()) - 1;
+        let x_end = row.offsets[last] + runs[last].1;
         Some((text, x_start, x_end))
+    }
+}
+
+impl LinearDecoder for DataBarExpandedDecoder {
+    fn reset(&mut self) {
+        self.votes.clear();
+    }
+
+    fn scan_line(&mut self, row: &RowRuns, y: u32) -> Option<DecodeResult> {
+        let runs = &row.runs;
+        if runs.len() < 15 {
+            return None;
+        }
+        debug_assert!(!runs[0].0);
+        for start in (10..=(runs.len() - 5)).step_by(2) {
+            let s0 = runs[start].1;
+            let s1 = runs[start + 1].1;
+            let s2 = runs[start + 2].1;
+            if s0 == 0 || s1 <= s2 || s1 < 5 * s0 {
+                continue;
+            }
+            let Some((text, x_start, x_end)) = Self::try_symbol(row, start) else {
+                continue;
+            };
+            let (count, x0, x1, y0, y1) = {
+                let e = self
+                    .votes
+                    .entry(text.clone())
+                    .or_insert((0, x_start, x_end, y, y));
+                e.0 += 1;
+                e.1 = e.1.min(x_start);
+                e.2 = e.2.max(x_end);
+                e.3 = e.3.min(y);
+                e.4 = e.4.max(y);
+                (e.0, e.1, e.2, e.3, e.4)
+            };
+            if count >= self.min_rows {
+                return Some(self.finish(&text, x0, x1, y0, y1));
+            }
+        }
+        None
+    }
+
+    fn finish_votes(&self) -> Option<DecodeResult> {
+        self.votes
+            .iter()
+            .max_by_key(|(_, v)| v.0)
+            .filter(|(_, v)| v.0 >= self.min_rows)
+            .map(|(t, v)| self.finish(t, v.1, v.2, v.3, v.4))
+    }
+
+    fn vote_count(&self) -> usize {
+        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
     }
 }
 
@@ -210,7 +188,7 @@ impl SymbologyDecoder for DataBarExpandedDecoder {
     }
 
     fn decode(&mut self, image: &BitImage) -> Vec<DecodeResult> {
-        self.decode_impl(image).into_iter().collect()
+        decode_linear_single(self, image)
     }
 }
 

@@ -12,7 +12,10 @@
 
 use std::collections::HashMap;
 
-use barcode_core::{BitImage, DecodeResult, Point, Symbology, SymbologyDecoder};
+use barcode_core::{
+    decode_linear_single, BitImage, DecodeResult, LinearDecoder, Point, RowRuns, Symbology,
+    SymbologyDecoder,
+};
 
 /// Element widths (bar, space, bar, space, bar, space) of code values 0-106,
 /// transcribed from the ISO/IEC 15417 pattern table. Value 106 is the stop's
@@ -195,8 +198,6 @@ struct Candidate {
 #[derive(Debug)]
 pub struct Code128Decoder {
     min_rows: usize,
-    runs: Vec<(bool, u32)>,
-    offsets: Vec<u32>,
     votes: HashMap<String, (usize, usize, u32, u32, u32, u32, f32)>,
 }
 
@@ -204,62 +205,27 @@ impl Code128Decoder {
     pub fn new(min_rows: usize) -> Self {
         Self {
             min_rows: min_rows.max(1),
-            runs: Vec::with_capacity(512),
-            offsets: Vec::with_capacity(512),
             votes: HashMap::new(),
-        }
-    }
-
-    fn scan_row(&mut self, image: &BitImage, y: u32) {
-        self.runs.clear();
-        self.offsets.clear();
-        let mut cur = false;
-        let mut n = 0u32;
-        let mut run_start = 0u32;
-        let mut x = 0u32;
-        while x < image.width {
-            let ink = image.ink(x, y);
-            if ink == cur {
-                n += 1;
-            } else {
-                self.runs.push((cur, std::mem::replace(&mut n, 1)));
-                self.offsets.push(run_start);
-                run_start = x;
-                cur = ink;
-            }
-            x += 1;
-        }
-        if n > 0 {
-            self.runs.push((cur, n));
-            self.offsets.push(image.width - n);
         }
     }
 
     /// Widths of runs[k..k+6] decoded against the pattern table using that
     /// character's own unit (6 widths sum to 11 modules).
-    ///
-    /// Exact rounding first (clean renders hit this on every row); on a
-    /// ±1-module miss the *closest* pattern is accepted when the whole
-    /// character stays within `CHAR_AVG_VARIANCE` (mean squared module
-    /// error) and no single element is off by more than
-    /// `ELEMENT_VARIANCE`. This is what a degraded print needs: one
-    /// widened bar must not invalidate an otherwise certain character.
-    /// The mandatory mod-103 check digit (and the scanner's `min_rows`
-    /// corroboration) confirms the read; the quiet zone in `try_from` is
-    /// what keeps a valid-looking window inside another symbol out.
-    fn char_value(&self, k: usize) -> Option<(u8, f32, bool, f32)> {
-        if k + 6 > self.runs.len() {
+    fn char_value(row: &RowRuns, k: usize) -> Option<(u8, f32, bool, f32)> {
+        let runs = &row.runs;
+        if k + 6 > runs.len() {
             return None;
         }
-        let sum: u32 = (0..6).map(|i| self.runs[k + i].1).sum();
+        let sum = row.prefix[k + 6] - row.prefix[k];
         let unit = sum as f32 / 11.0;
         if unit < 1.0 {
             return None;
         }
+        let inv_unit = 1.0 / unit;
         let mut raw = [0f32; 6];
         let mut exact = true;
         for i in 0..6 {
-            raw[i] = self.runs[k + i].1 as f32 / unit;
+            raw[i] = runs[k + i].1 as f32 * inv_unit;
             let m = raw[i].round();
             if !(1.0..=4.0).contains(&m) {
                 exact = false;
@@ -271,11 +237,6 @@ impl Code128Decoder {
                 return Some((v as u8, unit, true, 0.0));
             }
         }
-        // Cheap junk-window reject: a valid element is 1-4 modules, so a
-        // window with an element outside 0.5-4.5 cannot be a character
-        // under any tolerance. Junk-rich still frames scan thousands of
-        // windows; without this the closest-pattern search costs 1.7s of
-        // wall time (dm_deadline_probe).
         if raw.iter().any(|&v| v < 0.5 || v > 4.5) {
             return None;
         }
@@ -284,30 +245,27 @@ impl Code128Decoder {
 
     /// The start-only variant of [`char_value`]: bounds, unit, quiet zone,
     /// then the three start patterns (exact rounding, else closest within
-    /// the same tolerances). Returns `(value, unit, exact, error)`.
-    fn start_value(&self, k: usize) -> Option<(u8, f32, bool, f32)> {
-        if k + 6 > self.runs.len() {
+    /// the same tolerances, verified via `closest_pattern`).
+    fn start_value(row: &RowRuns, k: usize) -> Option<(u8, f32, bool, f32)> {
+        let runs = &row.runs;
+        if k + 6 > runs.len() {
             return None;
         }
-        let sum: u32 = (0..6).map(|i| self.runs[k + i].1).sum();
+        let sum = row.prefix[k + 6] - row.prefix[k];
         let unit = sum as f32 / 11.0;
         if unit < 1.0 {
             return None;
         }
         // ISO/IEC 15417 quiet zone: the start must be preceded by white
-        // space, not by another symbol's bar. Without this, any 1D row with
-        // the right transition rhythm can supply a start pattern and the
-        // 1/103 checksum decides; `pharma-box` decoded `:52620` that way.
-        if k == 0
-            || self.runs[k - 1].0
-            || (self.runs[k - 1].1 as f32) < QUIET_MODULES * unit
-        {
+        // space, not by another symbol's bar.
+        if k == 0 || runs[k - 1].0 || (runs[k - 1].1 as f32) < QUIET_MODULES * unit {
             return None;
         }
+        let inv_unit = 1.0 / unit;
         let mut raw = [0f32; 6];
         let mut exact = true;
         for i in 0..6 {
-            raw[i] = self.runs[k + i].1 as f32 / unit;
+            raw[i] = runs[k + i].1 as f32 * inv_unit;
             let m = raw[i].round();
             if !(1.0..=4.0).contains(&m) {
                 exact = false;
@@ -319,15 +277,9 @@ impl Code128Decoder {
                 return Some((*v, unit, true, 0.0));
             }
         }
-        // Same cheap junk-window reject as `char_value`.
         if raw.iter().any(|&v| v < 0.5 || v > 4.5) {
             return None;
         }
-        // Only pay for the full 107-pattern search when one of the three
-        // start patterns is actually within tolerance, then verify via
-        // `closest_pattern` that the start really IS the closest of all
-        // 107 patterns (exact equivalence with `char_value`, avoiding fuzzy
-        // false positives where a data pattern fits better than 103..=105).
         let mut near_start = false;
         for &(p, _) in START_PATTERNS.iter() {
             let mut err = 0.0f32;
@@ -349,36 +301,25 @@ impl Code128Decoder {
         matches!(v, 103..=105).then_some((v, unit, false, err))
     }
 
-    /// The 7-run stop: 2,3,3,1,1,1,2 modules. Same closest-pattern
-    /// tolerance as a character — the stop's shape is the end-of-symbol
-    /// confirmation, and a ±1 module smear on the receipt must not lose an
-    /// otherwise complete read.
-    ///
-    /// The stop need NOT be the row's last ink run: a receipt has printed
-    /// text and rules beside the barcode, so on the winning quarter-turned
-    /// column the symbol ends mid-row (the field photo that motivated the
-    /// tolerance). The mod-103 check digit plus the start/stop structure
-    /// and the scanner's `min_rows` corroboration keep mid-row starts
-    /// from inventing payloads.
-    /// `(0 = no stop, 1 = tolerant stop, 2 = bit-exact stop)` plus the
-    /// mean-squared pattern error.
-    fn stop_at_impl(&self, k: usize) -> (u8, f32) {
-        if k + 7 > self.runs.len() {
+    /// The 7-run stop: 2,3,3,1,1,1,2 modules.
+    fn stop_at_impl(row: &RowRuns, k: usize) -> (u8, f32) {
+        let runs = &row.runs;
+        if k + 7 > runs.len() {
             return (0, 0.0);
         }
-        let sum: u32 = (0..7).map(|i| self.runs[k + i].1).sum();
+        let sum = row.prefix[k + 7] - row.prefix[k];
         let unit = sum as f32 / 13.0;
         if unit < 1.0 {
             return (0, 0.0);
         }
+        let inv_unit = 1.0 / unit;
         let mut err = 0.0f32;
         let mut exact = true;
         for (i, &m) in STOP7.iter().enumerate() {
-            // Even i are bars, odd i are spaces.
-            if self.runs[k + i].0 != (i % 2 == 0) {
-                return (0, 0.0); // bar/space alternation broken
+            if runs[k + i].0 != (i % 2 == 0) {
+                return (0, 0.0);
             }
-            let raw = self.runs[k + i].1 as f32 / unit;
+            let raw = runs[k + i].1 as f32 * inv_unit;
             let d = raw - m as f32;
             if d.abs() > ELEMENT_VARIANCE {
                 return (0, 0.0);
@@ -396,14 +337,8 @@ impl Code128Decoder {
     }
 
     /// Decode a symbol whose first bar run is at `start`.
-    ///
-    /// The start is gated cheaply, in this order: enough runs → unit →
-    /// the ISO/IEC 15417 quiet zone → the three start patterns. The old
-    /// order ran the 107-pattern closest search on EVERY bar window of a
-    /// junk frame before the quiet zone could reject it; that search is
-    /// the 1D tier's dominant junk-frame cost.
-    fn try_from(&self, start: usize) -> Option<Candidate> {
-        let Some((first, _unit, mut exact, first_err)) = self.start_value(start) else {
+    fn try_from(row: &RowRuns, start: usize) -> Option<Candidate> {
+        let Some((first, _unit, mut exact, first_err)) = Self::start_value(row, start) else {
             return None;
         };
         let _set = match first {
@@ -414,32 +349,18 @@ impl Code128Decoder {
         let mut values: Vec<u8> = vec![first];
         let mut score = first_err;
         let mut k = start + 6;
-        // A stop match is only the end of the symbol when the check digit
-        // validates. But a *tolerant* stop can also match a window inside
-        // the data; with a 1-in-103 checksum coincidence that would end an
-        // otherwise clean read early ("ROTATED-CODE128" -> "ROTATED-").
-        // Exact stops win immediately; a tolerant stop is only a fallback
-        // for the same start (degraded prints never round exactly).
-        // A tolerant stop can also match a window inside the data. Keep
-        // the LONGEST valid read from this start: a damaged start can
-        // produce an early 1-2 codeword stop (the checksum is only 1/103),
-        // and that must not shadow the full symbol. A genuine short
-        // symbol has exactly one validating stop, so nothing changes.
         let mut fallback: Option<(Candidate, usize)> = None;
         loop {
             if values.len() >= 2 {
-                let (stop, stop_err) = self.stop_at_impl(k);
+                let (stop, stop_err) = Self::stop_at_impl(row, k);
                 if stop != 0 {
                     let check = *values.last().unwrap();
                     let data = &values[1..values.len() - 1];
-                    // ISO/IEC 15417 allows a single data codeword: do not
-                    // reject valid short symbols. The mod-103 check plus
-                    // the scanner's `min_rows` corroboration gate noise.
                     if !data.is_empty() && check_valid(first, data, check) {
                         let cand = Candidate {
                             text: build_text(first, data),
-                            x_start: self.offsets[start],
-                            x_end: self.offsets[k + 6] + self.runs[k + 6].1,
+                            x_start: row.offsets[start],
+                            x_end: row.offsets[k + 6] + row.runs[k + 6].1,
                             exact: exact && stop == 2,
                             score: score + stop_err,
                         };
@@ -452,61 +373,68 @@ impl Code128Decoder {
                     }
                 }
             }
-            let Some((v, _, this_exact, err)) = self.char_value(k) else {
+            let Some((v, _, this_exact, err)) = Self::char_value(row, k) else {
                 return fallback.map(|(c, _)| c);
             };
             exact &= this_exact;
             score += err;
             values.push(v);
             k += 6;
-            // No fixed codeword maximum: every character consumes six runs
-            // and `char_value` returns None when the row runs out, so the
-            // scan is already bounded by the image. The old `> 30` cap
-            // silently truncated valid long GS1-128 payloads.
         }
     }
 
-    fn decode_impl(&mut self, image: &BitImage) -> Option<DecodeResult> {
+    fn finish(&self, text: &str, x0: u32, x1: u32, y0: u32, y1: u32) -> DecodeResult {
+        DecodeResult {
+            symbology: Symbology::Code128,
+            text: text.to_string(),
+            raw: text.as_bytes().to_vec(),
+            position: [
+                Point { x: x0 as f32, y: y0 as f32 },
+                Point { x: x1 as f32, y: y0 as f32 },
+                Point { x: x1 as f32, y: y1 as f32 },
+                Point { x: x0 as f32, y: y1 as f32 },
+            ],
+        }
+    }
+}
+
+impl LinearDecoder for Code128Decoder {
+    fn reset(&mut self) {
         self.votes.clear();
-        for y in 0..image.height {
-            self.scan_row(image, y);
-            if self.runs.len() < 25 {
-                continue; // minimum: start + 1 data + check + stop
-            }
-            debug_assert!(!self.runs[0].0);
-            for start in (1..self.runs.len()).step_by(2) {
-                let Some(c) = self.try_from(start) else { continue };
-                let (count, exact, x0, x1, y0, y1, _score) = {
-                    let e = self
-                        .votes
-                        .entry(c.text.clone())
-                        .or_insert((0, 0, c.x_start, c.x_end, y, y, f32::MAX));
-                    e.0 += 1;
-                    if c.exact {
-                        e.1 += 1;
-                    }
-                    e.2 = e.2.min(c.x_start);
-                    e.3 = e.3.max(c.x_end);
-                    e.4 = e.4.min(y);
-                    e.5 = e.5.max(y);
-                    e.6 = e.6.min(c.score);
-                    *e
-                };
-                // A bit-exact read confirms as fast as it always did; a
-                // tolerant (fuzzy) one is not allowed to preempt an exact
-                // read that a later row may still produce — on the field
-                // receipt a systematically misread band beat the exact
-                // band on row count, with a checksum coincidence.
-                if count >= self.min_rows && exact >= self.min_rows {
-                    return Some(self.finish(&c.text, x0, x1, y0, y1));
+    }
+
+    fn scan_line(&mut self, row: &RowRuns, y: u32) -> Option<DecodeResult> {
+        let runs = &row.runs;
+        if runs.len() < 25 {
+            return None; // minimum: start + 1 data + check + stop
+        }
+        debug_assert!(!runs[0].0);
+        for start in (1..runs.len()).step_by(2) {
+            let Some(c) = Self::try_from(row, start) else { continue };
+            let (count, exact, x0, x1, y0, y1, _score) = {
+                let e = self
+                    .votes
+                    .entry(c.text.clone())
+                    .or_insert((0, 0, c.x_start, c.x_end, y, y, f32::MAX));
+                e.0 += 1;
+                if c.exact {
+                    e.1 += 1;
                 }
+                e.2 = e.2.min(c.x_start);
+                e.3 = e.3.max(c.x_end);
+                e.4 = e.4.min(y);
+                e.5 = e.5.max(y);
+                e.6 = e.6.min(c.score);
+                *e
+            };
+            if count >= self.min_rows && exact >= self.min_rows {
+                return Some(self.finish(&c.text, x0, x1, y0, y1));
             }
         }
-        // Prefer an exact candidate (the pre-tolerance standard); fuzzy is
-        // a strict fallback: the best-fitting sequence wins, not the most
-        // rows. A systematic misread band can outnumber clean rows while
-        // fitting the pattern table far worse; the checksum alone cannot
-        // separate two 1-in-103 coincidences.
+        None
+    }
+
+    fn finish_votes(&self) -> Option<DecodeResult> {
         let mut pick: Option<(&String, &(usize, usize, u32, u32, u32, u32, f32))> = None;
         for (t, v) in &self.votes {
             if v.0 >= self.min_rows && v.1 >= self.min_rows {
@@ -529,18 +457,8 @@ impl Code128Decoder {
         pick.map(|(t, v)| self.finish(t, v.2, v.3, v.4, v.5))
     }
 
-    fn finish(&self, text: &str, x0: u32, x1: u32, y0: u32, y1: u32) -> DecodeResult {
-        DecodeResult {
-            symbology: Symbology::Code128,
-            text: text.to_string(),
-            raw: text.as_bytes().to_vec(),
-            position: [
-                Point { x: x0 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y1 as f32 },
-                Point { x: x0 as f32, y: y1 as f32 },
-            ],
-        }
+    fn vote_count(&self) -> usize {
+        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
     }
 }
 
@@ -604,7 +522,7 @@ impl SymbologyDecoder for Code128Decoder {
     }
 
     fn decode(&mut self, image: &BitImage) -> Vec<DecodeResult> {
-        self.decode_impl(image).into_iter().collect()
+        decode_linear_single(self, image)
     }
 }
 

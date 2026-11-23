@@ -5,7 +5,10 @@
 
 use std::collections::HashMap;
 
-use barcode_core::{BitImage, DecodeResult, Point, Symbology, SymbologyDecoder};
+use barcode_core::{
+    decode_linear_single, BitImage, DecodeResult, LinearDecoder, Point, RowRuns, Symbology,
+    SymbologyDecoder,
+};
 
 /// L (odd) digit patterns, module bit per char position.
 const L_CODES: [&str; 10] = [
@@ -89,9 +92,6 @@ struct Candidate {
 #[derive(Debug)]
 pub struct Ean8Decoder {
     min_rows: usize,
-    runs: Vec<(bool, u32)>,
-    offsets: Vec<u32>,
-    prefix: Vec<u32>,
     votes: HashMap<[u8; 8], (usize, u32, u32, u32, u32)>,
 }
 
@@ -99,54 +99,20 @@ impl Ean8Decoder {
     pub fn new(min_rows: usize) -> Self {
         Self {
             min_rows: min_rows.max(1),
-            runs: Vec::with_capacity(256),
-            offsets: Vec::with_capacity(256),
-            prefix: Vec::with_capacity(257),
             votes: HashMap::new(),
         }
     }
 
-    fn scan_row(&mut self, image: &BitImage, y: u32) {
-        self.runs.clear();
-        self.offsets.clear();
-        let mut cur = false;
-        let mut n = 0u32;
-        let mut run_start = 0u32;
-        let mut x = 0u32;
-        while x < image.width {
-            let ink = image.ink(x, y);
-            if ink == cur {
-                n += 1;
-            } else {
-                self.runs.push((cur, std::mem::replace(&mut n, 1)));
-                self.offsets.push(run_start);
-                run_start = x;
-                cur = ink;
-            }
-            x += 1;
-        }
-        if n > 0 {
-            self.runs.push((cur, n));
-            self.offsets.push(image.width - n);
-        }
-        self.prefix.clear();
-        self.prefix.push(0);
-        let mut acc = 0u32;
-        for &(_, w) in &self.runs {
-            acc += w;
-            self.prefix.push(acc);
-        }
-    }
-
     /// Try to decode a symbol starting at run `start`.
-    fn try_at(&self, start: usize) -> Option<Candidate> {
-        if self.runs.len() < start + 43 {
+    fn try_at(row: &RowRuns, start: usize) -> Option<Candidate> {
+        let runs = &row.runs;
+        if runs.len() < start + 43 {
             return None;
         }
-        if !self.runs[start].0 {
+        if !runs[start].0 {
             return None; // symbols begin with a bar
         }
-        let total = self.prefix[start + 43] - self.prefix[start];
+        let total = row.prefix[start + 43] - row.prefix[start];
         let n_mod = total as f32 / 67.0;
         if !(0.8..=64.0).contains(&n_mod) {
             return None;
@@ -156,7 +122,7 @@ impl Ean8Decoder {
         let lo_env = 0.43 * n_mod;
         let hi_env = 1.75 * n_mod;
         for &g in &GUARDS {
-            let len = self.runs[start + g].1 as f32;
+            let len = runs[start + g].1 as f32;
             if len < lo_env || len > hi_env {
                 return None;
             }
@@ -168,7 +134,7 @@ impl Ean8Decoder {
             let hi_g = 1.46 * n;
             let mut g_ok = true;
             for &g in &GUARDS {
-                let len = self.runs[start + g].1 as f32;
+                let len = runs[start + g].1 as f32;
                 if len < lo_g || len > hi_g {
                     g_ok = false;
                     break;
@@ -177,39 +143,31 @@ impl Ean8Decoder {
             if !g_ok {
                 continue;
             }
-            let Some(mods) = self.quantize(start, n) else {
+            let Some(mods) = Self::quantize(row, start, n) else {
                 continue;
             };
             if !Self::guards_ok(&mods) {
                 continue;
             }
-            let Some(digits) = self.decode_digits(start, &mods) else {
+            let Some(digits) = Self::decode_digits(row, start, &mods) else {
                 continue;
             };
-            let x_start = self.offsets[start];
+            let x_start = row.offsets[start];
             let x_end = x_start + total;
             return Some(Candidate { text: digits, x_start, x_end });
         }
         None
     }
 
-    /// Try to decode a symbol starting at run `start` **without requiring
-    /// the whole 43-run window to quantize to exactly 67 modules**. A
-    /// blurred or tilted capture widens some runs and merges others, so
-    /// `try_at`'s single global scale rejects rows that are still
-    /// unambiguous per digit. This fallback matches each 4-run digit
-    /// against its 7-module table with a local variance and still requires
-    /// a valid check digit. Only called for starts preceded by a quiet zone
-    /// (see `decode_impl`), so a junk frame pays at most a few attempts per
-    /// row. Same lever as the EAN-13 fallback (barcode-ean13).
-    fn try_variance(&self, start: usize) -> Option<Candidate> {
-        if self.runs.len() < start + 43 {
+    fn try_variance(row: &RowRuns, start: usize) -> Option<Candidate> {
+        let runs = &row.runs;
+        if runs.len() < start + 43 {
             return None;
         }
         let g = [
-            self.runs[start].1,
-            self.runs[start + 1].1,
-            self.runs[start + 2].1,
+            runs[start].1,
+            runs[start + 1].1,
+            runs[start + 2].1,
         ];
         let s = (g[0] + g[1] + g[2]) as f32 / 3.0;
         if s < 0.7 || g.iter().any(|&v| (v as f32 - s).abs() > s * 0.7) {
@@ -218,14 +176,14 @@ impl Ean8Decoder {
         // Symmetric right quiet zone (>= 3 modules, matching the left gate):
         // without it, periodic woven/grid texture (qr-hard-negative) can
         // fit 43 noisy runs and pass EAN-8's 1-in-10 check digit on 2 rows.
-        if let Some(&(ink, w)) = self.runs.get(start + 43) {
+        if let Some(&(ink, w)) = runs.get(start + 43) {
             if ink || (w as f32) < s * 3.0 {
                 return None;
             }
         }
         let max_g = s * 2.29;
         for &idx in &GUARDS[3..] {
-            if (self.runs[start + idx].1 as f32) > max_g {
+            if (runs[start + idx].1 as f32) > max_g {
                 return None;
             }
         }
@@ -234,7 +192,7 @@ impl Ean8Decoder {
             // Center guard (5 runs) and end guard (3 runs) are 1 module each.
             let guards_ok = GUARDS[3..]
                 .iter()
-                .all(|&idx| (self.runs[start + idx].1 as f32 - scale).abs() <= scale * 0.9);
+                .all(|&idx| (runs[start + idx].1 as f32 - scale).abs() <= scale * 0.9);
             if !guards_ok {
                 continue;
             }
@@ -242,13 +200,13 @@ impl Ean8Decoder {
             let mut ok = true;
             for d in 0..4 {
                 let i = start + 3 + d * 4;
-                let runs = [
-                    self.runs[i].1,
-                    self.runs[i + 1].1,
-                    self.runs[i + 2].1,
-                    self.runs[i + 3].1,
+                let druns = [
+                    runs[i].1,
+                    runs[i + 1].1,
+                    runs[i + 2].1,
+                    runs[i + 3].1,
                 ];
-                match best_digit(runs, scale, &L_RUNS) {
+                match best_digit(druns, scale, &L_RUNS) {
                     Some((dd, _)) => digits[d] = dd,
                     None => {
                         ok = false;
@@ -261,13 +219,13 @@ impl Ean8Decoder {
             }
             for d in 0..4 {
                 let i = start + 24 + d * 4;
-                let runs = [
-                    self.runs[i].1,
-                    self.runs[i + 1].1,
-                    self.runs[i + 2].1,
-                    self.runs[i + 3].1,
+                let druns = [
+                    runs[i].1,
+                    runs[i + 1].1,
+                    runs[i + 2].1,
+                    runs[i + 3].1,
                 ];
-                match best_digit(runs, scale, &R_RUNS) {
+                match best_digit(druns, scale, &R_RUNS) {
                     Some((dd, _)) => digits[4 + d] = dd,
                     None => {
                         ok = false;
@@ -281,11 +239,11 @@ impl Ean8Decoder {
             if !check_digit_valid(&digits) {
                 continue;
             }
-            let total = self.prefix[start + 43] - self.prefix[start];
+            let total = row.prefix[start + 43] - row.prefix[start];
             return Some(Candidate {
                 text: digits,
-                x_start: self.offsets[start],
-                x_end: self.offsets[start] + total,
+                x_start: row.offsets[start],
+                x_end: row.offsets[start] + total,
             });
         }
         None
@@ -298,12 +256,12 @@ impl Ean8Decoder {
     }
 
     /// Quantize the 43 runs at module width `n`.
-    fn quantize(&self, start: usize, n: f32) -> Option<[u8; 43]> {
+    fn quantize(row: &RowRuns, start: usize, n: f32) -> Option<[u8; 43]> {
         let mut mods = [0u8; 43];
         let mut sum = 0u32;
         let inv_n = 1.0 / n;
         for k in 0..43 {
-            let m = self.runs[start + k].1 as f32 * inv_n;
+            let m = row.runs[start + k].1 as f32 * inv_n;
             let r = m.round();
             if r < 1.0 || r > 4.0 || (m - r).abs() > 0.45 {
                 return None;
@@ -317,13 +275,13 @@ impl Ean8Decoder {
         Some(mods)
     }
 
-    fn decode_digits(&self, start: usize, mods: &[u8; 43]) -> Option<[u8; 8]> {
+    fn decode_digits(row: &RowRuns, start: usize, mods: &[u8; 43]) -> Option<[u8; 8]> {
         // Expand to 67 module bits.
         let mut bits: u128 = 0;
         let mut pos = 0usize;
         for k in 0..43 {
             for _ in 0..mods[k] {
-                if self.runs[start + k].0 {
+                if row.runs[start + k].0 {
                     bits |= 1 << pos;
                 }
                 pos += 1;
@@ -372,74 +330,6 @@ impl Ean8Decoder {
         Some(digits)
     }
 
-    fn decode_impl(&mut self, image: &BitImage) -> Option<DecodeResult> {
-        self.votes.clear();
-        for y in 0..image.height {
-            self.scan_row(image, y);
-            if self.runs.len() < 44 {
-                continue; // leading paper run + 43 symbol runs
-            }
-            debug_assert!(!self.runs[0].0);
-            for start in (1..=(self.runs.len() - 43)).step_by(2) {
-                // Cheap pre-filter: the symbol opens with three ~equal
-                // 1-module guard runs (bar, space, bar).
-                let l0 = self.runs[start].1;
-                let l1 = self.runs[start + 1].1;
-                let l2 = self.runs[start + 2].1;
-                let lo = l0.min(l1).min(l2);
-                let hi = l0.max(l1).max(l2);
-                if lo == 0 || hi > lo * 2 {
-                    continue;
-                }
-                let Some(c) = self.try_at(start) else { continue };
-                let (count, x0, x1, y0, y1) = {
-                    let e = self.votes.entry(c.text).or_insert((0, c.x_start, c.x_end, y, y));
-                    e.0 += 1;
-                    e.1 = e.1.min(c.x_start);
-                    e.2 = e.2.max(c.x_end);
-                    e.3 = e.3.min(y);
-                    e.4 = e.4.max(y);
-                    *e
-                };
-                if count >= self.min_rows {
-                    return Some(self.finish(c.text, x0, x1, y0, y1));
-                }
-            }
-            // Per-digit fallback for blurred/tilted rows the global 67-module
-            // quantizer rejects. Require a quiet zone (>= 3 guard widths of
-            // paper) before the start guard: a real symbol is preceded by
-            // one, while a junk row offers at most a handful of candidates.
-            for start in (1..=(self.runs.len() - 43)).step_by(2) {
-                let s = (self.runs[start].1
-                    + self.runs[start + 1].1
-                    + self.runs[start + 2].1) as f32
-                    / 3.0;
-                if (self.runs[start - 1].1 as f32) < s * 3.0 {
-                    continue;
-                }
-                let Some(c) = self.try_variance(start) else { continue };
-                let (count, x0, x1, y0, y1) = {
-                    let e = self.votes.entry(c.text).or_insert((0, c.x_start, c.x_end, y, y));
-                    e.0 += 1;
-                    e.1 = e.1.min(c.x_start);
-                    e.2 = e.2.max(c.x_end);
-                    e.3 = e.3.min(y);
-                    e.4 = e.4.max(y);
-                    *e
-                };
-                if count >= self.min_rows {
-                    return Some(self.finish(c.text, x0, x1, y0, y1));
-                }
-                break;
-            }
-        }
-        self.votes
-            .iter()
-            .max_by_key(|(_, v)| v.0)
-            .filter(|(_, v)| v.0 >= self.min_rows)
-            .map(|(t, v)| self.finish(*t, v.1, v.2, v.3, v.4))
-    }
-
     fn finish(&self, digits: [u8; 8], x0: u32, x1: u32, y0: u32, y1: u32) -> DecodeResult {
         let text: String = digits.iter().map(|d| (b'0' + d) as char).collect();
         DecodeResult {
@@ -456,13 +346,83 @@ impl Ean8Decoder {
     }
 }
 
+impl LinearDecoder for Ean8Decoder {
+    fn reset(&mut self) {
+        self.votes.clear();
+    }
+
+    fn scan_line(&mut self, row: &RowRuns, y: u32) -> Option<DecodeResult> {
+        let runs = &row.runs;
+        if runs.len() < 44 {
+            return None; // leading paper run + 43 symbol runs
+        }
+        debug_assert!(!runs[0].0);
+        for start in (1..=(runs.len() - 43)).step_by(2) {
+            let l0 = runs[start].1;
+            let l1 = runs[start + 1].1;
+            let l2 = runs[start + 2].1;
+            let lo = l0.min(l1).min(l2);
+            let hi = l0.max(l1).max(l2);
+            if lo == 0 || hi > lo * 2 {
+                continue;
+            }
+            let Some(c) = Self::try_at(row, start) else { continue };
+            let (count, x0, x1, y0, y1) = {
+                let e = self.votes.entry(c.text).or_insert((0, c.x_start, c.x_end, y, y));
+                e.0 += 1;
+                e.1 = e.1.min(c.x_start);
+                e.2 = e.2.max(c.x_end);
+                e.3 = e.3.min(y);
+                e.4 = e.4.max(y);
+                *e
+            };
+            if count >= self.min_rows {
+                return Some(self.finish(c.text, x0, x1, y0, y1));
+            }
+        }
+        for start in (1..=(runs.len() - 43)).step_by(2) {
+            let s = (runs[start].1 + runs[start + 1].1 + runs[start + 2].1) as f32 / 3.0;
+            if (runs[start - 1].1 as f32) < s * 3.0 {
+                continue;
+            }
+            let Some(c) = Self::try_variance(row, start) else { continue };
+            let (count, x0, x1, y0, y1) = {
+                let e = self.votes.entry(c.text).or_insert((0, c.x_start, c.x_end, y, y));
+                e.0 += 1;
+                e.1 = e.1.min(c.x_start);
+                e.2 = e.2.max(c.x_end);
+                e.3 = e.3.min(y);
+                e.4 = e.4.max(y);
+                *e
+            };
+            if count >= self.min_rows {
+                return Some(self.finish(c.text, x0, x1, y0, y1));
+            }
+            break;
+        }
+        None
+    }
+
+    fn finish_votes(&self) -> Option<DecodeResult> {
+        self.votes
+            .iter()
+            .max_by_key(|(_, v)| v.0)
+            .filter(|(_, v)| v.0 >= self.min_rows)
+            .map(|(t, v)| self.finish(*t, v.1, v.2, v.3, v.4))
+    }
+
+    fn vote_count(&self) -> usize {
+        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
+    }
+}
+
 impl SymbologyDecoder for Ean8Decoder {
     fn symbology(&self) -> Symbology {
         Symbology::EAN8
     }
 
     fn decode(&mut self, image: &BitImage) -> Vec<DecodeResult> {
-        self.decode_impl(image).into_iter().collect()
+        decode_linear_single(self, image)
     }
 }
 
