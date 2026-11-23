@@ -12,7 +12,10 @@
 //! Status: location/normalization complete; the residue→widths mapping
 //! (`decode_omni`) lands with the oracle-extracted segment tables.
 
-use barcode_core::{BitImage, DecodeResult, Point, Symbology, SymbologyDecoder};
+use barcode_core::{
+    decode_linear_single, BitImage, DecodeResult, LinearDecoder, Point, RowRuns, Symbology,
+    SymbologyDecoder,
+};
 
 const N_RUNS: usize = 46;
 /// Modules spanned by runs 1..=45 (run 0 is the leading paper module m0).
@@ -24,10 +27,6 @@ const FIXED_ONES: [usize; 6] = [13, 14, 31, 32, 44, 45];
 #[derive(Debug)]
 pub struct DataBarOmniDecoder {
     min_rows: usize,
-    runs: Vec<(bool, u32)>,
-    offsets: Vec<u32>,
-    /// prefix[i] = sum of run widths before i; makes a window sum O(1).
-    prefix: Vec<u32>,
     votes: std::collections::HashMap<String, (usize, u32, u32, u32, u32)>,
 }
 
@@ -35,71 +34,23 @@ impl DataBarOmniDecoder {
     pub fn new(min_rows: usize) -> Self {
         Self {
             min_rows: min_rows.max(1),
-            runs: Vec::with_capacity(128),
-            offsets: Vec::with_capacity(128),
-            prefix: Vec::with_capacity(129),
             votes: std::collections::HashMap::new(),
         }
     }
 
-    fn scan_row(&mut self, image: &BitImage, y: u32) {
-        self.runs.clear();
-        self.offsets.clear();
-        let mut cur = false;
-        let mut n = 0u32;
-        let mut run_start = 0u32;
-        let mut x = 0u32;
-        while x < image.width {
-            let ink = image.ink(x, y);
-            if ink == cur {
-                n += 1;
-            } else {
-                self.runs.push((cur, std::mem::replace(&mut n, 1)));
-                self.offsets.push(run_start);
-                run_start = x;
-                cur = ink;
-            }
-            x += 1;
-        }
-        if n > 0 {
-            self.runs.push((cur, n));
-            self.offsets.push(image.width - n);
-        }
-        self.prefix.clear();
-        self.prefix.push(0);
-        let mut acc = 0u32;
-        for &(_, w) in &self.runs {
-            acc += w;
-            self.prefix.push(acc);
-        }
-    }
-
-    /// Normalize the 46-run window starting at `start` into module widths.
-    ///
-    /// Requires: window begins on a paper run, polarities alternate, and the
-    /// pixel widths quantize cleanly to 95 modules with the six fixed
-    /// 1-module runs in place. The unit is derived from the window itself
-    /// (`sum(runs 1..) / 95`), so no module-size knowledge is needed.
-    fn try_normalize(&self, start: usize) -> Option<[u32; N_RUNS]> {
-        if start + N_RUNS > self.runs.len() || self.runs[start].0 {
+    fn try_normalize(row: &RowRuns, start: usize) -> Option<[u32; N_RUNS]> {
+        let runs = &row.runs;
+        if start + N_RUNS > runs.len() || runs[start].0 {
             return None;
         }
-        // Runs alternate by construction (`scan_row` only pushes on a
-        // polarity change), so the paper start above already proves the
-        // whole window alternates. The old per-run polarity loop was dead
-        // work on every candidate.
-        let s = self.prefix[start + N_RUNS] - self.prefix[start + 1];
+        let s = row.prefix[start + N_RUNS] - row.prefix[start + 1];
         if s < SYMBOL_MODULES {
             return None; // not even 1 px/module
         }
-        // Cheap rejection before quantizing all 45 runs, implied by the
-        // final `mods[f] == 1` check: the six fixed 1-module runs must
-        // round to exactly 1 module. This cannot reject a window the full
-        // path would accept; it only skips the float loop for almost all
-        // non-DataBar windows.
         let u = s as f32 / SYMBOL_MODULES as f32;
+        let inv_u = 1.0 / u;
         for &f in &FIXED_ONES {
-            let q = self.runs[start + f].1 as f32 / u;
+            let q = runs[start + f].1 as f32 * inv_u;
             if q < 0.5 || q >= 1.5 {
                 return None;
             }
@@ -107,18 +58,18 @@ impl DataBarOmniDecoder {
         let mut mods = [0u32; N_RUNS];
         mods[0] = 1;
         for i in 1..N_RUNS {
-            let w = self.runs[start + i].1 as f32;
-            if w < 0.5 * u {
+            let q = runs[start + i].1 as f32 * inv_u;
+            if q < 0.5 {
                 return None;
             }
-            let m = (w / u).round() as i64;
+            let m = q.round() as i64;
             if m < 1 {
                 return None;
             }
             mods[i] = m as u32;
         }
         if mods[1..].iter().sum::<u32>() != SYMBOL_MODULES {
-            return None; // quantization drift: not a clean DataBar grid
+            return None;
         }
         for &f in &FIXED_ONES {
             if mods[f] != 1 {
@@ -141,49 +92,57 @@ impl DataBarOmniDecoder {
             ],
         }
     }
+}
 
-    fn decode_impl(&mut self, image: &BitImage) -> Option<DecodeResult> {
+impl LinearDecoder for DataBarOmniDecoder {
+    fn reset(&mut self) {
         self.votes.clear();
-        for y in 0..image.height {
-            self.scan_row(image, y);
-            if self.runs.len() < N_RUNS {
+    }
+
+    fn scan_line(&mut self, row: &RowRuns, y: u32) -> Option<DecodeResult> {
+        let runs = &row.runs;
+        if runs.len() < N_RUNS {
+            return None;
+        }
+        debug_assert!(!runs[0].0, "RowRuns must seed a paper run");
+        for start in (0..=(runs.len() - N_RUNS)).step_by(2) {
+            let Some(mods) = Self::try_normalize(row, start) else {
                 continue;
-            }
-            debug_assert!(!self.runs[0].0, "scan_row must seed a paper run");
-            // runs[0] is the leading paper run and polarity strictly
-            // alternates, so paper starts are exactly the even indices.
-            for start in (0..=(self.runs.len() - N_RUNS)).step_by(2) {
-                let Some(mods) = self.try_normalize(start) else {
-                    continue;
-                };
-                let Some(value) = decode_omni(&mods) else {
-                    continue;
-                };
-                let x_start = self.offsets[start];
-                let x_end = self.offsets[start + N_RUNS - 1]
-                    + self.runs[start + N_RUNS - 1].1;
-                let (count, x0, x1, y0, y1) = {
-                    let e = self
-                        .votes
-                        .entry(value.clone())
-                        .or_insert((0, x_start, x_end, y, y));
-                    e.0 += 1;
-                    e.1 = e.1.min(x_start);
-                    e.2 = e.2.max(x_end);
-                    e.3 = e.3.min(y);
-                    e.4 = e.4.max(y);
-                    *e
-                };
-                if count >= self.min_rows {
-                    return Some(self.finish(&value, x0, x1, y0, y1));
-                }
+            };
+            let Some(value) = decode_omni(&mods) else {
+                continue;
+            };
+            let x_start = row.offsets[start];
+            let x_end = row.offsets[start + N_RUNS - 1] + runs[start + N_RUNS - 1].1;
+            let (count, x0, x1, y0, y1) = {
+                let e = self
+                    .votes
+                    .entry(value.clone())
+                    .or_insert((0, x_start, x_end, y, y));
+                e.0 += 1;
+                e.1 = e.1.min(x_start);
+                e.2 = e.2.max(x_end);
+                e.3 = e.3.min(y);
+                e.4 = e.4.max(y);
+                *e
+            };
+            if count >= self.min_rows {
+                return Some(self.finish(&value, x0, x1, y0, y1));
             }
         }
+        None
+    }
+
+    fn finish_votes(&self) -> Option<DecodeResult> {
         self.votes
             .iter()
             .max_by_key(|(_, v)| v.0)
             .filter(|(_, v)| v.0 >= self.min_rows)
             .map(|(t, v)| self.finish(t, v.1, v.2, v.3, v.4))
+    }
+
+    fn vote_count(&self) -> usize {
+        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
     }
 }
 
@@ -304,7 +263,7 @@ impl SymbologyDecoder for DataBarOmniDecoder {
     }
 
     fn decode(&mut self, image: &BitImage) -> Vec<DecodeResult> {
-        self.decode_impl(image).into_iter().collect()
+        decode_linear_single(self, image)
     }
 }
 
@@ -782,10 +741,6 @@ fn decode_ltd(runs: &[u32; 46]) -> Option<String> {
 #[derive(Debug)]
 pub struct DataBarLtdDecoder {
     min_rows: usize,
-    runs: Vec<(bool, u32)>,
-    offsets: Vec<u32>,
-    /// prefix[i] = sum of run widths before i; makes a window sum O(1).
-    prefix: Vec<u32>,
     votes: std::collections::HashMap<String, (usize, u32, u32, u32, u32)>,
 }
 
@@ -793,61 +748,23 @@ impl DataBarLtdDecoder {
     pub fn new(min_rows: usize) -> Self {
         Self {
             min_rows: min_rows.max(1),
-            runs: Vec::with_capacity(128),
-            offsets: Vec::with_capacity(128),
-            prefix: Vec::with_capacity(129),
             votes: std::collections::HashMap::new(),
         }
     }
 
-    fn scan_row(&mut self, image: &BitImage, y: u32) {
-        self.runs.clear();
-        self.offsets.clear();
-        let mut cur = false;
-        let mut n = 0u32;
-        let mut run_start = 0u32;
-        for x in 0..image.width {
-            let ink = image.ink(x, y);
-            if ink == cur {
-                n += 1;
-            } else {
-                self.runs.push((cur, std::mem::replace(&mut n, 1)));
-                self.offsets.push(run_start);
-                run_start = x;
-                cur = ink;
-            }
-        }
-        if n > 0 {
-            self.runs.push((cur, n));
-            self.offsets.push(image.width - n);
-        }
-        self.prefix.clear();
-        self.prefix.push(0);
-        let mut acc = 0u32;
-        for &(_, w) in &self.runs {
-            acc += w;
-            self.prefix.push(acc);
-        }
-    }
-
-    /// Normalize the 46-run window starting at `start` into module widths.
-    /// Unit derived from the window itself (`sum(runs 1..) / 73`); the
-    /// leading paper run is excluded (camera quiet zones are unbounded).
-    fn try_normalize(&self, start: usize) -> Option<[u32; 46]> {
-        if start + 46 > self.runs.len() || self.runs[start].0 {
+    fn try_normalize(row: &RowRuns, start: usize) -> Option<[u32; 46]> {
+        let runs = &row.runs;
+        if start + 46 > runs.len() || runs[start].0 {
             return None;
         }
-        // Runs alternate by construction; see the omni decoder. The window
-        // sum is a prefix-table difference, not a 45-run pass.
-        let s = self.prefix[start + 46] - self.prefix[start + 1];
+        let s = row.prefix[start + 46] - row.prefix[start + 1];
         if s < LTD_SYMBOL_MODULES {
             return None;
         }
-        // Same implied prefilter: the five fixed 1-module runs must round
-        // to exactly 1 module (enforced again by the final check).
         let u = s as f32 / LTD_SYMBOL_MODULES as f32;
+        let inv_u = 1.0 / u;
         for &f in &LTD_FIXED_ONES {
-            let q = self.runs[start + f].1 as f32 / u;
+            let q = runs[start + f].1 as f32 * inv_u;
             if q < 0.5 || q >= 1.5 {
                 return None;
             }
@@ -855,11 +772,11 @@ impl DataBarLtdDecoder {
         let mut mods = [0u32; 46];
         mods[0] = 1;
         for i in 1..46 {
-            let w = self.runs[start + i].1 as f32;
-            if w < 0.5 * u {
+            let q = runs[start + i].1 as f32 * inv_u;
+            if q < 0.5 {
                 return None;
             }
-            let m = (w / u).round() as i64;
+            let m = q.round() as i64;
             if m < 1 {
                 return None;
             }
@@ -874,48 +791,6 @@ impl DataBarLtdDecoder {
             }
         }
         Some(mods)
-    }
-
-    fn decode_impl(&mut self, image: &BitImage) -> Option<DecodeResult> {
-        self.votes.clear();
-        for y in 0..image.height {
-            self.scan_row(image, y);
-            if self.runs.len() < 46 {
-                continue;
-            }
-            debug_assert!(!self.runs[0].0, "scan_row must seed a paper run");
-            // Paper starts are the even indices (see the omni decoder).
-            for start in (0..=(self.runs.len() - 46)).step_by(2) {
-                let Some(mods) = self.try_normalize(start) else {
-                    continue;
-                };
-                let Some(value) = decode_ltd(&mods) else {
-                    continue;
-                };
-                let x_start = self.offsets[start];
-                let x_end = self.offsets[start + 45] + self.runs[start + 45].1;
-                let (count, x0, x1, y0, y1) = {
-                    let e = self
-                        .votes
-                        .entry(value.clone())
-                        .or_insert((0, x_start, x_end, y, y));
-                    e.0 += 1;
-                    e.1 = e.1.min(x_start);
-                    e.2 = e.2.max(x_end);
-                    e.3 = e.3.min(y);
-                    e.4 = e.4.max(y);
-                    *e
-                };
-                if count >= self.min_rows {
-                    return Some(self.finish(&value, x0, x1, y0, y1));
-                }
-            }
-        }
-        self.votes
-            .iter()
-            .max_by_key(|(_, v)| v.0)
-            .filter(|(_, v)| v.0 >= self.min_rows)
-            .map(|(t, v)| self.finish(t, v.1, v.2, v.3, v.4))
     }
 
     fn finish(&self, text: &str, x0: u32, x1: u32, y0: u32, y1: u32) -> DecodeResult {
@@ -933,13 +808,65 @@ impl DataBarLtdDecoder {
     }
 }
 
+impl LinearDecoder for DataBarLtdDecoder {
+    fn reset(&mut self) {
+        self.votes.clear();
+    }
+
+    fn scan_line(&mut self, row: &RowRuns, y: u32) -> Option<DecodeResult> {
+        let runs = &row.runs;
+        if runs.len() < 46 {
+            return None;
+        }
+        debug_assert!(!runs[0].0, "RowRuns must seed a paper run");
+        for start in (0..=(runs.len() - 46)).step_by(2) {
+            let Some(mods) = Self::try_normalize(row, start) else {
+                continue;
+            };
+            let Some(value) = decode_ltd(&mods) else {
+                continue;
+            };
+            let x_start = row.offsets[start];
+            let x_end = row.offsets[start + 45] + runs[start + 45].1;
+            let (count, x0, x1, y0, y1) = {
+                let e = self
+                    .votes
+                    .entry(value.clone())
+                    .or_insert((0, x_start, x_end, y, y));
+                e.0 += 1;
+                e.1 = e.1.min(x_start);
+                e.2 = e.2.max(x_end);
+                e.3 = e.3.min(y);
+                e.4 = e.4.max(y);
+                *e
+            };
+            if count >= self.min_rows {
+                return Some(self.finish(&value, x0, x1, y0, y1));
+            }
+        }
+        None
+    }
+
+    fn finish_votes(&self) -> Option<DecodeResult> {
+        self.votes
+            .iter()
+            .max_by_key(|(_, v)| v.0)
+            .filter(|(_, v)| v.0 >= self.min_rows)
+            .map(|(t, v)| self.finish(t, v.1, v.2, v.3, v.4))
+    }
+
+    fn vote_count(&self) -> usize {
+        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
+    }
+}
+
 impl SymbologyDecoder for DataBarLtdDecoder {
     fn symbology(&self) -> Symbology {
         Symbology::DataBarLimited
     }
 
     fn decode(&mut self, image: &BitImage) -> Vec<DecodeResult> {
-        self.decode_impl(image).into_iter().collect()
+        decode_linear_single(self, image)
     }
 }
 
@@ -1059,9 +986,9 @@ mod tests {
     ) -> Option<[u32; N_RUNS]> {
         let bits = canvas.bits();
         let img = BitImage::new(canvas.width, canvas.height, &bits);
-        let mut d = DataBarOmniDecoder::new(2);
-        d.scan_row(&img, canvas.height / 2);
-        d.try_normalize(start)
+        let mut row = RowRuns::with_capacity(128);
+        row.scan_row(&img, canvas.height / 2);
+        DataBarOmniDecoder::try_normalize(&row, start)
     }
 
     /// Like `databar_omni_canvas` but without the 96-module sum assert, for

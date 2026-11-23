@@ -11,7 +11,10 @@
 
 use std::collections::HashMap;
 
-use barcode_core::{BitImage, DecodeResult, Point, Symbology, SymbologyDecoder};
+use barcode_core::{
+    decode_linear_single, BitImage, DecodeResult, LinearDecoder, Point, RowRuns, Symbology,
+    SymbologyDecoder,
+};
 
 /// Element widths (bar, space, bar, space, bar, space) of values 0-47.
 /// Value 47 is the start/stop character (binary 101011110). Transcribed
@@ -41,9 +44,6 @@ struct Candidate {
 #[derive(Debug)]
 pub struct Code93Decoder {
     min_rows: usize,
-    runs: Vec<(bool, u32)>,
-    offsets: Vec<u32>,
-    last_ink_run: usize,
     votes: HashMap<String, (usize, u32, u32, u32, u32)>,
 }
 
@@ -51,58 +51,26 @@ impl Code93Decoder {
     pub fn new(min_rows: usize) -> Self {
         Self {
             min_rows: min_rows.max(1),
-            runs: Vec::with_capacity(512),
-            offsets: Vec::with_capacity(512),
-            last_ink_run: 0,
             votes: HashMap::new(),
-        }
-    }
-
-    fn scan_row(&mut self, image: &BitImage, y: u32) {
-        self.runs.clear();
-        self.offsets.clear();
-        let mut cur = false;
-        let mut n = 0u32;
-        let mut run_start = 0u32;
-        let mut x = 0u32;
-        while x < image.width {
-            let ink = image.ink(x, y);
-            if ink == cur {
-                n += 1;
-            } else {
-                self.runs.push((cur, std::mem::replace(&mut n, 1)));
-                self.offsets.push(run_start);
-                run_start = x;
-                cur = ink;
-            }
-            x += 1;
-        }
-        self.last_ink_run = 0;
-        if n > 0 {
-            self.runs.push((cur, n));
-            self.offsets.push(image.width - n);
-        }
-        for (i, r) in self.runs.iter().enumerate() {
-            if r.0 {
-                self.last_ink_run = i;
-            }
         }
     }
 
     /// Decode runs[k..k+6] against the pattern table using that
     /// character's own unit (6 widths sum to 9 modules).
-    fn char_value(&self, k: usize) -> Option<(u8, f32)> {
-        if k + 6 > self.runs.len() {
+    fn char_value(row: &RowRuns, k: usize) -> Option<(u8, f32)> {
+        let runs = &row.runs;
+        if k + 6 > runs.len() {
             return None;
         }
-        let sum: u32 = (0..6).map(|i| self.runs[k + i].1).sum();
+        let sum = row.prefix[k + 6] - row.prefix[k];
         let unit = sum as f32 / 9.0;
         if unit < 1.0 {
             return None;
         }
+        let inv_unit = 1.0 / unit;
         let mut w = [0u8; 6];
         for i in 0..6 {
-            let raw = self.runs[k + i].1 as f32 / unit;
+            let raw = runs[k + i].1 as f32 * inv_unit;
             let m = raw.round();
             if !(1.0..=4.0).contains(&m) {
                 return None;
@@ -115,40 +83,56 @@ impl Code93Decoder {
 
     /// Stop: the start/stop pattern followed by a 1-module termination
     /// bar which must be the row's last ink run.
-    fn stop_at(&self, k: usize) -> bool {
-        if k + 7 > self.runs.len() || k + 6 != self.last_ink_run {
+    fn stop_at(row: &RowRuns, k: usize) -> bool {
+        let runs = &row.runs;
+        if k + 7 > runs.len() || k + 6 != row.last_ink_run {
             return false;
         }
-        let sum: u32 = (0..6).map(|i| self.runs[k + i].1).sum();
+        let sum = row.prefix[k + 6] - row.prefix[k];
         let unit = sum as f32 / 9.0;
         if unit < 1.0 {
             return false;
         }
+        let inv_unit = 1.0 / unit;
         for (i, &m) in STOP.iter().enumerate() {
-            // Even i are bars, odd i are spaces.
-            if self.runs[k + i].0 != (i % 2 == 0) {
+            if runs[k + i].0 != (i % 2 == 0) {
                 return false;
             }
-            let raw = self.runs[k + i].1 as f32 / unit;
+            let raw = runs[k + i].1 as f32 * inv_unit;
             if (raw.round() as u8) != m {
                 return false;
             }
         }
-        let term = self.runs[k + 6];
-        term.0 && (term.1 as f32 / unit).round() == 1.0
+        let term = runs[k + 6];
+        term.0 && (term.1 as f32 * inv_unit).round() == 1.0
     }
 
     /// Decode a symbol whose first bar run is at `start`.
-    fn try_from(&self, start: usize) -> Option<Candidate> {
-        let (first, _) = self.char_value(start)?;
+    fn try_from(row: &RowRuns, start: usize) -> Option<Candidate> {
+        let runs = &row.runs;
+        if start + 6 > runs.len() {
+            return None;
+        }
+        // Exact START_STOP [1, 1, 1, 1, 4, 1] pre-filter: run 4 rounds to 4
+        // (>= 3.5u) while runs 0,1,2,3,5 round to 1 (<= 1.5u), so r4 > 2*r_i
+        // (3.5/1.5 = 2.333). Rejects ~99% of junk runs before float math.
+        let r4 = runs[start + 4].1;
+        if r4 <= runs[start].1 * 2
+            || r4 <= runs[start + 1].1 * 2
+            || r4 <= runs[start + 2].1 * 2
+            || r4 <= runs[start + 3].1 * 2
+            || r4 <= runs[start + 5].1 * 2
+        {
+            return None;
+        }
+        let (first, _) = Self::char_value(row, start)?;
         if first != START_STOP {
             return None;
         }
         let mut values: Vec<u8> = Vec::with_capacity(24);
         let mut k = start + 6;
         loop {
-            if values.len() >= 4 && self.stop_at(k) {
-                // values = [start?, data..., C, K]; start is NOT in values.
+            if values.len() >= 4 && Self::stop_at(row, k) {
                 let k_expect = *values.last().unwrap();
                 let c_expect = values[values.len() - 2];
                 let data = &values[..values.len() - 2];
@@ -159,57 +143,20 @@ impl Code93Decoder {
                     return None;
                 }
                 let text = build_text(data);
-                let x_start = self.offsets[start];
-                let x_end = self.offsets[k + 6] + self.runs[k + 6].1;
+                let x_start = row.offsets[start];
+                let x_end = row.offsets[k + 6] + row.runs[k + 6].1;
                 return Some(Candidate { text, x_start, x_end });
             }
-            let (v, _) = self.char_value(k)?;
-            if v == START_STOP && !self.stop_at(k) {
-                // A start/stop pattern in the data can only be the stop.
+            let (v, _) = Self::char_value(row, k)?;
+            if v == START_STOP && !Self::stop_at(row, k) {
                 return None;
             }
             values.push(v);
             k += 6;
             if values.len() > 60 {
-                return None; // implausibly long
+                return None;
             }
         }
-    }
-
-    fn decode_impl(&mut self, image: &BitImage) -> Option<DecodeResult> {
-        self.votes.clear();
-        for y in 0..image.height {
-            self.scan_row(image, y);
-            if self.runs.len() < 26 {
-                continue; // minimum: start + 1 data + C + K + stop + term bar
-            }
-            for start in 0..self.runs.len() {
-                if !self.runs[start].0 {
-                    continue;
-                }
-                let Some(c) = self.try_from(start) else { continue };
-                let (count, x0, x1, y0, y1) = {
-                    let e = self
-                        .votes
-                        .entry(c.text.clone())
-                        .or_insert((0, c.x_start, c.x_end, y, y));
-                    e.0 += 1;
-                    e.1 = e.1.min(c.x_start);
-                    e.2 = e.2.max(c.x_end);
-                    e.3 = e.3.min(y);
-                    e.4 = e.4.max(y);
-                    *e
-                };
-                if count >= self.min_rows {
-                    return Some(self.finish(&c.text, x0, x1, y0, y1));
-                }
-            }
-        }
-        self.votes
-            .iter()
-            .max_by_key(|(_, v)| v.0)
-            .filter(|(_, v)| v.0 >= self.min_rows)
-            .map(|(t, v)| self.finish(t, v.1, v.2, v.3, v.4))
     }
 
     fn finish(&self, text: &str, x0: u32, x1: u32, y0: u32, y1: u32) -> DecodeResult {
@@ -224,6 +171,51 @@ impl Code93Decoder {
                 Point { x: x0 as f32, y: y1 as f32 },
             ],
         }
+    }
+}
+
+impl LinearDecoder for Code93Decoder {
+    fn reset(&mut self) {
+        self.votes.clear();
+    }
+
+    fn scan_line(&mut self, row: &RowRuns, y: u32) -> Option<DecodeResult> {
+        let runs = &row.runs;
+        if runs.len() < 26 {
+            return None; // minimum: start + 1 data + C + K + stop + term bar
+        }
+        debug_assert!(!runs[0].0);
+        for start in (1..runs.len()).step_by(2) {
+            let Some(c) = Self::try_from(row, start) else { continue };
+            let (count, x0, x1, y0, y1) = {
+                let e = self
+                    .votes
+                    .entry(c.text.clone())
+                    .or_insert((0, c.x_start, c.x_end, y, y));
+                e.0 += 1;
+                e.1 = e.1.min(c.x_start);
+                e.2 = e.2.max(c.x_end);
+                e.3 = e.3.min(y);
+                e.4 = e.4.max(y);
+                *e
+            };
+            if count >= self.min_rows {
+                return Some(self.finish(&c.text, x0, x1, y0, y1));
+            }
+        }
+        None
+    }
+
+    fn finish_votes(&self) -> Option<DecodeResult> {
+        self.votes
+            .iter()
+            .max_by_key(|(_, v)| v.0)
+            .filter(|(_, v)| v.0 >= self.min_rows)
+            .map(|(t, v)| self.finish(t, v.1, v.2, v.3, v.4))
+    }
+
+    fn vote_count(&self) -> usize {
+        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
     }
 }
 
@@ -338,7 +330,7 @@ impl SymbologyDecoder for Code93Decoder {
     }
 
     fn decode(&mut self, image: &BitImage) -> Vec<DecodeResult> {
-        self.decode_impl(image).into_iter().collect()
+        decode_linear_single(self, image)
     }
 }
 
@@ -472,19 +464,19 @@ mod dbg {
         let canvas = barcode_fixtures::encode_code93("TEST93", 3, 30);
         let bits = canvas.bits();
         let img = BitImage::new(canvas.width, canvas.height, &bits);
-        let mut d = Code93Decoder::new(1);
-        d.scan_row(&img, 15);
-        eprintln!("runs={} last_ink={}", d.runs.len(), d.last_ink_run);
-        let (first, _) = d.char_value(1).unwrap();
+        let mut row = RowRuns::with_capacity(128);
+        row.scan_row(&img, 15);
+        eprintln!("runs={} last_ink={}", row.runs.len(), row.last_ink_run);
+        let (first, _) = Code93Decoder::char_value(&row, 1).unwrap();
         eprintln!("first={first}");
         let mut values = vec![];
         let mut k = 7usize;
         for _step in 0..14 {
-            if values.len() >= 4 && d.stop_at(k) {
+            if values.len() >= 4 && Code93Decoder::stop_at(&row, k) {
                 eprintln!("STOP at k={k}");
                 break;
             }
-            match d.char_value(k) {
+            match Code93Decoder::char_value(&row, k) {
                 Some((v, u)) => { eprintln!("k={k} v={v} unit={u:.2}"); values.push(v); }
                 None => { eprintln!("k={k} char_value=None"); break; }
             }

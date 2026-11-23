@@ -14,11 +14,10 @@ use barcode_codabar::CodabarDecoder;
 use barcode_ean8::Ean8Decoder;
 use barcode_qr::QrDecoder;
 use barcode_microqr::decode_microqr;
-use barcode_ean13::UpcaDecoder;
 use barcode_upce::UpceDecoder;
 use barcode_code93::Code93Decoder;
 use barcode_code39::{Code39Decoder, code32_raw, code32_text};
-use barcode_core::{BitImage, Symbology, SymbologyDecoder};
+use barcode_core::{BitImage, LinearDecoder, RowRuns, Symbology, SymbologyDecoder};
 use barcode_ean13::Ean13Decoder;
 use barcode_itf::ItfDecoder;
 use barcode_databar::{DataBarExpandedDecoder, DataBarLtdDecoder, DataBarOmniDecoder, DataBarStackedDecoder};
@@ -64,7 +63,6 @@ pub struct BarcodeScanner {
     upce: UpceDecoder,
     /// 2D tier: full chain (finders → grid → format → RS → segments).
     qr: QrDecoder,
-    upca: UpcaDecoder,
     databar: DataBarOmniDecoder,
     databarltd: DataBarLtdDecoder,
     databarstk: DataBarStackedDecoder,
@@ -90,7 +88,6 @@ impl BarcodeScanner {
             ean8: Ean8Decoder::new(2),
             upce: UpceDecoder::new(2),
             qr: QrDecoder::new(),
-            upca: UpcaDecoder::new(2),
             databar: DataBarOmniDecoder::new(2),
             databarltd: DataBarLtdDecoder::new(2),
             databarstk: DataBarStackedDecoder::new(1),
@@ -265,8 +262,9 @@ impl BarcodeScanner {
         out
     }
 
-    /// One polarity's sweep: UPC-A, then 2D (primary + tilt + diagonal),
-    /// then the linear tier.
+    /// One polarity's sweep: 2D (primary + tilt + diagonal), then the
+    /// linear tier (including UPC-A folded into EAN-13 so 2D always runs
+    /// first and UPC-A gets 180°/90°/270° coverage without a duplicate scan).
     fn scan_polarity(
         &mut self,
         img: &BitImage,
@@ -276,13 +274,6 @@ impl BarcodeScanner {
     ) -> Vec<barcode_core::DecodeResult> {
         let start = now_ms();
         let mut out: Vec<barcode_core::DecodeResult> = Vec::with_capacity(4);
-        // UPC-A is a subset of EAN-13 (lead 0): report it first when enabled.
-        if tiers.upca {
-            out.extend(self.upca.decode(img));
-            if !out.is_empty() {
-                return out;
-            }
-        }
         let two_d = {
             // Deadline law: the still-path wall time must stay bounded by
             // the caller's budget, but the tilt ladder multiplies per-step
@@ -450,13 +441,12 @@ impl BarcodeScanner {
             return out;
         }
         if tiers.any_linear() {
-            // Quarter-turn passes are two extra full-mask copies. On a
-            // still frame whose 2D sweep already spent the caller's
-            // budget, skip them (upright + mirrored still run); the 1D
+            // Quarter-turn passes are one fast SWAR transpose + shared row
+            // scans. On a still frame whose 2D sweep already spent the
+            // caller's budget, skip them (0° + 180° still run); the 1D
             // pre-pass on a photo has no 2D cost, so it always gets them.
             let allow_quarter = !still || now_ms().saturating_sub(start) < still_budget_ms;
             out.extend(decode_linear(self.linear_decoders(), img, tiers, allow_quarter, still));
-            out = apply_code32(out, tiers);
         }
         out
     }
@@ -642,7 +632,7 @@ impl Tiers {
     }
 
     fn any_linear(&self) -> bool {
-        self.ean13 || self.code39 || self.code32 || self.itf || self.code128 || self.code93 || self.codabar || self.ean8 || self.upce || self.databar || self.databarltd || self.databarexpanded
+        self.upca || self.ean13 || self.code39 || self.code32 || self.itf || self.code128 || self.code93 || self.codabar || self.ean8 || self.upce || self.databar || self.databarltd || self.databarexpanded
     }
 
 }
@@ -727,38 +717,171 @@ pub fn supported_symbologies() -> Vec<String> {
     SYMBOLOGIES.iter().map(|s| s.to_string()).collect()
 }
 
-/// Re-label valid Code 32 payloads. Code 32 has no separate carrier: the
-/// six-char Code 39 text *is* the base-32 encoding of the printed AIC
-/// value. `code32_text` is strict (alphabet + check digit), so an ordinary
-/// Code 39 symbol passes through unchanged. When only `code32` was
-/// requested, non-Code-32 Code 39 hits are dropped.
-fn apply_code32(out: Vec<barcode_core::DecodeResult>, tiers: &Tiers) -> Vec<barcode_core::DecodeResult> {
-    if !tiers.code32 {
-        return out;
-    }
+/// Re-label carrier symbologies (`EAN13` -> `UPCA` on leading `'0'`,
+/// `Code39` -> `Code32` on valid 6-char AIC payloads) and drop carrier hits
+/// that weren't requested when only the derived symbology was asked for.
+fn apply_linear_labels(
+    out: Vec<barcode_core::DecodeResult>,
+    tiers: &Tiers,
+) -> Vec<barcode_core::DecodeResult> {
     out.into_iter()
-        .filter_map(|mut r| {
-            if r.symbology != Symbology::Code39 {
-                return Some(r);
+        .filter_map(|mut r| match r.symbology {
+            Symbology::EAN13 => {
+                if tiers.upca && r.text.starts_with('0') {
+                    r.symbology = Symbology::UPCA;
+                    r.text.remove(0);
+                    r.raw = r.text.as_bytes().to_vec();
+                    Some(r)
+                } else if tiers.ean13 {
+                    Some(r)
+                } else {
+                    None
+                }
             }
-            let Some(text) = code32_text(&r.text) else {
-                return if tiers.code39 { Some(r) } else { None };
-            };
-            r.symbology = Symbology::Code32;
-            r.raw = text.as_bytes().to_vec();
-            r.text = text;
-            Some(r)
+            Symbology::Code39 if tiers.code32 => {
+                let Some(text) = code32_text(&r.text) else {
+                    return if tiers.code39 { Some(r) } else { None };
+                };
+                r.symbology = Symbology::Code32;
+                r.raw = text.as_bytes().to_vec();
+                r.text = text;
+                Some(r)
+            }
+            _ => Some(r),
         })
         .collect()
 }
 
-/// The 1D tier: all linear decoders over one bitmap, plus an upside-down
-/// pass. A 180°-rotated linear barcode's run sequence is the reverse of
-/// the true one, so the decoders see nothing; feeding them a horizontally
-/// mirrored bitmap reads it as a normal barcode and yields the TRUE text
-/// (check digit validated). The hit's x coordinates are mirrored back
-/// into the original frame space. The mirror pass is only paid when the
-/// upright pass found nothing.
+/// Scan `img` center-out, extracting word-level [`RowRuns`] ONCE per
+/// scanline and fanning the slice out to all active 1D decoders.
+///
+/// - When `stride == 1` (stills and small crops `< 64px`): every single row
+///   is scanned (100% lossless).
+/// - When `stride == 2` (tall live camera frames): scans every 2nd row
+///   center-out, and whenever any decoder records a new vote on row `y`,
+///   immediately probes `y - 1` and `y + 1` so even a 2-row-tall tilted
+///   symbol confirms on the spot while junk/aiming frames pay half the rows.
+fn scan_linear_orientation(
+    active: &mut [&mut dyn LinearDecoder],
+    img: &BitImage,
+    reverse: bool,
+    stride: u32,
+    row: &mut RowRuns,
+    rev: &mut RowRuns,
+) -> Vec<barcode_core::DecodeResult> {
+    for d in active.iter_mut() {
+        d.reset();
+    }
+    let mut out = Vec::new();
+    let n = active.len();
+    if n == 0 || img.height == 0 {
+        return out;
+    }
+    let mut done = [false; 12];
+    let mut remaining = n;
+    let h = img.height;
+    let stride = stride.max(1);
+    let mid = h / 2;
+
+    let mut run_row = |y: u32, check_vote: bool| -> (bool, bool) {
+        row.scan_row(img, y);
+        // Shortest valid 1D symbol is ITF (10 runs); skip sparse rows.
+        if row.runs.len() < 10 {
+            return (false, false);
+        }
+        let feed: &RowRuns = if reverse {
+            row.reverse_into(rev);
+            rev
+        } else {
+            row
+        };
+        let mut voted = false;
+        for (i, d) in active.iter_mut().enumerate() {
+            if done[i] {
+                continue;
+            }
+            let before = if check_vote { d.vote_count() } else { 0 };
+            if let Some(hit) = d.scan_line(feed, y) {
+                out.push(hit);
+                done[i] = true;
+                remaining -= 1;
+            } else if check_vote && d.vote_count() > before {
+                voted = true;
+            }
+        }
+        (voted, remaining == 0)
+    };
+
+    // Track the outermost odd neighbor already probed on each side of `mid`
+    // so adjacent strided hits can never double-vote on the same odd row:
+    // - side 0 moves downward: `y + 1` may already equal `lo_edge`, new edge is `y - 1`
+    // - side 1 moves upward:   `y - 1` may already equal `hi_edge`, new edge is `y + 1`
+    let mut lo_edge = u32::MAX;
+    let mut hi_edge = u32::MAX;
+
+    let mut step = 0u32;
+    'outer: loop {
+        let off = step * stride;
+        let ys = if step == 0 {
+            [Some(mid), None]
+        } else {
+            [
+                mid.checked_sub(off),
+                (mid + off < h).then_some(mid + off),
+            ]
+        };
+        if ys[0].is_none() && ys[1].is_none() {
+            break;
+        }
+        for (side, oy) in ys.into_iter().enumerate() {
+            let Some(y) = oy else { continue };
+            let (voted, all_done) = run_row(y, stride > 1);
+            if all_done {
+                break 'outer;
+            }
+            if stride > 1 && voted {
+                if let Some(nb) = y.checked_sub(1) {
+                    if side == 0 || nb != hi_edge {
+                        if side == 0 {
+                            lo_edge = nb;
+                        }
+                        if run_row(nb, false).1 {
+                            break 'outer;
+                        }
+                    }
+                }
+                if y + 1 < h {
+                    let nb = y + 1;
+                    if step == 0 || side == 1 || nb != lo_edge {
+                        if step == 0 || side == 1 {
+                            hi_edge = nb;
+                        }
+                        if run_row(nb, false).1 {
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+        }
+        step += 1;
+    }
+    for (i, d) in active.iter_mut().enumerate() {
+        if !done[i] {
+            if let Some(hit) = d.finish_votes() {
+                out.push(hit);
+            }
+        }
+    }
+    out
+}
+
+/// The 1D tier: shared word-level scanline extraction across all active
+/// linear decoders, covering all four cardinal orientations:
+/// - 0°: forward rows of `img`
+/// - 180°: in-place reversed runs of `img` (no `mirrored_x()` bitmap copy)
+/// - 90° CW: one SWAR 8×8 transpose (`rot90_cw`), forward rows
+/// - 270° (90° CCW): in-place reversed runs of the same `rot90_cw` mask
+///   (no second transpose or redundant mirrored-quarter passes)
 fn decode_linear(
     decoders: (&mut Ean13Decoder, &mut Code39Decoder, &mut ItfDecoder, &mut Code128Decoder, &mut Code93Decoder, &mut CodabarDecoder, &mut Ean8Decoder, &mut UpceDecoder, &mut DataBarOmniDecoder, &mut DataBarLtdDecoder, &mut DataBarExpandedDecoder),
     img: &BitImage,
@@ -767,9 +890,8 @@ fn decode_linear(
     still: bool,
 ) -> Vec<barcode_core::DecodeResult> {
     let (ean13, code39, itf, code128, code93, codabar, ean8, upce, databar, databarltd, databarexpanded) = decoders;
-    let mut out: Vec<barcode_core::DecodeResult> = Vec::new();
-    let mut active: Vec<&mut dyn barcode_core::SymbologyDecoder> = Vec::new();
-    if tiers.ean13 { active.push(ean13); }
+    let mut active: Vec<&mut dyn LinearDecoder> = Vec::with_capacity(11);
+    if tiers.ean13 || tiers.upca { active.push(ean13); }
     if tiers.code39 || tiers.code32 { active.push(code39); }
     if tiers.itf { active.push(itf); }
     if tiers.code128 { active.push(code128); }
@@ -780,17 +902,34 @@ fn decode_linear(
     if tiers.databar { active.push(databar); }
     if tiers.databarltd { active.push(databarltd); }
     if tiers.databarexpanded { active.push(databarexpanded); }
-    for d in active.iter_mut().map(|d| &mut **d as &mut dyn barcode_core::SymbologyDecoder) {
-        out.extend(d.decode(img));
+    if active.is_empty() {
+        return Vec::new();
     }
+
+    let mut row = RowRuns::with_capacity(256);
+    let mut rev = RowRuns::with_capacity(256);
+    // Stills and small ROI crops keep stride = 1 (every row); tall live
+    // camera frames use stride = 2 with immediate `y ± 1` corroboration
+    // whenever any decoder records a vote.
+    let stride_h = if !still && img.height >= 64 { 2 } else { 1 };
+
+    // 0° (upright)
+    let out = apply_linear_labels(
+        scan_linear_orientation(&mut active, img, false, stride_h, &mut row, &mut rev),
+        tiers,
+    );
     if !out.is_empty() {
         return out;
     }
-    let mirrored = img.mirrored_x();
-    let flipped = BitImage::new(img.width, img.height, &mirrored);
+
+    // 180° (upside-down via in-place run reversal)
     let w = img.width as f32 - 1.0;
-    for d in active.iter_mut().map(|d| &mut **d as &mut dyn barcode_core::SymbologyDecoder) {
-        for mut r in d.decode(&flipped) {
+    let mut out = apply_linear_labels(
+        scan_linear_orientation(&mut active, img, true, stride_h, &mut row, &mut rev),
+        tiers,
+    );
+    if !out.is_empty() {
+        for r in &mut out {
             let [p0, p1, p2, p3] = r.position;
             r.position = [
                 Point { x: w - p1.x, y: p1.y },
@@ -798,68 +937,51 @@ fn decode_linear(
                 Point { x: w - p3.x, y: p3.y },
                 Point { x: w - p2.x, y: p2.y },
             ];
-            out.push(r);
         }
-    }
-    if !out.is_empty() || !allow_quarter {
         return out;
     }
-    // Quarter-turn passes: a linear barcode printed sideways (loyalty
-    // cards, receipts photographed in portrait) is invisible to a
-    // row-scanner. Field photo: a loyalty-card Code 128 read 0 hits
-    // upright, decoded at 90° at native resolution. Two packed copies +
-    // decodes, only after both upright passes found nothing.
-    let (ow, oh) = (img.width as f32 - 1.0, img.height as f32 - 1.0);
-    // Both quarter turns, each also MIRRORED: a receipt printed sideways
-    // and photographed upside down needs the 90°+180° combination. The
-    // upright passes above cover 0° and 180°; without the mirrored quarter
-    // turns those two quadrants are unreachable (field photo: the Esselunga
-    // receipt barcode only decodes on the reversed 270° runs).
-    for clockwise in [true, false] {
-        let rotated = rot90_packed(img, clockwise);
-        let rimg = BitImage::new(img.height, img.width, &rotated);
-        let rw = rimg.width as f32 - 1.0;
-        // The mirrored quarter variants are still-frame insurance: the
-        // common sideways print reads on the plain quarter, and live
-        // frames must not pay four full-mask decodes when a 2D tier is
-        // also scheduled.
-        let variants: &[bool] = if still { &[false, true] } else { &[false] };
-        for &mirrored in variants {
-            let mpacked = if mirrored { rimg.mirrored_x() } else { Vec::new() };
-            let timg = if mirrored {
-                BitImage::new(rimg.width, rimg.height, &mpacked)
-            } else {
-                rimg
-            };
-            for d in active.iter_mut().map(|d| &mut **d as &mut dyn barcode_core::SymbologyDecoder) {
-                for mut r in d.decode(&timg) {
-                    if mirrored {
-                        // Mirrored hit space -> rotated-frame space.
-                        let [p0, p1, p2, p3] = r.position;
-                        r.position = [
-                            Point { x: rw - p1.x, y: p1.y },
-                            Point { x: rw - p0.x, y: p0.y },
-                            Point { x: rw - p3.x, y: p3.y },
-                            Point { x: rw - p2.x, y: p2.y },
-                        ];
-                    }
-                    for p in &mut r.position {
-                        // Rotated-frame space -> original frame space.
-                        let (rx, ry) = (p.x, p.y);
-                        if clockwise {
-                            p.x = ry;
-                            p.y = oh - rx;
-                        } else {
-                            p.x = ow - ry;
-                            p.y = rx;
-                        }
-                    }
-                    out.push(r);
-                }
+
+    if !allow_quarter {
+        return out;
+    }
+
+    // 90° CW and 270° (90° CCW) from ONE SWAR 8×8 transpose:
+    // - forward rows of `rot90_cw` read columns bottom-to-top (90° CW)
+    // - reversed rows of `rot90_cw` read columns top-to-bottom (270° CCW)
+    let oh = img.height as f32 - 1.0;
+    let rotated = img.rot90_cw();
+    let rimg = BitImage::new(img.height, img.width, &rotated);
+    let stride_v = if !still && rimg.height >= 64 { 2 } else { 1 };
+
+    let mut out = apply_linear_labels(
+        scan_linear_orientation(&mut active, &rimg, false, stride_v, &mut row, &mut rev),
+        tiers,
+    );
+    if !out.is_empty() {
+        for r in &mut out {
+            for p in &mut r.position {
+                let (rx, ry) = (p.x, p.y);
+                p.x = ry;
+                p.y = oh - rx;
             }
-            if !out.is_empty() {
-                return out;
-            }
+        }
+        return out;
+    }
+
+    let mut out = apply_linear_labels(
+        scan_linear_orientation(&mut active, &rimg, true, stride_v, &mut row, &mut rev),
+        tiers,
+    );
+    if !out.is_empty() {
+        for r in &mut out {
+            // Reversed `rot90_cw` (mx, ry) maps to original (x = ry, y = mx).
+            let [p0, p1, p2, p3] = r.position;
+            r.position = [
+                Point { x: p1.y, y: p1.x },
+                Point { x: p0.y, y: p0.x },
+                Point { x: p3.y, y: p3.x },
+                Point { x: p2.y, y: p2.x },
+            ];
         }
     }
     out
@@ -1287,25 +1409,15 @@ pub fn decode_pdf417_mask(img: &BitImage) -> Vec<barcode_core::DecodeResult> {
         .collect()
 }
 
-/// Quarter-turn of the packed mask; the dimensions swap. The PDF417
-/// scanline/quad detectors are upright-only, so a cardinal rotation is
-/// undone here before detection and the result quad mapped back.
+/// Quarter-turn of the packed mask; the dimensions swap. Uses the SWAR 8×8
+/// transpose (`rot90_cw`), with CCW derived via SIMD `rot180` of the CW mask.
 fn rot90_packed(img: &BitImage, clockwise: bool) -> Vec<u8> {
-    let w = img.width as usize;
-    let h = img.height as usize;
-    let (dw, dh) = (h, w);
-    let dbpr = dw.div_ceil(8).div_ceil(4) * 4;
-    let mut out = vec![0u8; dbpr * dh];
-    for y in 0..h {
-        for x in 0..w {
-            if !img.ink(x as u32, y as u32) {
-                continue;
-            }
-            let (dx, dy) = if clockwise { (h - 1 - y, x) } else { (y, w - 1 - x) };
-            out[dy * dbpr + (dx >> 3)] |= 1 << (dx & 7);
-        }
+    let cw = img.rot90_cw();
+    if clockwise {
+        cw
+    } else {
+        BitImage::new(img.height, img.width, &cw).rot180()
     }
-    out
 }
 
 /// The Aztec tier: bullseye location + corner-mark orientation + per-size
