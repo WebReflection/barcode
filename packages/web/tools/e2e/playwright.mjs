@@ -403,6 +403,7 @@ async function suiteRegression(browser, project) {
   const box = resolve(pkg, "test-codes/regression/gs1-datamatrix-box-2026-11-19.jpeg");
   const hard = resolve(pkg, "test-codes/regression/qr-hard-negative-2026-11-19.jpeg");
   const code32 = resolve(pkg, "test-codes/regression/code32-aic-2026-11-19.jpeg");
+  const code128UpsideDown = resolve(pkg, "test-codes/regression/code128-upside-down-label-2026-11-23.png");
   const pharma = resolve(pkg, "test-codes/regression/pharma-real-code-2026-11-20.jpeg");
   const pharmaClose = resolve(pkg, "test-codes/regression/pharma-itf-close-2026-11-20.jpeg");
   const blurTilt = resolve(pkg, "test-codes/regression/ean13-blur-tilt-mask-2026-11-22.png");
@@ -462,6 +463,19 @@ async function suiteRegression(browser, project) {
     const { value } = await scanFixture(code32);
     if (value !== "A938261563") throw new Error(`code32: got ${JSON.stringify(value)}`);
   });
+
+  if (existsSync(code128UpsideDown)) {
+    // Real user photo (public by permission): a Code 128 label held upside
+    // down, ~2.6 px/module. Every straight pass misses; the tight dense-row
+    // band at 0.88, re-binarized from a mirrored SOURCE, reads it. Pins the
+    // tight-band + source-mirror lever in `api/worker.js` / `src/roi.js`.
+    await check("code128-upside-down-label", async () => {
+      const { value } = await scanFixture(code128UpsideDown);
+      if (value !== "GFIT26316112687249") {
+        throw new Error(`code128 upside-down: got ${JSON.stringify(value)}`);
+      }
+    });
+  }
 
   if (existsSync(blurTilt)) {
     // Pre-binarized mask of a synthetic 2 px/module EAN-13 with gaussian
