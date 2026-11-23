@@ -18,7 +18,7 @@ import { CpuBinarizer } from '../src/cpu-binarizer.js';
 import { getWasmScanner, decodeFrame } from '../src/decoder.js';
 import { rotateDrawable } from '../src/source-rotate.js';
 import { liftDim } from '../src/source-lift.js';
-import { cropDrawable, linearRoiCandidates, mirrorDrawable, otsuMask, roiCandidates } from '../src/roi.js';
+import { cropDrawable, linearRoiCandidates, mirrorDrawable, otsuMask, padDrawable, roiCandidates } from '../src/roi.js';
 import { ALL_FORMATS, LINEAR, cheapFormats, dueForFullSweep, is2DResult, markFullSweep, needsScheduling } from '../src/live-schedule.js';
 import {
   encode_fixture_opts,
@@ -394,11 +394,33 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
     if (found) return found;
     if (!box.linear) continue;
 
-    // The source mirror is the upside-down phone lever and comes first;
+    // The quiet zone is the other half of the tight-band lever. A real
+    // label's printed quiet zone can sit below the 10 modules Code 128
+    // mandates (the DHL/GoFo sample measures ~6 on one side), and the
+    // dense-row band does not widen it. The row scanners then reject an
+    // otherwise clean strip that zxing reads, because zxing is lenient
+    // about quiet zones. Drawing the crop onto paper white restores the
+    // mandated run of white at no extra camera-frame cost, and this
+    // stage also carries the marginal 0.88 threshold.
+    const padPx = Math.max(16, Math.min(96, Math.round(box.h)));
+    const padded = await padDrawable(crop.canvas, padPx);
+    bin.setThreshold(0.88);
+    const fp = await bin.process(padded.canvas);
+    const padMap = {
+      ...crop,
+      /** @param {number} fw @param {number} fh @param {{x: number, y: number}[]} points */
+      map: (fw, fh, points) => crop.map(crop.width, crop.height, padded.map(fw, fh, points)),
+    };
+    found = offer(decodeFrame(scanner, fp, boxFormats, callOpts()), fp, padMap);
+    if (found) {
+      bin.setThreshold(0.92);
+      return found;
+    }
+
+    // The source mirror is the upside-down phone lever;
     // both opinions live at 0.88, the measured threshold for a marginal
     // strip. The mirror is unconditional: a deadline check here cut it on
     // the full (slower) frames while the cheap frames read it.
-    bin.setThreshold(0.88);
     const mirrored = await mirrorDrawable(crop.canvas);
     const fm = await bin.process(mirrored.canvas);
     const mirrorMap = {
@@ -425,7 +447,9 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
   // a global Otsu split over a 2x upscale keeps them white. That is the
   // distant/out-of-focus 1D lever (a real Code 32 package measured 0
   // reads locally, reads at 2x Otsu). Only linear crops, only after every
-  // cheap opinion missed.
+  // cheap opinion missed. The unpadded crop keeps the full 2x upscale:
+  // padding pushes the padded frame over `otsuMask`'s 1600px cap and the
+  // smaller factor loses the thin spaces this pass exists for.
   for (const { box, crop } of crops) {
     if (!box.linear || remaining() <= 0) continue;
     /** @param {number} fw @param {number} fh @param {{x: number, y: number}[]} points */

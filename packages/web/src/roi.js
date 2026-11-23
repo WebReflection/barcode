@@ -608,3 +608,50 @@ export async function mirrorDrawable(source) {
     },
   };
 }
+
+/**
+ * White-pad a crop at source resolution. A tight bar strip can cut the
+ * quiet zone Code 128 mandates (10 modules) down to a couple of modules:
+ * a real DHL/GoFo label measures ~6 modules on one side and the row
+ * scanners reject the otherwise clean strip, while zxing — lenient about
+ * quiet zones — reads the very same photo. Drawing the strip onto paper
+ * white restores the zone (and costs no extra camera frame). The
+ * returned `map` takes points from the padded frame back into the
+ * *source crop's* pixel coordinates, so the caller composes it with
+ * `cropDrawable`'s map as before.
+ *
+ * @param {CanvasImageSource} source
+ * @param {number} [pad] White margin on every side, in source pixels.
+ * @returns {Promise<{
+ *   canvas: OffscreenCanvas | HTMLCanvasElement,
+ *   width: number,
+ *   height: number,
+ *   map: (fw: number, fh: number, points: {x: number, y: number}[]) => {x: number, y: number}[],
+ * }>}
+ */
+export async function padDrawable(source, pad = 24) {
+  const { w, h } = dims(source);
+  if (!w || !h) throw new TypeError("padDrawable: source has no dimensions");
+  const pw = w + 2 * pad;
+  const ph = h + 2 * pad;
+  /** @type {OffscreenCanvas | HTMLCanvasElement} */
+  const canvas =
+    typeof OffscreenCanvas !== "undefined"
+      ? new OffscreenCanvas(pw, ph)
+      : Object.assign(document.createElement("canvas"), { width: pw, height: ph });
+  const ctx = /** @type {CanvasRenderingContext2D | null} */ (canvas.getContext("2d"));
+  if (!ctx) throw new TypeError("padDrawable: no 2d context");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, pw, ph);
+  ctx.drawImage(/** @type {CanvasImageSource} */ (source), pad, pad);
+  return {
+    canvas,
+    width: pw,
+    height: ph,
+    map: (fw, fh, points) => {
+      const sx = pw <= fw ? 1 : pw / fw;
+      const sy = ph <= fh ? 1 : ph / fh;
+      return points.map(({ x, y }) => ({ x: x * sx - pad, y: y * sy - pad }));
+    },
+  };
+}

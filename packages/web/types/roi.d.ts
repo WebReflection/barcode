@@ -99,6 +99,38 @@ export function mirrorDrawable(source: CanvasImageSource): Promise<{
         y: number;
     }[];
 }>;
+/**
+ * White-pad a crop at source resolution. A tight bar strip can cut the
+ * quiet zone Code 128 mandates (10 modules) down to a couple of modules:
+ * a real DHL/GoFo label measures ~6 modules on one side and the row
+ * scanners reject the otherwise clean strip, while zxing — lenient about
+ * quiet zones — reads the very same photo. Drawing the strip onto paper
+ * white restores the zone (and costs no extra camera frame). The
+ * returned `map` takes points from the padded frame back into the
+ * *source crop's* pixel coordinates, so the caller composes it with
+ * `cropDrawable`'s map as before.
+ *
+ * @param {CanvasImageSource} source
+ * @param {number} [pad] White margin on every side, in source pixels.
+ * @returns {Promise<{
+ *   canvas: OffscreenCanvas | HTMLCanvasElement,
+ *   width: number,
+ *   height: number,
+ *   map: (fw: number, fh: number, points: {x: number, y: number}[]) => {x: number, y: number}[],
+ * }>}
+ */
+export function padDrawable(source: CanvasImageSource, pad?: number): Promise<{
+    canvas: OffscreenCanvas | HTMLCanvasElement;
+    width: number;
+    height: number;
+    map: (fw: number, fh: number, points: {
+        x: number;
+        y: number;
+    }[]) => {
+        x: number;
+        y: number;
+    }[];
+}>;
 export type BinarizedFrame = import("./gpu/binarizer.js").BinarizedFrame;
 /**
  * A candidate box in the frame's SOURCE pixel coordinates (not mask

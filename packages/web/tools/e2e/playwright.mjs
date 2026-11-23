@@ -404,6 +404,7 @@ async function suiteRegression(browser, project) {
   const hard = resolve(pkg, "test-codes/regression/qr-hard-negative-2026-11-19.jpeg");
   const code32 = resolve(pkg, "test-codes/regression/code32-aic-2026-11-19.jpeg");
   const code128UpsideDown = resolve(pkg, "test-codes/regression/code128-upside-down-label-2026-11-23.png");
+  const code128SmallQuietZone = resolve(pkg, "test-codes/regression/code128-small-quiet-zone-2026-11-23.jpeg");
   const pharma = resolve(pkg, "test-codes/regression/pharma-real-code-2026-11-20.jpeg");
   const pharmaClose = resolve(pkg, "test-codes/regression/pharma-itf-close-2026-11-20.jpeg");
   const blurTilt = resolve(pkg, "test-codes/regression/ean13-blur-tilt-mask-2026-11-22.png");
@@ -473,6 +474,20 @@ async function suiteRegression(browser, project) {
       const { value } = await scanFixture(code128UpsideDown);
       if (value !== "GFIT26316112687249") {
         throw new Error(`code128 upside-down: got ${JSON.stringify(value)}`);
+      }
+    });
+  }
+
+  if (existsSync(code128SmallQuietZone)) {
+    // Real user photo (public by permission) of the same label, a wider
+    // crop that includes the camera frame: the printed quiet zone is ~6
+    // modules where Code 128 mandates 10, and zxing reads it while the
+    // row scanners rejected it. Pins the white-pad (`padDrawable`) lever
+    // in `api/worker.js` / `src/roi.js`.
+    await check("code128-small-quiet-zone", async () => {
+      const { value } = await scanFixture(code128SmallQuietZone);
+      if (value !== "GFIT26316112687249") {
+        throw new Error(`code128 small quiet zone: got ${JSON.stringify(value)}`);
       }
     });
   }
