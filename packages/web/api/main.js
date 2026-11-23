@@ -50,7 +50,8 @@ const handled = new WeakSet();
  * A symbology name, in the lowercase canonical form the encoders speak.
  * @typedef {'qrcode' | 'microqr' | 'aztec' | 'datamatrix' | 'pdf417' |
  *   'upca' | 'ean13' | 'ean8' | 'upce' | 'code39' | 'code32' | 'code93' | 'code128' |
- *   'itf' | 'codabar' | 'databar' | 'databarltd' | 'databarstk'} Symbology
+ *   'itf' | 'codabar' | 'databar' | 'databarltd' | 'databarstk' |
+ *   'databarexpanded'} Symbology
  */
 
 /**
@@ -153,7 +154,7 @@ const GROUPS = {
   qr: ['qrcode', 'microqr'],
   barcode: [
     'upca', 'ean13', 'ean8', 'upce', 'code39', 'code32', 'code93', 'code128',
-    'itf', 'codabar', 'databar', 'databarltd', 'databarstk',
+    'itf', 'codabar', 'databar', 'databarltd', 'databarstk', 'databarexpanded',
   ],
 };
 
@@ -268,8 +269,25 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
       lens = sessionLens, crop, zoom, torch,
       type = sessionType, accuracy = sessionAccuracy ?? 'auto',
     } = options;
+    // A rejected call must NOT touch `activeScan`: it never owned it.
+    if (activeScan)
+      return Promise.reject(new Error('scan: another scan is already in progress'));
+    // Option errors reject like every other scan error (they used to
+    // throw synchronously, bypassing the promise contract).
+    if (signal && typeof signal.addEventListener !== 'function')
+      return Promise.reject(new TypeError('scan: signal must be an AbortSignal (pass controller.signal)'));
+    const modes = Number(image != null) + Number(video != null) + Number(into != null);
+    if (modes > 1)
+      return Promise.reject(new TypeError('scan: pick one of into, video, image'));
+
     const { promise, resolve, reject } = Promise.withResolvers();
     let settled = false;
+    const internal = new AbortController();
+    // Idempotent graceful stop: abort() twice is a no-op anyway, and the
+    // aborted check keeps the internal listener contract obvious.
+    const stop = () => {
+      if (!internal.signal.aborted) internal.abort();
+    };
     const settle = (
       /** @type {(v?: unknown) => void} */ fn,
       /** @type {unknown} */ arg,
@@ -277,33 +295,20 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
       if (!settled) {
         settled = true;
         activeScan = false;
+        // A settled scan owns nothing: the caller's signal must not keep
+        // this scan's closure alive.
+        signal?.removeEventListener('abort', stop);
         fn(arg);
       }
     };
-
-    if (activeScan) {
-      settle(reject, new Error('scan: another scan is already in progress'));
-      return promise;
-    }
-
-    if (signal && (typeof signal !== 'object' || typeof signal.addEventListener !== 'function'))
-      throw new TypeError('scan: signal must be an AbortSignal (pass controller.signal)');
-
-    const modes = Number(image != null) + Number(video != null) + Number(into != null);
-    if (modes > 1) {
-      settle(reject, new TypeError('scan: pick one of into, video, image'));
-      return promise;
-    }
     activeScan = true;
 
     // One graceful exit for every mode: whoever aborts — the user's
     // controller or our UI's ✕ — settles `undefined`. Errors are the
     // only rejections. The worker is never touched by an abort.
-    const internal = new AbortController();
-    const stop = () => {
-      if (!internal.signal.aborted) internal.abort();
-    };
-    internal.signal.addEventListener('abort', () => settle(resolve, undefined), { once: true });
+    /** @type {() => void} */
+    const onInternalAbort = () => settle(resolve, undefined);
+    internal.signal.addEventListener('abort', onInternalAbort, { once: true });
     if (signal) {
       if (signal.aborted) stop();
       else signal.addEventListener('abort', stop, { once: true });
@@ -434,6 +439,10 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
         close.textContent = '✕';
         close.setAttribute('aria-label', 'Stop scanning');
         close.addEventListener('click', stop, { once: true });
+        // Escape closes a modal <dialog> on its own: without this the
+        // camera and the decode pump kept running invisibly and scan()
+        // stayed pending forever. Same graceful exit as ✕.
+        dialog.addEventListener('cancel', stop);
         dialog.showModal();
 
         // Pinch-to-zoom owns the viewfinder's touch gesture: two pointers
@@ -543,7 +552,11 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
           // a missed event can never hang the scan) before closing.
           const best = codes[0];
           try { scanner?.stop(); } catch (_) {}
-          internal.signal.removeEventListener('abort', onAbort);
+          // The scan is over: the caller's abort may not tear down a UI
+          // that is playing its exit animation, and the confirmed read
+          // already won — an abort now must not turn it into `undefined`.
+          for (const fn of [onAbort, onInternalAbort])
+            internal.signal.removeEventListener('abort', fn);
           const ui = /** @type {HTMLDialogElement} */ (dialog);
           const fill = /** @type {HTMLElement} */ (progressFill);
           if (!ui) {
@@ -596,7 +609,10 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
         if (!video && torchBtn && scanner.hasTorch()) {
           const btn = /** @type {HTMLButtonElement} */ (torchBtn);
           btn.hidden = false;
-          let on = false;
+          // The camera already applied the caller's initial `torch`
+          // option: the toggle must show that state, not a hard false.
+          let on = torch === true;
+          btn.classList.toggle('on', on);
           btn.addEventListener('click', () => {
             on = !on;
             // Manual wins: the Scanner's auto-torch policy stands down for

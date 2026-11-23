@@ -10,7 +10,6 @@ members = [
     "crates/barcode-codabar",
     "crates/barcode-ean8",
     "crates/barcode-upce",
-    "crates/barcode-qr",
     "crates/barcode-dm",
     "crates/barcode-aztec",
     "crates/barcode-pdf417",
@@ -25,7 +24,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/ag/barcode"
+repository = "https://github.com/WebReflection/barcode"
 
 [workspace.dependencies]
 barcode-core = { path = "crates/barcode-core" }

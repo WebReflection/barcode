@@ -453,6 +453,9 @@ export class GpuBinarizer {
       old.small.destroy();
       old.smallScratch.destroy();
       old.smallGlobal.destroy();
+      old.statsLuma.destroy();
+      old.hist.destroy();
+      old.stretch.destroy();
       old.mask.destroy();
       old.staging.destroy();
       old.uniform.destroy();

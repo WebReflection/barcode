@@ -5,8 +5,8 @@
 // consumer-facing truth. Keep it in sync with api/README.md.
 
 export interface Code {
-  /** Lowercase canonical name on render input ("code128"); decode
-   *  results carry the wasm's title-cased name ("Code128"). */
+  /** Lowercase canonical name on render input and on decode results
+   *  ("code128", the same vocabulary as `formats`). */
   symbology: string;
   text: string;
   /** Exact payload bytes. `text` is a display string — binary payloads

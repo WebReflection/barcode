@@ -245,13 +245,20 @@ impl BarcodeScanner {
             return out;
         }
         // A still's fixed per-polarity costs (rotation/locator setup) are
-        // not charged to the sample budget. When the first polarity has
-        // already spent the caller's deadline, the inverted retry is a
-        // second full sweep after the budget — skip it.
-        if still && now_ms().saturating_sub(started) >= still_budget_ms {
-            return out;
-        }
-        let out = self.scan_polarity(&inv, tiers, still, still_budget_ms - first_budget);
+        // not charged to the sample budget. Cap the inverted retry to both
+        // its planned share AND the wall time actually left in the caller's
+        // deadline so an overshoot in polarity 1 cannot double the budget
+        // (and an early finish in polarity 1 never inflates polarity 2).
+        let inv_budget = if still {
+            let left = still_budget_ms.saturating_sub(now_ms().saturating_sub(started));
+            if left == 0 {
+                return out;
+            }
+            (still_budget_ms - first_budget).min(left)
+        } else {
+            still_budget_ms - first_budget
+        };
+        let out = self.scan_polarity(&inv, tiers, still, inv_budget);
         if !out.is_empty() {
             self.inverted = true;
         }
@@ -594,9 +601,9 @@ fn rotated_supersampled(img: &BitImage, deg: f64) -> Vec<u8> {
     data
 }
 
-/// The canonical symbology names, in a stable order. Results carry these
-/// (title-cased via the debug format); the `formats` API accepts the
-/// lowercase forms with "qr" accepted as an alias for "qrcode".
+/// The canonical symbology names, in a stable order. Results carry exactly
+/// these lowercase names; the `formats` API accepts the same forms with
+/// "qr" accepted as an alias for "qrcode".
 pub const SYMBOLOGIES: [&str; 19] = [
     "qrcode", "microqr", "upca", "datamatrix", "aztec", "pdf417", "ean13", "ean8", "upce", "code39",
     "code32", "code93", "code128", "itf", "codabar", "databar", "databarltd", "databarstk",
