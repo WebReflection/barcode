@@ -11,10 +11,11 @@ fn check(path: &str, contents: &str, version: Version, level: Level, mode: Mode,
     for line in contents.lines().skip(1) {
         let mut it = line.split_whitespace();
         let p = payload(it.next().unwrap());
-        let class: usize = it.next().unwrap().parse().unwrap();
+        let _class: usize = it.next().unwrap().parse().unwrap();
         let hex = it.next().unwrap();
         assert_eq!(p.len(), len);
-        let sym = encode_bytes(&p, version, level, Some(mode), Some(class))
+        // Automatic ISO/IEC 18004 mask selection must match every oracle vector bit-for-bit.
+        let sym = encode_bytes(&p, version, level, Some(mode), None)
             .unwrap_or_else(|| panic!("{}: encode failed", path));
         assert_eq!(sym.size, size);
         let mut bits = Vec::new();
@@ -22,10 +23,14 @@ fn check(path: &str, contents: &str, version: Version, level: Level, mode: Mode,
             let v = c.to_digit(16).unwrap() as u8;
             for i in (0..4).rev() { bits.push((v >> i) & 1); }
         }
+        bits.truncate(size * size);
         for i in 0..size * size {
             assert_eq!(sym.cells[i], bits[i], "{}: cell ({},{})"
                 , path, i % size, i / size);
         }
+        let decoded = barcode_microqr::decoder::decode_grid(&bits, size)
+            .unwrap_or_else(|| panic!("{}: decode_grid failed for {:?}", path, p));
+        assert_eq!(decoded, p, "{}: decode_grid payload mismatch", path);
         n += 1;
     }
     assert!(n > 0);

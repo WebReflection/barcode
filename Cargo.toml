@@ -30,11 +30,44 @@ repository = "https://github.com/WebReflection/barcode"
 barcode-core = { path = "crates/barcode-core" }
 
 [profile.release]
-# Size-optimized for the published wasm artifact (opt-level "z" + strip +
-# wasm-opt -Oz): decode must still fit the 500ms/5000ms budget laws —
-# the browser self-test gates enforce that after every rebuild.
+# Keep non-hot crates (encoders/fixtures, serde, wasm-bindgen glue) small while
+# compiling the hot decoders at opt-level = 3 (with Micro QR algorithmic,
+# wasm.wasm is still less than half the 1.85 MB budget).
 opt-level = "z"
 lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[profile.release.package.barcode-core]
+opt-level = 3
+[profile.release.package.barcode-qr]
+opt-level = 3
+[profile.release.package.barcode-microqr]
+opt-level = 3
+[profile.release.package.barcode-dm]
+opt-level = 3
+[profile.release.package.barcode-aztec]
+opt-level = 3
+[profile.release.package.barcode-pdf417]
+opt-level = 3
+[profile.release.package.barcode-ean13]
+opt-level = 3
+[profile.release.package.barcode-ean8]
+opt-level = 3
+[profile.release.package.barcode-upce]
+opt-level = 3
+[profile.release.package.barcode-code128]
+opt-level = 3
+[profile.release.package.barcode-code93]
+opt-level = 3
+[profile.release.package.barcode-code39]
+opt-level = 3
+[profile.release.package.barcode-itf]
+opt-level = 3
+[profile.release.package.barcode-codabar]
+opt-level = 3
+[profile.release.package.barcode-databar]
+opt-level = 3
+[profile.release.package.barcode-wasm]
+opt-level = 3
