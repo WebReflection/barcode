@@ -108,7 +108,7 @@ export class LiveScanner {
   /** One pump loop per instance: start() after stop()/suspend() must not add one. */
   /** @type {boolean} */ #pumping = false;
   /** @type {number} */ #lastTs = 0;
-  /** @type {number} */ #lastZoomAt = 0;
+  /** @type {number} */ #lastZoomAt = -Infinity;
   /** @protected @type {number} */
   _lastDecodeAt = 0;
   /** Auto-framing state: the torch automation stands down once the user touches it. */
@@ -116,7 +116,7 @@ export class LiveScanner {
   /** Same rule for zoom: a manual pinch/zoomTo() wins over adaptive zoom. */
   #zoomTouched = false;
   /** @type {boolean} */ #torchAuto = false;
-  /** @type {number} */ #torchLastToggleAt = 0;
+  /** @type {number} */ #torchLastToggleAt = -Infinity;
   /** @type {number} */ #marginalSince = 0;
   /** @type {number} */ #clearSince = 0;
   /** @type {number} */ #noDecodeSince = 0;
@@ -255,7 +255,10 @@ export class LiveScanner {
         this._opts.onResults?.(results);
       }
       if (this._opts.adaptiveZoom && msg.frameW && msg.frameH) {
-        void this.#maybeZoom(raw, msg.frameW);
+        const refW = this._lastGrab
+          ? (this._opts.crop === "square" ? Math.min(video.videoWidth, video.videoHeight) : video.videoWidth)
+          : msg.frameW;
+        if (refW > 0) void this.#maybeZoom(raw, refW);
         void this.#maybeZoomReset(raw);
       }
       void this.#autoTorchPolicy(msg, raw.length > 0);
@@ -404,6 +407,7 @@ export class LiveScanner {
     const target = Math.min(zoomCaps.max, z * (ZOOM_TARGET_FRACTION / fraction));
     if (target <= z * 1.05) return;
     this.#lastZoomAt = now;
+    this.#hint = null;
     await setZoom(track, target);
   }
 
@@ -494,8 +498,8 @@ export class LiveScanner {
     const offY = square ? (vh - side) / 2 : 0;
     const srcW = square ? side : vw;
     const srcH = square ? side : vh;
-    const sx = srcW / maskW;
-    const sy = srcH / maskH;
+    const sx = srcW <= maskW ? 1 : srcW / maskW;
+    const sy = srcH <= maskH ? 1 : srcH / maskH;
     const xs = r.position.map((/** @type {{x: number}} */ p) => p.x * sx + offX);
     const ys = r.position.map((/** @type {{y: number}} */ p) => p.y * sy + offY);
     let x = Math.min(...xs);
@@ -572,6 +576,8 @@ export class LiveScanner {
         qrPresence: res?.qrPresence,
         partial: res?.partial === true,
         checked: res?.checked ?? null,
+        frameW: res?.frameW,
+        frameH: res?.frameH,
       };
     } finally {
       bitmap.close?.();
@@ -627,6 +633,7 @@ export class LiveScanner {
     }
     if (applied !== null) {
       this.#digitalZoom = 1;
+      this.#hint = null;
       this._nativeZoom = true;
       return applied;
     }
