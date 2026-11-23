@@ -81,6 +81,9 @@ export class GpuBinarizer {
   #bufs = null;
   /** @type {{ statsLuma: GPUBindGroup, hist: GPUBindGroup, scan: GPUBindGroup, luma: GPUBindGroup, blurH: GPUBindGroup, blurV: GPUBindGroup, binarize: GPUBindGroup } | null} */
   #groups = null;
+  /** Last non-video source whose luma + blurB still live on the GPU. */
+  /** @type {HTMLCanvasElement | ImageBitmap | OffscreenCanvas | null} */
+  #cachedSource = null;
 
   /**
    * @param {GPUDevice} device
@@ -275,10 +278,22 @@ export class GpuBinarizer {
   }
 
   /**
+   * Release the reference to the last cached source so a caller's bitmap or
+   * canvas is never retained between frames.
+   */
+  clearCache() {
+    this.#cachedSource = null;
+  }
+
+  /**
    * Binarize one frame. Accepts any `copyExternalImageToTexture` source
    * with dimensions: an HTMLVideoElement (videoWidth/videoHeight) or a
    * canvas / ImageBitmap (width/height) — the self-test harness feeds
    * synthetic specimen canvases through the same path.
+   *
+   * When called repeatedly on the SAME immutable source (e.g. a threshold
+   * sweep after `setThreshold`), reuses the GPU's `luma` and `blurB` buffers
+   * and runs only the final 1-pass `binarize` shader.
    * @param {HTMLVideoElement | HTMLCanvasElement | ImageBitmap | OffscreenCanvas} source
    * @returns {Promise<BinarizedFrame>}
    */
@@ -290,10 +305,12 @@ export class GpuBinarizer {
     if (!srcW || !srcH) throw new Error("Frame not ready.");
 
     const { w, h } = this.#fitDst(srcW, srcH);
+    const isVideo = "videoWidth" in source;
+    const reuse = !isVideo && source === this.#cachedSource && w === this.#allocW && h === this.#allocH && srcW === this.#texW && srcH === this.#texH;
     // The texture holds the source at its native size; the grid is dst.
     // Both dims can change independently (dst is the 32-snap of src), so
     // track the source dims too.
-    if (w !== this.#allocW || h !== this.#allocH || srcW !== this.#texW || srcH !== this.#texH) {
+    if (!reuse && (w !== this.#allocW || h !== this.#allocH || srcW !== this.#texW || srcH !== this.#texH)) {
       this.#srcTex?.destroy();
       this.#srcTex = this.#device.createTexture({
         size: [srcW, srcH],
@@ -313,22 +330,7 @@ export class GpuBinarizer {
     if (!bufs || !groups || !srcTex) throw new Error("Unreachable: buffers missing.");
 
     const d = this.#device;
-    const radius = Math.max(1, Math.floor(Math.min(w, h) / (2 * this.#windowDivisor)));
-
-    // Write all stage uniforms up front, at fixed slots. Bind groups pin the
-    // offset per stage, so queue ordering can't clobber a pass's uniforms.
     const u = d.queue;
-    u.writeBuffer(bufs.uniform, STAGE.luma, new Uint32Array([w, h, srcW, srcH, 1]));
-    // The probe pass never stretches (apply=0), or the statistic would feed
-    // back into itself frame after frame.
-    u.writeBuffer(
-      bufs.uniform,
-      STAGE.statsLuma,
-      new Uint32Array([STATS, STATS, STATS, STATS, 0]),
-    );
-    u.writeBuffer(bufs.uniform, STAGE.histogram, new Uint32Array([STATS, STATS]));
-    u.writeBuffer(bufs.uniform, STAGE.blurH, new Uint32Array([w, h, radius, 0]));
-    u.writeBuffer(bufs.uniform, STAGE.blurV, new Uint32Array([w, h, radius, 1]));
     // Fixed luma < 0.5 rescue (load-bearing for faded thermal receipts; the
     // glossy-label DataMatrix it loses is read on the CPU mask in worker.js).
     u.writeBuffer(
@@ -337,19 +339,11 @@ export class GpuBinarizer {
       new Uint32Array([w, h, Math.round(this.#threshold * 1000), 1000, 500, 1000]),
     );
 
-    d.queue.copyExternalImageToTexture(
-      { source },
-      { texture: srcTex },
-      [srcW, srcH],
-    );
-
     const enc = d.createCommandEncoder();
     const maskBytes = Math.ceil((w * h) / 32) * 4;
     // The mask is written with atomicOr and persists across frames — clear it
     // BEFORE the binarize pass or ink accumulates until the mask saturates.
     enc.clearBuffer(bufs.mask, 0, maskBytes);
-    // Histogram bins accumulate with atomicAdd: clear every frame.
-    enc.clearBuffer(bufs.hist, 0, BINS * 4);
 
     /**
      * @param {GPUComputePipeline} pipeline
@@ -365,14 +359,23 @@ export class GpuBinarizer {
       bg.end();
     };
 
-    // Auto-levels statistic first: probe -> histogram -> p2/p98 scan. The
-    // scan writes the [lo, hi] the luma stage then applies.
-    pass(this.#lumaPipeline, groups.statsLuma, STATS, STATS);
-    pass(this.#histPipeline, groups.hist, STATS, STATS);
-    pass(this.#scanPipeline, groups.scan, 1, 1);
-    pass(this.#lumaPipeline, groups.luma);
-    pass(this.#blurPipeline, groups.blurH);
-    pass(this.#blurPipeline, groups.blurV);
+    if (!reuse) {
+      const radius = Math.max(1, Math.floor(Math.min(w, h) / (2 * this.#windowDivisor)));
+      u.writeBuffer(bufs.uniform, STAGE.luma, new Uint32Array([w, h, srcW, srcH, 1]));
+      u.writeBuffer(bufs.uniform, STAGE.statsLuma, new Uint32Array([STATS, STATS, STATS, STATS, 0]));
+      u.writeBuffer(bufs.uniform, STAGE.histogram, new Uint32Array([STATS, STATS]));
+      u.writeBuffer(bufs.uniform, STAGE.blurH, new Uint32Array([w, h, radius, 0]));
+      u.writeBuffer(bufs.uniform, STAGE.blurV, new Uint32Array([w, h, radius, 1]));
+      u.copyExternalImageToTexture({ source }, { texture: srcTex }, [srcW, srcH]);
+      enc.clearBuffer(bufs.hist, 0, BINS * 4);
+      pass(this.#lumaPipeline, groups.statsLuma, STATS, STATS);
+      pass(this.#histPipeline, groups.hist, STATS, STATS);
+      pass(this.#scanPipeline, groups.scan, 1, 1);
+      pass(this.#lumaPipeline, groups.luma);
+      pass(this.#blurPipeline, groups.blurH);
+      pass(this.#blurPipeline, groups.blurV);
+      this.#cachedSource = isVideo ? null : /** @type {HTMLCanvasElement | ImageBitmap | OffscreenCanvas} */ (source);
+    }
     pass(this.#binarizePipeline, groups.binarize);
 
     enc.copyBufferToBuffer(bufs.mask, 0, bufs.staging, 0, maskBytes);
@@ -386,6 +389,7 @@ export class GpuBinarizer {
   }
 
   destroy() {
+    this.#cachedSource = null;
     this.#srcTex?.destroy();
     const old = this.#bufs;
     if (old) {

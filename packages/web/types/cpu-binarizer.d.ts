@@ -14,9 +14,12 @@ export class CpuBinarizer {
      * @param {number} t
      */
     setThreshold(t: number): void;
+    /** Release cached luma/integral buffers so nothing lingers between frames. */
+    clearCache(): void;
     /**
      * Same source contract as the GPU binarizer: video elements or
-     * canvases/ImageBitmaps.
+     * canvases/ImageBitmaps. Repeated calls on the same immutable source
+     * (threshold sweeps) reuse the cached luma + integral image.
      * @param {HTMLVideoElement | HTMLCanvasElement | ImageBitmap | OffscreenCanvas} source
      * @returns {Promise<BinarizedFrame>}
      */

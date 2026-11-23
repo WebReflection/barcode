@@ -225,6 +225,21 @@ export function roiCandidates(frame, sourceW, sourceH, limit = 4) {
   return picked;
 }
 
+/** Internal bit-transition count per byte (`popcount((b ^ (b >> 1)) & 0x7f)`). */
+const BYTE_TRANS = (() => {
+  const lut = new Uint8Array(256);
+  for (let b = 0; b < 256; b++) {
+    let x = (b ^ (b >> 1)) & 0x7f;
+    let c = 0;
+    while (x) {
+      x &= x - 1;
+      c++;
+    }
+    lut[b] = c;
+  }
+  return lut;
+})();
+
 /**
  * Row-scan (1D) ROI candidates. The compact-cluster detector above sees a
  * barcode as a thin band of high-frequency ink, and a wide symbol often
@@ -241,12 +256,20 @@ export function roiCandidates(frame, sourceW, sourceH, limit = 4) {
 export function linearRoiCandidates(frame, sourceW, sourceH, limit = 2) {
   if (!(frame.width > 0 && frame.height > 0 && sourceW > 0 && sourceH > 0)) return [];
   const { width, height, bytesPerRow, data } = frame;
+  const fullBytes = width >> 3;
+  const tailStart = fullBytes << 3;
   /** @param {number} y */
   const transitions = (y) => {
     let count = 0;
     let prev = 0;
-    for (let x = 0; x < width; x++) {
-      const bit = (data[y * bytesPerRow + (x >> 3)] ?? 0) >> (x & 7) & 1;
+    const rowOff = y * bytesPerRow;
+    for (let bx = 0; bx < fullBytes; bx++) {
+      const b = data[rowOff + bx] ?? 0;
+      count += (BYTE_TRANS[b] ?? 0) + ((b & 1) ^ prev);
+      prev = b >> 7;
+    }
+    for (let x = tailStart; x < width; x++) {
+      const bit = ((data[rowOff + (x >> 3)] ?? 0) >> (x & 7)) & 1;
       if (bit !== prev) count++;
       prev = bit;
     }

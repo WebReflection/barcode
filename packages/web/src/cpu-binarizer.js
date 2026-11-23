@@ -13,6 +13,9 @@ export class CpuBinarizer {
   #maxSize;
   #windowDivisor;
   #threshold;
+  /** Cached luma + integral image for threshold sweeps on the same source. */
+  /** @type {{ source: HTMLCanvasElement | ImageBitmap | OffscreenCanvas, w: number, h: number, luma: Float32Array, integ: Float64Array, floor: number } | null} */
+  #cache = null;
 
   /** @param {Required<import("./gpu/binarizer.js").BinarizerTuning>} opts */
   constructor(opts) {
@@ -57,136 +60,147 @@ export class CpuBinarizer {
     return { w: snapDown(srcW), h: snapDown(srcH) };
   }
 
+  /** Release cached luma/integral buffers so nothing lingers between frames. */
+  clearCache() {
+    this.#cache = null;
+  }
+
   /**
    * Same source contract as the GPU binarizer: video elements or
-   * canvases/ImageBitmaps.
+   * canvases/ImageBitmaps. Repeated calls on the same immutable source
+   * (threshold sweeps) reuse the cached luma + integral image.
    * @param {HTMLVideoElement | HTMLCanvasElement | ImageBitmap | OffscreenCanvas} source
    * @returns {Promise<BinarizedFrame>}
    */
   async process(source) {
-    const srcW =
-      /** @type {HTMLVideoElement} */ (source).videoWidth ?? source.width;
-    const srcH =
-      /** @type {HTMLVideoElement} */ (source).videoHeight ?? source.height;
-    if (!srcW || !srcH) throw new Error("Frame not ready.");
+    const isVideo = "videoWidth" in source;
+    /** @type {number} */ let w;
+    /** @type {number} */ let h;
+    /** @type {Float32Array} */ let luma;
+    /** @type {Float64Array} */ let integ;
+    /** @type {number} */ let floor;
 
-    const { w, h } = this.#fitDst(srcW, srcH);
-    if (w !== this.#canvas.width || h !== this.#canvas.height) {
-      this.#canvas.width = w;
-      this.#canvas.height = h;
-    }
-    if (w >= srcW && h >= srcH) {
-      // true pad: 1:1 pixels, white margin (never resample a fitting source)
-      this.#ctx.fillStyle = "#fff";
-      this.#ctx.fillRect(0, 0, w, h);
-      this.#ctx.drawImage(source, 0, 0);
+    if (!isVideo && this.#cache && this.#cache.source === source) {
+      ({ w, h, luma, integ, floor } = this.#cache);
     } else {
-      this.#ctx.drawImage(source, 0, 0, w, h);
-    }
-    const px = this.#ctx.getImageData(0, 0, w, h).data;
+      const srcW =
+        /** @type {HTMLVideoElement} */ (source).videoWidth ?? source.width;
+      const srcH =
+        /** @type {HTMLVideoElement} */ (source).videoHeight ?? source.height;
+      if (!srcW || !srcH) throw new Error("Frame not ready.");
 
-    // Luma 0-1 (same weights as the GPU shader).
-    const luma = new Float32Array(w * h);
-    for (let i = 0; i < w * h; i++) {
-      // ImageData.data is Uint8ClampedArray<ArrayBufferLike> — under
-      // noUncheckedIndexedAccess every read is `number | undefined`;
-      // a missing byte means a transparent pixel, i.e. paper (0).
-      luma[i] =
-        (0.299 * (px[i * 4] ?? 0) +
-          0.587 * (px[i * 4 + 1] ?? 0) +
-          0.114 * (px[i * 4 + 2] ?? 0)) /
-        255;
-    }
+      ({ w, h } = this.#fitDst(srcW, srcH));
+      if (w !== this.#canvas.width || h !== this.#canvas.height) {
+        this.#canvas.width = w;
+        this.#canvas.height = h;
+      }
+      if (w >= srcW && h >= srcH) {
+        // true pad: 1:1 pixels, white margin (never resample a fitting source)
+        this.#ctx.fillStyle = "#fff";
+        this.#ctx.fillRect(0, 0, w, h);
+        this.#ctx.drawImage(source, 0, 0);
+      } else {
+        this.#ctx.drawImage(source, 0, 0, w, h);
+      }
+      const px = this.#ctx.getImageData(0, 0, w, h).data;
 
-    // Global auto-levels, same contract as the GPU path: p2/p98 over a
-    // ~256x256 stride sample of the luma plane (the CPU already has every
-    // pixel, so no second canvas), applied only to genuinely dim,
-    // low-contrast frames. The full gate is documented in
-    // src/shaders/stats.wgsl; it leaves the real field corpus untouched
-    // while the synthetic dim/veil variants sit at 0.09-0.19.
-    const sample = Math.max(1, Math.floor(Math.sqrt((w * h) / 65536)));
-    const hist = new Uint32Array(256);
-    let sampled = 0;
-    for (let y = 0; y < h; y += sample) {
-      for (let x = 0; x < w; x += sample) {
-        const v = Math.min(1, Math.max(0, luma[y * w + x] ?? 0));
-        hist[(v * 255) | 0] = (hist[(v * 255) | 0] ?? 0) + 1;
-        sampled++;
-      }
-    }
-    const tLo = (sampled * 2) / 100;
-    const tHi = (sampled * 98) / 100;
-    let cum = 0;
-    let loBin = 0;
-    let hiBin = 255;
-    let gotLo = false;
-    for (let b = 0; b < 256; b++) {
-      cum += hist[b] ?? 0;
-      if (!gotLo && cum >= tLo) {
-        loBin = b;
-        gotLo = true;
-      }
-      if (cum >= tHi) {
-        hiBin = b;
-        break;
-      }
-    }
-    let lo = loBin / 255;
-    let hi = hiBin / 255;
-    // Percentiles collapsed (small feature on a uniform field): use the
-    // populated extremes instead, same fallback as the GPU scan pass.
-    if (hi - lo <= 2 / 255) {
-      let minBin = 0;
-      let maxBin = 255;
-      for (let b = 0; b < 256; b++) {
-        if (hist[b]) {
-          minBin = b;
-          break;
-        }
-      }
-      for (let b = 255; b >= 0; b--) {
-        if (hist[b]) {
-          maxBin = b;
-          break;
-        }
-      }
-      lo = minBin / 255;
-      hi = maxBin / 255;
-    }
-    // Dim AND low-contrast only; see src/shaders/stats.wgsl for the gate.
-    if (hi < 0.65 && hi - lo < 0.4 && hi - lo > 2 / 255) {
-      const span = hi - lo;
+      // Luma 0-1 (same weights as the GPU shader).
+      luma = new Float32Array(w * h);
       for (let i = 0; i < w * h; i++) {
-        luma[i] = Math.min(1, Math.max(0, ((luma[i] ?? 0) - lo) / span));
+        luma[i] =
+          (0.299 * (px[i * 4] ?? 0) +
+            0.587 * (px[i * 4 + 1] ?? 0) +
+            0.114 * (px[i * 4 + 2] ?? 0)) /
+          255;
       }
-    }
 
-    // Integral image for the box mean (same math as the GPU blur passes).
-    const integ = new Float64Array((w + 1) * (h + 1));
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        integ[(y + 1) * (w + 1) + x + 1] =
-          (luma[y * w + x] ?? 0) +
-          (integ[y * (w + 1) + x + 1] ?? 0) +
-          (integ[(y + 1) * (w + 1) + x] ?? 0) -
-          (integ[y * (w + 1) + x] ?? 0);
+      // Global auto-levels, same contract as the GPU path: p2/p98 over a
+      // ~256x256 stride sample of the luma plane, applied only to genuinely
+      // dim, low-contrast frames (see src/shaders/stats.wgsl).
+      const sample = Math.max(1, Math.floor(Math.sqrt((w * h) / 65536)));
+      const hist = new Uint32Array(256);
+      let sampled = 0;
+      for (let y = 0; y < h; y += sample) {
+        for (let x = 0; x < w; x += sample) {
+          const v = Math.min(1, Math.max(0, luma[y * w + x] ?? 0));
+          hist[(v * 255) | 0] = (hist[(v * 255) | 0] ?? 0) + 1;
+          sampled++;
+        }
       }
+      const tLo = (sampled * 2) / 100;
+      const tHi = (sampled * 98) / 100;
+      let cum = 0;
+      let loBin = 0;
+      let hiBin = 255;
+      let gotLo = false;
+      for (let b = 0; b < 256; b++) {
+        cum += hist[b] ?? 0;
+        if (!gotLo && cum >= tLo) {
+          loBin = b;
+          gotLo = true;
+        }
+        if (cum >= tHi) {
+          hiBin = b;
+          break;
+        }
+      }
+      let lo = loBin / 255;
+      let hi = hiBin / 255;
+      if (hi - lo <= 2 / 255) {
+        let minBin = 0;
+        let maxBin = 255;
+        for (let b = 0; b < 256; b++) {
+          if (hist[b]) {
+            minBin = b;
+            break;
+          }
+        }
+        for (let b = 255; b >= 0; b--) {
+          if (hist[b]) {
+            maxBin = b;
+            break;
+          }
+        }
+        lo = minBin / 255;
+        hi = maxBin / 255;
+      }
+      if (hi < 0.65 && hi - lo < 0.4 && hi - lo > 2 / 255) {
+        const span = hi - lo;
+        for (let i = 0; i < w * h; i++) {
+          luma[i] = Math.min(1, Math.max(0, ((luma[i] ?? 0) - lo) / span));
+        }
+      }
+
+      // Integral image for the box mean (same math as the GPU blur passes).
+      integ = new Float64Array((w + 1) * (h + 1));
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          integ[(y + 1) * (w + 1) + x + 1] =
+            (luma[y * w + x] ?? 0) +
+            (integ[y * (w + 1) + x + 1] ?? 0) +
+            (integ[(y + 1) * (w + 1) + x] ?? 0) -
+            (integ[y * (w + 1) + x] ?? 0);
+        }
+      }
+
+      // Global-mean floor (total is already the bottom-right corner of integ!).
+      floor = 0.5 * ((integ[h * (w + 1) + w] ?? 0) / (w * h));
+      this.#cache = isVideo
+        ? null
+        : {
+            source: /** @type {HTMLCanvasElement | ImageBitmap | OffscreenCanvas} */ (source),
+            w,
+            h,
+            luma,
+            integ,
+            floor,
+          };
     }
 
     const radius = Math.max(1, Math.floor(Math.min(w, h) / (2 * this.#windowDivisor)));
     const bytesPerRow = Math.ceil(w / 8 / 4) * 4;
     const data = new Uint8Array(bytesPerRow * h);
     const thrScale = this.#threshold;
-    // Global-mean floor (same rescue as the GPU shader): solid dark regions
-    // larger than the Bradley window erase themselves under a purely local
-    // threshold; anything darker than half the scene mean is ink regardless.
-    // The rescue only applies where the NEIGHBORHOOD itself is darker than
-    // the floor — in a frame with a big hand/table shadow the global mean
-    // drops and an unconditional floor force-inks the shadow's light
-    // modules too, shredding codes that cross the shadow boundary.
-    let total = 0;
-    for (let i = 0; i < w * h; i++) total += luma[i] ?? 0;
-    const floor = 0.5 * (total / (w * h));
     for (let y = 0; y < h; y++) {
       const ya = Math.max(0, y - radius), yb = Math.min(h - 1, y + radius);
       const rowOff = y * bytesPerRow;
@@ -200,13 +214,6 @@ export class CpuBinarizer {
           (integ[ya * (w + 1) + xa] ?? 0);
         const l = luma[y * w + x] ?? 0;
         const mean = sum / area;
-        // The floor may only agree with the local dark side: a pixel
-        // brighter than its own neighborhood is local structure (a light
-        // module inside a shadow), not part of a solid dark region. The
-        // slack absorbs float noise in uniform regions (luma == mean
-        // exactly on synthetic renders) — 8/255 of the 0-1 luma range,
-        // well below the ~0.06 gap between a shadowed light module and
-        // its neighborhood mean on the receipt frame.
         if (l < thrScale * mean || (l < floor && l <= mean + 8 / 255)) {
           const byte = rowOff + (x >> 3);
           data[byte] = (data[byte] ?? 0) | (1 << (x & 7));
@@ -218,6 +225,6 @@ export class CpuBinarizer {
   }
 
   destroy() {
-    // nothing persistent
+    this.#cache = null;
   }
 }
