@@ -27,7 +27,7 @@
 </table>
 <script type="module">
 import { getWasmScanner, decodeFrame } from "../src/decoder.js";
-import { encode_fixture } from "../src/wasm/pkg/barcode_wasm.js";
+import { encode_fixture_opts } from "../src/wasm/pkg/barcode_wasm.js";
 
 const rows = document.getElementById("rows");
 const summary = document.getElementById("summary");
@@ -79,7 +79,7 @@ try {
 
   // 2. A valid QR with 10% of its modules flipped. Same-symbology reads must
   //    still be the original payload (RS may reject, never rewrite).
-  const fx = await encode_fixture("qrcode", "FUZZ-QR", 4, 200);
+  const fx = await encode_fixture_opts("qrcode", "FUZZ-QR", 4, 200, -1, -1, 0, -1, 0, 0, 0);
   const clean = {
     width: fx.width, height: fx.height,
     data: fx.data instanceof Uint8Array ? fx.data : Uint8Array.from(fx.data),

@@ -16,7 +16,7 @@
 
 import { decodeFrame, getWasmScanner } from "../src/decoder.js";
 import { createBinarizer } from "../src/binarizer-factory.js";
-import { encode_fixture } from "../src/wasm/pkg/barcode_wasm.js";
+import { encode_fixture_opts } from "../src/wasm/pkg/barcode_wasm.js";
 
 const CASES = [
   { s: "ean13", t: "4006381333931" },
@@ -156,7 +156,7 @@ async function run() {
   for (const [ci, c] of CASES.entries()) {
     const t0 = performance.now();
     const expect = c.expect ?? c.t;
-    const spec = maskToCanvas(encode_fixture(c.s, c.t, MODULE_BASE, 400));
+    const spec = maskToCanvas(encode_fixture_opts(c.s, c.t, MODULE_BASE, 400, -1, -1, 0, -1, 0, 0, 0));
     /** @type {Record<string, {single: number, any: number, of: number}>} */
     const cells = {};
     let singleHits = 0, anyHits = 0, total = 0;

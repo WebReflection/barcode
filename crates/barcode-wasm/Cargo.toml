@@ -8,6 +8,13 @@ license.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+# Diagnostic/legacy WASM exports (QR stage/format probes, no-options fixture
+# wrappers). Off by default so the published wasm.wasm only ships the
+# production decode and render surface.
+debug = []
+
 [dependencies]
 barcode-core = { workspace = true }
 barcode-ean13 = { path = "../barcode-ean13" }

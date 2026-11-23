@@ -483,6 +483,516 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
 };
 
 /**
+ * Append `hits` not already present in `dst` (by `symbology\0text`).
+ * Returns whether at least one new hit was added.
+ * @param {DecodedCode[]} dst
+ * @param {DecodedCode[]} hits
+ */
+const mergeUnique = (dst, hits) => {
+  if (!hits.length) return false;
+  const seen = new Set(dst.map((c) => c.symbology + '\u0000' + c.text));
+  let added = false;
+  for (const hit of hits) {
+    const key = hit.symbology + '\u0000' + hit.text;
+    if (!seen.has(key)) {
+      seen.add(key);
+      dst.push(hit);
+      added = true;
+    }
+  }
+  return added;
+};
+
+/**
+ * Build the ranked decode response envelope.
+ * @param {DecodedCode[]} codes
+ * @param {{ width: number, height: number }} frame
+ * @param {number} t0
+ * @param {boolean} partial
+ * @param {string[] | null} checked
+ * @param {ReturnType<typeof getWasmScanner> extends Promise<infer S> ? S : never} scanner
+ * @param {string[] | undefined} formats
+ * @returns {DecodeResponse}
+ */
+const makeResult = (codes, frame, t0, partial, checked, scanner, formats) => ({
+  type: 'result',
+  codes: ranked(codes, frame.width, frame.height),
+  decodeMs: Math.round(performance.now() - t0),
+  frameW: frame.width,
+  frameH: frame.height,
+  partial,
+  checked,
+  qrPresence: !formats?.length || formats.some((f) => f === 'qr' || f === 'qrcode')
+    ? scanner.qr_presence()
+    : undefined,
+});
+
+/**
+ * CPU second opinion at threshold 0.7 for busy-background 2D misses where
+ * the GPU's fixed floor over-inked the scene.
+ * @param {ReturnType<typeof getWasmScanner> extends Promise<infer S> ? S : never} scanner
+ * @param {CpuBinarizer} cpuBin
+ * @param {ImageBitmap | OffscreenCanvas} input
+ * @param {{ width: number, height: number }} frame
+ * @param {string[]} families
+ * @param {{ still?: boolean, latency?: number }} callOpts
+ * @returns {Promise<DecodedCode[]>}
+ */
+const runCpuSecondOpinion = async (scanner, cpuBin, input, frame, families, callOpts) => {
+  cpuBin.setThreshold(0.7);
+  const cpuFrame = await cpuBin.process(input);
+  const hits = decodeFrame(scanner, cpuFrame, families, callOpts);
+  if (hits.length && (cpuFrame.width !== frame.width || cpuFrame.height !== frame.height)) {
+    const sx = frame.width / cpuFrame.width;
+    const sy = frame.height / cpuFrame.height;
+    for (const hit of hits) {
+      hit.position = hit.position.map((p) => ({ x: p.x * sx, y: p.y * sy }));
+    }
+  }
+  return hits;
+};
+
+/**
+ * Diagonal (±45°) source-rotation retry: rotating the antialiased source
+ * preserves Aztec bullseyes / DM edges that mask-level 45° rotation erodes.
+ * @param {ReturnType<typeof getWasmScanner> extends Promise<infer S> ? S : never} scanner
+ * @param {Awaited<ReturnType<typeof createBinarizer>>} bin
+ * @param {ImageBitmap | OffscreenCanvas} input
+ * @param {string[]} diag
+ * @param {() => { still?: boolean, latency?: number }} getOpts
+ * @param {() => boolean} [outOfTime]
+ * @returns {Promise<DecodedCode[]>}
+ */
+const runDiagonalRetry = async (scanner, bin, input, diag, getOpts, outOfTime) => {
+  bin.setThreshold(0.92);
+  for (const deg of [45, -45]) {
+    if (outOfTime?.()) break;
+    const rotated = await rotateDrawable(input, deg);
+    const df = await bin.process(rotated.canvas);
+    const hits = decodeFrame(scanner, df, diag, getOpts());
+    if (hits.length) {
+      for (const hit of hits) {
+        if (hit.position?.length) {
+          hit.position = rotated.map(df.width, df.height, hit.position);
+        }
+      }
+      return hits;
+    }
+  }
+  return [];
+};
+
+/**
+ * Still-image decode path: area-filtered 2112px input, shared deadline,
+ * fast 1D threshold ladder, centered-1D early exit, CPU first/second
+ * opinions, native-resolution ROI, dim lift + slight-roll, and diagonal.
+ * Never touches live scheduler/cooldown state.
+ * @param {ImageBitmap} bitmap
+ * @param {string[] | undefined} formats
+ * @param {Accuracy | undefined} accuracy
+ * @param {number | undefined} latency
+ * @returns {Promise<DecodeResponse>}
+ */
+const decodeStill = async (bitmap, formats, accuracy, latency) => {
+  const bin = await stillBinarizer();
+  try {
+    const scanner = await scannerReady;
+    const t0 = performance.now();
+    // Gallery photos are 12MP and the GPU luma stage reaches 2112 with a
+    // single bilinear tap per destination pixel: that aliases a small
+    // symbol's module pitch away. Area-filter HERE with the browser's
+    // resampler, keeping the ORIGINAL bitmap for native-resolution ROI.
+    /** @type {ImageBitmap | OffscreenCanvas} */
+    let input = bitmap;
+    const longest = Math.max(bitmap.width, bitmap.height);
+    if (longest > STILL_MAX) {
+      const scale = STILL_MAX / longest;
+      const w = Math.max(1, Math.round(bitmap.width * scale));
+      const h = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = new OffscreenCanvas(w, h);
+      const ctx = /** @type {OffscreenCanvasRenderingContext2D | null} */ (canvas.getContext('2d'));
+      if (ctx) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(bitmap, 0, 0, w, h);
+        input = canvas;
+      }
+    }
+    const frame = await bin.process(input);
+    const opts = { still: true, latency };
+    const deadline = t0 + (latency ?? 5000);
+    const remaining = () => deadline - performance.now();
+    const outOfTime = () => performance.now() >= deadline;
+    const budgetOpts = () => ({ ...opts, latency: Math.max(250, remaining()) });
+
+    // 1. Fast 1D threshold ladder (~ms vs seconds for full exotic 2D).
+    /** @type {DecodedCode[]} */
+    let codes = [];
+    let stillLinearHit = false;
+    if (typeof bin.setThreshold === "function") {
+      const linear = stillLinearFormats(formats);
+      if (linear.length) {
+        const thresholds = accuracy === "low" ? [0.92] : [0.92, 0.82, 0.7];
+        for (const threshold of thresholds) {
+          if (outOfTime()) break;
+          const f = threshold === 0.92 ? frame : await withThreshold(bin, threshold, () => bin.process(input));
+          const lin = decodeFrame(scanner, f, linear, opts);
+          if (lin.length) {
+            codes = lin;
+            stillLinearHit = true;
+            break;
+          }
+        }
+      }
+    }
+
+    // A centered, reliable 1D barcode (score >= 0.82: covers all centered
+    // receipts/books/labels/chocolate/pharma-ITF while staying well above
+    // gs1-two-codes' peripheral EAN-13 at 0.737) already satisfies the
+    // one-code contract — skip the 5-8s DataMatrix/2D hunt. Weak/loose 1D
+    // hits (ean8/upce/codabar/code39) never short-circuit 2D so a noisy
+    // ean8 inside an Aztec/QR grid (bahn-509724794512) cannot hide it.
+    const strongLinear = codes.some((c) => STRONG_1D.has(c.symbology) || c.symbology === "itf");
+    const centeredLinear =
+      stillLinearHit && strongLinear && ((ranked(codes, frame.width, frame.height)[0]?.score ?? 0) >= 0.82);
+
+    // 2. GPU stills: CPU first opinion for STILL_CPU_FAMILIES unless a
+    // centered reliable 1D hit already satisfied the one-code contract.
+    /** @type {DecodedCode[]} */
+    let cpuCodes = [];
+    if (bin.kind === "gpu" && !centeredLinear) {
+      const families = stillCpuFamilies(formats);
+      if (families.length && !outOfTime()) {
+        const cpuBin = stillCpuBinarizer();
+        const cpuLatency = () => Math.min(budgetOpts().latency ?? 2000, stillLinearHit ? 1000 : 2000);
+        const isRoi = (/** @type {string} */ f) => STILL_CPU_ROI_FAMILIES.has(String(f).toLowerCase());
+        const roiFamilies = families.filter(isRoi);
+        const cheapFamilies = families.filter((f) => !isRoi(f));
+        /** @type {import('../src/gpu/binarizer.js').BinarizedFrame | null} */
+        let frame07 = null;
+        for (const threshold of [0.7, 0.82]) {
+          if (!cheapFamilies.length || outOfTime()) break;
+          const seen = new Set(cpuCodes.map((c) => c.symbology));
+          if (cheapFamilies.every((f) => seen.has(String(f).toLowerCase()))) break;
+          let cpuMask = threshold === 0.7 ? frame07 : null;
+          if (!cpuMask) {
+            cpuBin.setThreshold(threshold);
+            const mask = await cpuBin.process(input);
+            cpuMask = mask;
+            if (threshold === 0.7) frame07 = mask;
+          }
+          if (cpuMask && mergeUnique(cpuCodes, decodeFrame(scanner, cpuMask, cheapFamilies, { ...opts, still: false }))) break;
+        }
+        if (!cpuCodes.length && roiFamilies.length && !outOfTime()) {
+          if (!frame07) {
+            cpuBin.setThreshold(0.7);
+            frame07 = await cpuBin.process(input);
+          }
+          const mask07 = frame07;
+          if (mask07) mergeUnique(cpuCodes, decodeFrame(scanner, mask07, roiFamilies, { ...opts, latency: cpuLatency() }));
+        }
+        const cpuHitNow = new Set(cpuCodes.map((c) => c.symbology));
+        const roiLeft = stillLinearHit
+          ? []
+          : roiFamilies.filter((f) => !cpuHitNow.has(String(f).toLowerCase()));
+        if (roiLeft.length && !outOfTime()) {
+          cpuBin.setThreshold?.(0.92);
+          const cpuRoiFrame = await cpuBin.process(input);
+          cpuCodes = cpuCodes.concat(
+            await decodeRoi(
+              scanner,
+              cpuBin,
+              bitmap,
+              cpuRoiFrame,
+              roiLeft,
+              budgetOpts(),
+              4,
+              Math.min(performance.now() + 3000, deadline),
+            ),
+          );
+        }
+        if (cpuCodes.length) codes = codes.concat(cpuCodes);
+      }
+    }
+    const cpuHit = new Set(cpuCodes.map((c) => c.symbology));
+
+    // 3. Off-center or weak 1D hit: check remaining 2D via ROI + 0.7 so a
+    // centered 2D code (e.g. gs1-two-codes DataMatrix) still wins.
+    if (stillLinearHit && !centeredLinear) {
+      const twoD = (formats ?? ALL_FORMATS).filter(
+        (f) =>
+          !LINEAR_FORMATS.has(String(f).toLowerCase()) &&
+          !cpuHit.has(String(f).toLowerCase()),
+      );
+      if (twoD.length && !outOfTime()) {
+        const roi = await decodeRoi(
+          scanner,
+          bin,
+          bitmap,
+          frame,
+          twoD,
+          budgetOpts(),
+          2,
+          Math.min(performance.now() + (bin.kind === "gpu" ? 800 : 1500), deadline),
+        );
+        if (roi.length) codes = strongLinear ? codes.concat(roi) : roi;
+        else if (!outOfTime() && typeof bin.setThreshold === "function") {
+          const alt = await withThreshold(bin, 0.7, () => bin.process(input));
+          const twoDHits = decodeFrame(scanner, alt, twoD, budgetOpts());
+          if (twoDHits.length) {
+            if (strongLinear) mergeUnique(codes, twoDHits);
+            else codes = twoDHits;
+          }
+        }
+      }
+    }
+
+    // 4. Small 1D native-resolution ROI before the exotic 2D sweep.
+    if (!stillLinearHit && codes.length === 0) {
+      const linear = stillLinearFormats(formats);
+      if (linear.length) {
+        const roi = await decodeRoi(
+          scanner,
+          bin,
+          bitmap,
+          frame,
+          linear,
+          opts,
+          2,
+          Math.min(performance.now() + 900, deadline),
+        );
+        if (roi.length) {
+          codes = roi;
+          stillLinearHit = true;
+        }
+      }
+    }
+
+    // 5. Full sweep + threshold ladder when neither 1D nor CPU first opinion hit.
+    if (!stillLinearHit && !cpuHit.size && formats?.length !== 0) {
+      codes = codes.concat(decodeFrame(scanner, frame, formats, budgetOpts()));
+      const sweep = accuracy === 'high' || (accuracy === 'auto' && codes.length === 0);
+      if (sweep && !outOfTime() && typeof bin.setThreshold === "function") {
+        for (const threshold of [0.82, 0.7]) {
+          if (outOfTime()) break;
+          const alt = await withThreshold(bin, threshold, () => bin.process(input));
+          mergeUnique(codes, decodeFrame(scanner, alt, formats, budgetOpts()));
+        }
+      }
+    }
+
+    // 6. CPU second opinion for non-STILL_CPU_FAMILIES (Aztec / PDF417).
+    if (bin.kind === "gpu" && codes.length === 0 && remaining() > 250) {
+      const families = cpuSecondOpinionFormats(formats, codes, STILL_CPU_FAMILIES);
+      if (families.length) {
+        codes = codes.concat(
+          await runCpuSecondOpinion(scanner, stillCpuBinarizer(), input, frame, families, budgetOpts()),
+        );
+      }
+    }
+
+    // 7. Full native-resolution ROI pass.
+    if (codes.length === 0 && !outOfTime()) {
+      const roi = await decodeRoi(scanner, bin, bitmap, frame, formats, budgetOpts(), 4, deadline);
+      if (roi.length) codes = roi;
+    }
+
+    // 8. Dim still brightness lift + small-roll source rotation retry.
+    if (codes.length === 0 && remaining() > 300) {
+      const liftFormats = (formats ?? [...LINEAR_FORMATS, 'databarstk']).filter((f) => {
+        const n = String(f).toLowerCase();
+        return LINEAR_FORMATS.has(n) || n === 'databarstk';
+      });
+      const linear = stillLinearFormats(formats);
+      if (liftFormats.length) {
+        const thresholds = [0.92, 0.82, 0.7];
+        const lifted = await liftDim(input);
+        if (lifted) {
+          for (const threshold of thresholds) {
+            if (remaining() < 250) break;
+            const df = await withThreshold(bin, threshold, () => bin.process(lifted.canvas));
+            const hits = decodeFrame(scanner, df, liftFormats, budgetOpts());
+            if (hits.length) {
+              codes = hits;
+              break;
+            }
+          }
+        }
+        const source = lifted?.canvas ?? input;
+        for (const deg of [-3, 3, -4, 4, -8, 8]) {
+          if (codes.length || remaining() < 250 || !linear.length) break;
+          const rotated = await rotateDrawable(source, deg);
+          for (const threshold of thresholds) {
+            if (remaining() < 250) break;
+            const df = await withThreshold(bin, threshold, () => bin.process(rotated.canvas));
+            const hits = decodeFrame(scanner, df, linear, budgetOpts());
+            if (hits.length) {
+              for (const hit of hits) {
+                if (hit.position?.length) {
+                  hit.position = rotated.map(df.width, df.height, hit.position);
+                }
+              }
+              codes = hits;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // 9. Diagonal ±45° source-rotation retry.
+    if (codes.length === 0 && !outOfTime()) {
+      const diag = formats == null
+        ? [...DIAGONAL_FORMATS]
+        : formats.filter((n) => DIAGONAL_FORMATS.has(String(n).toLowerCase()));
+      if (diag.length) {
+        codes = await runDiagonalRetry(scanner, bin, input, diag, budgetOpts, outOfTime);
+      }
+    }
+
+    return makeResult(codes, frame, t0, false, null, scanner, formats);
+  } finally {
+    bin.clearCache?.();
+    stillCpuBinarizerInstance?.clearCache?.();
+  }
+};
+
+/**
+ * Live-camera frame decode path: 1056px binarizer, cheap/full scheduling,
+ * centered strong-1D early exit, throttled CPU second opinion / native ROI /
+ * diagonal retries, and confirmation-law `checked` tracking.
+ * @param {ImageBitmap} bitmap
+ * @param {string[] | undefined} formats
+ * @param {Accuracy | undefined} accuracy
+ * @param {number | undefined} latency
+ * @returns {Promise<DecodeResponse>}
+ */
+const decodeLive = async (bitmap, formats, accuracy, latency) => {
+  let full = true;
+  let activeFormats = formats;
+  /** Families actually decoded this frame: null = everything requested. @type {string[] | null} */
+  let checked = null;
+  const scheduled = needsScheduling(formats);
+  if (scheduled) {
+    full = dueForFullSweep(performance.now());
+    if (!full) {
+      activeFormats = cheapFormats(formats, !lastFullHad2D);
+      if (activeFormats.length) {
+        const seen = new Set(activeFormats);
+        for (const symbology of lastCandidates) {
+          if (symbology && !seen.has(symbology)) {
+            seen.add(symbology);
+            activeFormats.push(symbology);
+          }
+        }
+      }
+      checked = activeFormats;
+      if (!activeFormats.length) {
+        return { type: 'result', codes: [], decodeMs: 0, partial: true, checked };
+      }
+    }
+  }
+  const bin = await binarizerReady;
+  try {
+    const scanner = await scannerReady;
+    const t0 = performance.now();
+    const frame = await bin.process(bitmap);
+    const opts = { still: false, latency };
+    /** @type {DecodedCode[]} */
+    let codes = [];
+
+    if (activeFormats?.length !== 0) {
+      if (full && scheduled) {
+        const cheapList = cheapFormats(activeFormats, !lastFullHad2D);
+        if (cheapList.length) {
+          codes = decodeFrame(scanner, frame, cheapList, opts);
+          checked = cheapList;
+        }
+        // 2D-before-1D: loose/unchecksummed 1D hits can be noise from a 2D
+        // symbol's texture, so still run exotic tiers then. A centered,
+        // strongly-checksummed 1D hit confirms directly without paying ~400ms
+        // of DataMatrix + PDF417.
+        const linearOnly =
+          codes.length > 0 && codes.every((c) => !is2DResult(c.symbology));
+        const strongCentered1D =
+          linearOnly &&
+          codes.some((c) => STRONG_1D.has(c.symbology)) &&
+          ((ranked(codes, frame.width, frame.height)[0]?.score ?? 0) >= 0.85);
+        if (!codes.length || (linearOnly && !strongCentered1D)) {
+          const ranCheap = new Set(cheapList.map((f) => String(f).toLowerCase()));
+          const rest = (activeFormats ?? ALL_FORMATS).filter(
+            (f) => !ranCheap.has(String(f).toLowerCase()),
+          );
+          if (rest.length) codes = codes.concat(decodeFrame(scanner, frame, rest, opts));
+          checked = null;
+        }
+      } else {
+        codes = decodeFrame(scanner, frame, activeFormats, opts);
+      }
+      const firstMs = performance.now() - t0;
+      const sweep =
+        accuracy === 'high' ||
+        (accuracy === 'auto' && codes.length === 0 && firstMs < 220);
+      if (sweep && typeof bin.setThreshold === "function") {
+        const alt = await withThreshold(bin, 0.82, () => bin.process(bitmap));
+        mergeUnique(codes, decodeFrame(scanner, alt, activeFormats, opts));
+        checked = null;
+      }
+    }
+
+    // Live CPU second opinion: only after a true miss (`codes.length === 0`).
+    if (bin.kind === "gpu" && codes.length === 0) {
+      const families = cpuSecondOpinionFormats(activeFormats, codes);
+      const now = performance.now();
+      const due =
+        now <= cpuSecondOpinionHotUntil ||
+        now - lastCpuSecondOpinionAt >= CPU_SECOND_OPINION_MIN_INTERVAL_MS;
+      if (families.length && due) {
+        lastCpuSecondOpinionAt = now;
+        const hits = await runCpuSecondOpinion(scanner, liveCpuBinarizer(), bitmap, frame, families, opts);
+        if (hits.length) {
+          codes = codes.concat(hits);
+          cpuSecondOpinionHotUntil = now + 600;
+        }
+      }
+    }
+
+    // Live native-resolution ROI pass (2 crops, 120ms budget, hot bypass for confirmation).
+    if (codes.length === 0) {
+      const now = performance.now();
+      if (now <= roiHotUntil || now - lastRoiAt >= ROI_MIN_INTERVAL_MS) {
+        lastRoiAt = now;
+        const roi = await decodeRoi(scanner, bin, bitmap, frame, activeFormats, opts, 2, now + 120);
+        if (roi.length) {
+          codes = roi;
+          roiHotUntil = now + 600;
+        }
+      }
+    }
+
+    // Live diagonal ±45° retry: only explicit diagonal tiers, at most 2 Hz.
+    if (codes.length === 0 && formats != null) {
+      const diag = activeFormats == null
+        ? [...DIAGONAL_FORMATS]
+        : activeFormats.filter((n) => DIAGONAL_FORMATS.has(String(n).toLowerCase()));
+      const now = performance.now();
+      if (diag.length > 0 && now - lastDiagonalAt >= 500) {
+        lastDiagonalAt = now;
+        codes = await runDiagonalRetry(scanner, bin, bitmap, diag, () => opts);
+      }
+    }
+
+    if (full) lastFullHad2D = codes.some((c) => is2DResult(c.symbology));
+    lastCandidates = codes.map((c) => c.symbology);
+    return makeResult(codes, frame, t0, !full, checked, scanner, activeFormats);
+  } finally {
+    if (full) markFullSweep(performance.now());
+    bin.clearCache?.();
+    liveCpuBinarizerInstance?.clearCache?.();
+  }
+};
+
+/**
  * The handler pair. One wasm instance, one binarizer and one scanner
  * serve the single bound session; the main thread's own convention is
  * one frame in flight and requests serialize through a queue besides.
@@ -502,532 +1012,16 @@ const handlers = {
    * @this {Bindings}
    */
   async decode(msg) {
-    /** Whether this frame runs the full exotic sweep (for the scheduler). */
-    let full = true;
-    /** @type {{ clearCache?: () => void } | null} */
-    let usedBin = null;
     try {
       const { bitmap, formats, still, accuracy, latency } = msg ?? {};
       if (!bitmap) throw new Error('decode: missing bitmap');
-      // Live-frame scheduling: the exotic 2D families run at most every
-      // 250ms of wall time; the cheap ones (QR/Micro/Aztec/DataBarStk)
-      // run on every frame. Still images always get the full sweep.
-      let activeFormats = formats;
-      /** Families actually decoded this frame: null = everything requested. @type {string[] | null} */
-      let checked = null;
-      const scheduled = still !== true && needsScheduling(formats);
-      if (scheduled) {
-        full = dueForFullSweep(performance.now());
-        if (!full) {
-          // Cheap frames keep the linear tier alive unless the last full
-          // sweep actually saw a 2D code (the false-positive gate).
-          activeFormats = cheapFormats(formats, !lastFullHad2D);
-          // Re-confirmation boost: a code read on the previous frame gets
-          // its tier re-checked on THIS frame. Without it the second
-          // agreeing read waited for the next scheduled full sweep (a
-          // screen PDF417 measured 17.4s in Everything mode). The boost
-          // keeps the 2D-first order — it only appends a family that was
-          // just observed. Result names are already canonical, so this
-          // is the same vocabulary as `activeFormats` and `formats`.
-          if (activeFormats.length) {
-            const seen = new Set(activeFormats);
-            for (const symbology of lastCandidates) {
-              if (symbology && !seen.has(symbology)) {
-                seen.add(symbology);
-                activeFormats.push(symbology);
-              }
-            }
-          }
-          checked = activeFormats;
-          if (!activeFormats.length) {
-            return { type: 'result', codes: [], decodeMs: 0, partial: true, checked };
-          }
-        }
-      }
-      const bin = await (still === true ? stillBinarizer() : binarizerReady);
-      usedBin = bin;
-      const scanner = await scannerReady;
-      const t0 = performance.now();
-      // Gallery photos are 12MP and the GPU luma stage reaches 2112 with a
-      // single bilinear tap per destination pixel: that aliases a small
-      // symbol's module pitch away (the same DataMatrix read in 1.7s when
-      // the source had already been area-filtered by the browser, never
-      // at native 12MP). Area-filter the still HERE with the browser's
-      // resampler — but keep the ORIGINAL bitmap for the native-resolution
-      // ROI pass below, which needs those pixels.
-      /** @type {ImageBitmap | OffscreenCanvas} */
-      let input = bitmap;
-      if (still === true) {
-        const longest = Math.max(bitmap.width, bitmap.height);
-        if (longest > STILL_MAX) {
-          const scale = STILL_MAX / longest;
-          const w = Math.max(1, Math.round(bitmap.width * scale));
-          const h = Math.max(1, Math.round(bitmap.height * scale));
-          const canvas = new OffscreenCanvas(w, h);
-          const ctx = /** @type {OffscreenCanvasRenderingContext2D | null} */ (canvas.getContext('2d'));
-          if (ctx) {
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(bitmap, 0, 0, w, h);
-            input = canvas;
-          }
-        }
-      }
-      const frame = await bin.process(input);
-      const opts = { still, latency };
-      // Stills have ONE hard deadline: `latency` bounds the whole decode,
-      // and every stage below — threshold ladder, full sweep, source
-      // rotation, native ROI — shares it. Live frames keep their per-frame
-      // scheduling (the confirmation law drops over-budget frames instead).
-      const deadline =
-        still === true ? t0 + (latency ?? 5000) : Number.POSITIVE_INFINITY;
-      const remaining = () => deadline - performance.now();
-      const outOfTime = () => performance.now() >= deadline;
-      /** Per-call opts: the still tiers take their own budget (DM/PDF417). */
-      const budgetOpts = () =>
-        still === true ? { ...opts, latency: Math.max(250, remaining()) } : opts;
-      // Stills: try the linear tier alone first, across a small threshold
-      // ladder. A 2112px loyalty-card photo measured 6s for the full
-      // all-format sweep and 30ms for the 1D tier — and the barcode only
-      // appeared at threshold 0.7 (the card's white label sits on a
-      // light-teal background, so 0.92/0.82 miss it). Live frames keep
-      // the tier order; their linear pass is already every frame.
-      /** @type {DecodedCode[]} */
-      let codes = [];
-      let stillLinearHit = false;
-      if (still === true && typeof bin.setThreshold === "function") {
-        const linear = stillLinearFormats(activeFormats);
-        if (linear.length) {
-          const thresholds = accuracy === "low" ? [0.92] : [0.92, 0.82, 0.7];
-          const b = bin;
-          for (const threshold of thresholds) {
-            if (outOfTime()) break;
-            const f = threshold === 0.92 ? frame : await withThreshold(b, threshold, () => b.process(input));
-            const lin = decodeFrame(scanner, f, linear, opts);
-            if (lin.length) {
-              codes = lin;
-              stillLinearHit = true;
-              break;
-            }
-          }
-        }
-      }
-      // A centered, reliable 1D barcode (score >= 0.82: covers all centered
-      // receipts/books/labels/chocolate/pharma-ITF while staying well above
-      // gs1-two-codes' peripheral EAN-13 at 0.737) already satisfies the
-      // one-code contract — skip the 5-8s DataMatrix/2D hunt. Weak/loose 1D
-      // hits (ean8/upce/codabar/code39) never short-circuit 2D so a noisy
-      // ean8 inside an Aztec/QR grid (bahn-509724794512) cannot hide it.
-      const strongLinear = codes.some((c) => STRONG_1D.has(c.symbology) || c.symbology === "itf");
-      const centeredLinear =
-        stillLinearHit && strongLinear && ((ranked(codes, frame.width, frame.height)[0]?.score ?? 0) >= 0.82);
-      // GPU stills: a first opinion for STILL_CPU_FAMILIES (see above).
-      // Skipped when a centered 1D barcode already read.
-      /** @type {DecodedCode[]} */
-      let cpuCodes = [];
-      if (still === true && bin.kind === "gpu" && !centeredLinear) {
-        const families = stillCpuFamilies(activeFormats);
-        if (families.length && !outOfTime()) {
-          // `input` (not `bitmap`) is the same area-filtered source the GPU
-          // frame came from: a >2112px photo must not take a second,
-          // different downscale path here.
-          const cpuBin = stillCpuBinarizer();
-          const cpuLatency = () => Math.min(budgetOpts().latency ?? 2000, stillLinearHit ? 1000 : 2000);
-          /** @param {DecodedCode[]} hits @returns {boolean} whether any was new */
-          const add = (hits) => {
-            const seen = new Set(cpuCodes.map((c) => c.symbology + '\u0000' + c.text));
-            let got = false;
-            for (const hit of hits) {
-              const key = hit.symbology + '\u0000' + hit.text;
-              if (!seen.has(key)) {
-                seen.add(key);
-                cpuCodes.push(hit);
-                got = true;
-              }
-            }
-            return got;
-          };
-          const isRoi = (/** @type {string} */ f) => STILL_CPU_ROI_FAMILIES.has(String(f).toLowerCase());
-          const roiFamilies = families.filter(isRoi);
-          const cheapFamilies = families.filter((f) => !isRoi(f));
-          /** The 0.7 full-frame mask, shared by the cheap ladder and the
-           *  DataMatrix first opinion. @type {import('../src/gpu/binarizer.js').BinarizedFrame | null} */
-          let frame07 = null;
-          for (const threshold of [0.7, 0.82]) {
-            if (!cheapFamilies.length || outOfTime()) break;
-            const seen = new Set(cpuCodes.map((c) => c.symbology));
-            if (cheapFamilies.every((f) => seen.has(String(f).toLowerCase()))) break;
-            let cpuMask = threshold === 0.7 ? frame07 : null;
-            if (!cpuMask) {
-              cpuBin.setThreshold(threshold);
-              const mask = await cpuBin.process(input);
-              cpuMask = mask;
-              if (threshold === 0.7) frame07 = mask;
-            }
-            if (cpuMask && add(decodeFrame(scanner, cpuMask, cheapFamilies, { ...opts, still: false }))) break;
-          }
-          if (!cpuCodes.length && roiFamilies.length && !outOfTime()) {
-            if (!frame07) {
-              cpuBin.setThreshold(0.7);
-              frame07 = await cpuBin.process(input);
-            }
-            const mask07 = frame07;
-            if (mask07) add(decodeFrame(scanner, mask07, roiFamilies, { ...opts, latency: cpuLatency() }));
-          }
-          // Skip the 3s native-pitch CPU DM ROI when a 1D code already read.
-          const cpuHit = new Set(cpuCodes.map((c) => c.symbology));
-          const roiLeft = stillLinearHit
-            ? []
-            : roiFamilies.filter((f) => !cpuHit.has(String(f).toLowerCase()));
-          if (roiLeft.length && !outOfTime()) {
-            cpuBin.setThreshold?.(0.92);
-            const cpuRoiFrame = await cpuBin.process(input);
-            cpuCodes = cpuCodes.concat(
-              await decodeRoi(
-                scanner,
-                cpuBin,
-                bitmap,
-                cpuRoiFrame,
-                roiLeft,
-                budgetOpts(),
-                4,
-                Math.min(performance.now() + 3000, deadline),
-              ),
-            );
-          }
-          if (cpuCodes.length) codes = codes.concat(cpuCodes);
-        }
-      }
-      /** Families actually decoded on the CPU still mask. */
-      const cpuHit = new Set(cpuCodes.map((c) => c.symbology));
-      // A still can carry BOTH a linear code and a 2D one (a product box:
-      // peripheral EAN-13 at score 0.737 and a centered GS1 DataMatrix).
-      // When the 1D hit is already centered (>= 0.85), it already satisfies
-      // the one-code contract (same rule as a CPU QR read); when off-center,
-      // run the 2D ROI + 0.7 fallback so a centered 2D code still wins.
-      if (still === true && stillLinearHit && !centeredLinear) {
-        const twoD = (activeFormats ?? ALL_FORMATS).filter(
-          (f) =>
-            !LINEAR_FORMATS.has(String(f).toLowerCase()) &&
-            !cpuHit.has(String(f).toLowerCase()),
-        );
-        if (twoD.length && !outOfTime()) {
-          const roi = await decodeRoi(
-            scanner,
-            bin,
-            bitmap,
-            frame,
-            twoD,
-            budgetOpts(),
-            2,
-            Math.min(performance.now() + (bin.kind === "gpu" ? 800 : 1500), deadline),
-          );
-          if (roi.length) codes = strongLinear ? codes.concat(roi) : roi;
-          else if (!outOfTime() && typeof bin.setThreshold === "function") {
-            const b = bin;
-            const alt = await withThreshold(b, 0.7, () => b.process(input));
-            const seen = new Set(codes.map((c) => c.symbology + '\u0000' + c.text));
-            const twoDHits = decodeFrame(scanner, alt, twoD, budgetOpts()).filter(
-              (c) => !seen.has(c.symbology + '\u0000' + c.text),
-            );
-            if (twoDHits.length) codes = strongLinear ? codes.concat(twoDHits) : twoDHits;
-            checked = null;
-          }
-        }
-      }
-      // Small 1D codes (the roadmap's receipt lever): the full-frame
-      // 2112px ladder can still leave a bar code at 2-3px/module. The
-      // compact clusters the mask already shows are cropped from the
-      // ORIGINAL photo and read at native pitch before the exotic sweep.
-      if (still === true && !stillLinearHit && codes.length === 0) {
-        const linear = stillLinearFormats(activeFormats);
-        if (linear.length) {
-          const roi = await decodeRoi(
-            scanner,
-            bin,
-            bitmap,
-            frame,
-            linear,
-            opts,
-            2,
-            Math.min(performance.now() + 900, t0 + (latency ?? 5000)),
-          );
-          if (roi.length) {
-            codes = roi;
-            stillLinearHit = true;
-          }
-        }
-      }
-      // A CPU read already satisfies the one-code contract: the remaining
-      // exotic tiers on the busy mask cost seconds (measured: the GPU
-      // sweep spent the rest of the 10s still deadline after the CPU had
-      // read the QR), so only an empty CPU result escalates to the GPU.
-      const sweepFormats = activeFormats;
-      if (!stillLinearHit && !cpuHit.size && sweepFormats?.length !== 0) {
-        // Cheap-first escalation: on a scheduled FULL frame, decode the
-        // cheap tier (QR/Micro/Aztec/DataBarStk + linear when the 2D gate
-        // allows) FIRST — QR/1D hits then confirm for a fraction of the
-        // full sweep's cost on slow phones (a 920px phone frame measured
-        // 104ms cheap vs 543ms all-17). Only a miss pays for the exotic
-        // remainder (DataMatrix, PDF417), in ONE combined call: family
-        // costs are additive within a call but two calls re-pay shared
-        // preprocessing, so cheap-then-exotic costs more than one union
-        // call (measured 630ms vs 543ms) — never split further.
-        if (full && scheduled) {
-          const cheapList = cheapFormats(sweepFormats, !lastFullHad2D);
-          // `decodeFrame` treats an empty formats list as "everything":
-          // only run the cheap pass when it actually selected families.
-          if (cheapList.length) {
-            codes = decodeFrame(scanner, frame, cheapList, budgetOpts());
-            checked = cheapList;
-          }
-          // 2D-before-1D: loose/unchecksummed 1D hits can be noise from a 2D
-          // symbol's texture, so still run the exotic tiers then. A centered,
-          // strongly-checksummed 1D hit (Code 128/93, EAN-13/UPC-A, DataBar)
-          // confirms directly without paying ~400ms of DataMatrix + PDF417.
-          const linearOnly =
-            codes.length > 0 && codes.every((c) => !is2DResult(c.symbology));
-          const strongCentered1D =
-            linearOnly &&
-            codes.some((c) => STRONG_1D.has(c.symbology)) &&
-            ((ranked(codes, frame.width, frame.height)[0]?.score ?? 0) >= 0.85);
-          if (!codes.length || (linearOnly && !strongCentered1D)) {
-            const ranCheap = new Set(cheapList.map((f) => String(f).toLowerCase()));
-            const rest = (sweepFormats ?? ALL_FORMATS).filter(
-              (f) => !ranCheap.has(String(f).toLowerCase()),
-            );
-            // Families are disjoint, so this only ever appends: a linear
-            // hit must not be lost when the exotic tiers miss.
-            if (rest.length) codes = codes.concat(decodeFrame(scanner, frame, rest, budgetOpts()));
-            // cheap + rest cover every requested family.
-            checked = null;
-          }
-        } else {
-          // Append, never assign: a CPU still first opinion may already
-          // have read a code (see STILL_CPU_FAMILIES).
-          codes = codes.concat(decodeFrame(scanner, frame, sweepFormats, budgetOpts()));
-        }
-        const firstMs = performance.now() - t0;
-        const sweep =
-          accuracy === 'high' ||
-          (accuracy === 'auto' && codes.length === 0 && (still || firstMs < 220));
-        if (sweep && !outOfTime() && typeof bin.setThreshold === "function") {
-          const thresholds = still === true ? [0.82, 0.7] : [0.82];
-          const seen = new Set(codes.map((c) => c.symbology + '\u0000' + c.text));
-          const b = bin;
-          for (const threshold of thresholds) {
-            if (outOfTime()) break;
-            const alt = await withThreshold(b, threshold, () => b.process(input));
-            const hits = decodeFrame(scanner, alt, sweepFormats, budgetOpts()).filter(
-              (c) => !seen.has(c.symbology + '\u0000' + c.text),
-            );
-            for (const hit of hits) seen.add(hit.symbology + '\u0000' + hit.text);
-            codes = codes.concat(hits);
-            checked = null;
-          }
-        }
-      }
-      // CPU second opinion for small/dense 2D codes (roadmap item 10):
-      // only after a full miss (`codes.length === 0`) — never pay ~500ms of
-      // CPU binarize + PDF417 when a valid 1D or 2D code already decoded.
-      if (bin.kind === "gpu" && codes.length === 0) {
-        const families = cpuSecondOpinionFormats(activeFormats, codes, still === true ? STILL_CPU_FAMILIES : null);
-        const now = performance.now();
-        const due =
-          still === true ||
-          now <= cpuSecondOpinionHotUntil ||
-          now - lastCpuSecondOpinionAt >= CPU_SECOND_OPINION_MIN_INTERVAL_MS;
-        // The CPU binarize itself is not deadline-aware; leave it room.
-        if (families.length && due && (still !== true || remaining() > 250)) {
-          lastCpuSecondOpinionAt = now;
-          const cpuBin = still === true ? stillCpuBinarizer() : liveCpuBinarizer();
-          cpuBin.setThreshold(0.7);
-          const cpuFrame = await cpuBin.process(input);
-          const seen = new Set(codes.map((c) => c.symbology + '\u0000' + c.text));
-          const hits = decodeFrame(scanner, cpuFrame, families, budgetOpts()).filter(
-            (c) => !seen.has(c.symbology + '\u0000' + c.text),
-          );
-          if (hits.length) {
-            // Same maxSize as the GPU binarizer in use (STILL_MAX / 1056),
-            // so this is 1:1; scale anyway if a source ever rounds the two
-            // fit paths differently.
-            if (cpuFrame.width !== frame.width || cpuFrame.height !== frame.height) {
-              const sx = frame.width / cpuFrame.width;
-              const sy = frame.height / cpuFrame.height;
-              for (const hit of hits) {
-                hit.position = hit.position.map((p) => ({ x: p.x * sx, y: p.y * sy }));
-              }
-            }
-            codes = codes.concat(hits);
-            cpuSecondOpinionHotUntil = now + 600;
-          }
-        }
-      }
-      // Native-resolution ROI pass (roadmap item 8): the full sweep
-      // missed, but a compact ink cluster may be a code that the frame
-      // downscale crushed. Still photos get up to four crops inside the
-      // caller's deadline; live frames get two crops twice a second.
-      if (codes.length === 0) {
-        const now = performance.now();
-        // Live ROI hits must repeat on consecutive frames: the
-        // confirmation law rejects a value that skips one. The
-        // cooldown only gates the SEARCH for a new candidate.
-        if (still === true || now <= roiHotUntil || now - lastRoiAt >= ROI_MIN_INTERVAL_MS) {
-          lastRoiAt = now;
-          const roi = await decodeRoi(
-            scanner,
-            bin,
-            bitmap,
-            frame,
-            activeFormats,
-            budgetOpts(),
-            still === true ? 4 : 2,
-            still === true ? deadline : now + 120,
-          );
-          if (roi.length) {
-            codes = roi;
-            roiHotUntil = now + 600;
-          }
-        }
-      }
-      // Dim still retry, then the still slight-roll retry.
-      //
-      // DIM: the binarizers stretch a low-exposure, low-contrast frame to
-      // 0..1 before the Bradley threshold. That is right for a faded
-      // receipt, but a capture with few distinct levels (synthetic
-      // light=0.4: label paper 0.37, print 0.04) loses module edges, and
-      // zxing -- which thresholds the grayscale its own way -- still reads
-      // it. Re-drawing the SOURCE brighter skips the gate and reads the
-      // same frame: measured on the 1D differential, the dim cells recover
-      // only once the lift is combined with the small-roll ladder.
-      // `liftDim` applies the gate itself and returns null for a normal
-      // frame, so an ordinary still miss pays one 64px probe (~1ms).
-      //
-      // ROLL: the row scanners assume near-vertical bars. A careless-wrist
-      // roll (Code 39 / DataBar at 6°) defeats them while zxing reads the
-      // very same frame. Rotate the (lifted when dim) SOURCE with
-      // antialiasing and re-binarize. The ±3 pair is the measured DataBar
-      // lever (a 6° roll reads once the residual is 2-3°; Code 39 needs
-      // ±4); cheapest first.
-      //
-      // Stills only: a lift/rotation + binarize is 20-60ms, which a live
-      // frame cannot pay. Only requested families run; the cheap stacked
-      // tier is included because the dim differential measured it.
-      if (still === true && codes.length === 0 && remaining() > 300) {
-        const liftFormats = (activeFormats ?? [...LINEAR_FORMATS, 'databarstk']).filter((f) => {
-          const n = String(f).toLowerCase();
-          return LINEAR_FORMATS.has(n) || n === 'databarstk';
-        });
-        const linear = stillLinearFormats(activeFormats);
-        if (liftFormats.length) {
-          const thresholds = [0.92, 0.82, 0.7];
-          // `input` is the same area-filtered source the straight ladder
-          // binarized (<= STILL_MAX); lifting the ORIGINAL 12MP bitmap
-          // would pay a 12MP pixel pass and then take the binarizer's
-          // aliasing bilinear downscale. Positions stay in mask space.
-          const lifted = await liftDim(input);
-          const b = bin;
-          if (lifted) {
-            for (const threshold of thresholds) {
-              if (remaining() < 250) break;
-              const df = await withThreshold(b, threshold, () => b.process(lifted.canvas));
-              const hits = decodeFrame(scanner, df, liftFormats, budgetOpts());
-              if (hits.length) {
-                codes = hits;
-                break;
-              }
-            }
-          }
-          const source = lifted?.canvas ?? input;
-          for (const deg of [-3, 3, -4, 4, -8, 8]) {
-            if (codes.length || remaining() < 250 || !linear.length) break;
-            const rotated = await rotateDrawable(source, deg);
-            for (const threshold of thresholds) {
-              if (remaining() < 250) break;
-              const df = await withThreshold(b, threshold, () => b.process(rotated.canvas));
-              const hits = decodeFrame(scanner, df, linear, budgetOpts());
-              if (hits.length) {
-                for (const hit of hits) {
-                  if (hit.position?.length) {
-                    hit.position = rotated.map(df.width, df.height, hit.position);
-                  }
-                }
-                codes = hits;
-                break;
-              }
-            }
-            if (codes.length) break;
-          }
-        }
-      }
-      // Diagonal retry (roadmap item 4): a mask-level 45° rotation
-      // cannot restore Aztec's bullseye from a mask the camera already
-      // resampled; rotating the SOURCE with antialiasing and binarizing
-      // again does. The wasm pass stays for the cheap cases.
-      if (codes.length === 0 && (still === true || formats != null)) {
-        const diag = activeFormats == null
-          ? [...DIAGONAL_FORMATS]
-          : activeFormats.filter((n) => DIAGONAL_FORMATS.has(String(n).toLowerCase()));
-        const now = performance.now();
-        // Live: only explicit diagonal tiers, at most twice a second (the
-        // rotation + extra binarize is ~20-40ms). Stills have seconds.
-        const due = still === true || (diag.length > 0 && now - lastDiagonalAt >= 500);
-        if (diag.length > 0 && due && !outOfTime()) {
-          lastDiagonalAt = now;
-          bin.setThreshold(0.92);
-          for (const deg of [45, -45]) {
-            if (outOfTime()) break;
-            const rotated = await rotateDrawable(input, deg);
-            const df = await bin.process(rotated.canvas);
-            const hits = decodeFrame(scanner, df, diag, budgetOpts());
-            if (hits.length) {
-              for (const hit of hits) {
-                if (hit.position?.length) {
-                  hit.position = rotated.map(df.width, df.height, hit.position);
-                }
-              }
-              codes = hits;
-              break;
-            }
-          }
-        }
-      }
-      if (full) lastFullHad2D = codes.some((c) => is2DResult(c.symbology));
-      lastCandidates = codes.map((c) => c.symbology);
-      return {
-        type: 'result',
-        codes: ranked(codes, frame.width, frame.height),
-        decodeMs: Math.round(performance.now() - t0),
-        frameW: frame.width,
-        frameH: frame.height,
-        // Backward-compatible flag: this was a cheap (scheduled) frame.
-        // The confirmation law must not treat it as evidence of absence —
-        // see `checked` for the per-family refinement.
-        partial: !full,
-        // Families this frame actually decoded: null = every requested
-        // family ran, an array = the subset that ran. The confirmation
-        // law counts values from these families and freezes the rest — a
-        // QR seen on a cheap frame is real evidence and may confirm on
-        // the next cheap frame, without waiting for a full sweep. A
-        // cheap-first full frame that short-circuits on a hit therefore
-        // reports the cheap set, not `null`.
-        checked,
-        // Presence signal for the auto-torch policy: 0 = no finders,
-        // 1 = QR present but not decoding, 2 = decoded. Only meaningful
-        // when the QR tier ran on this frame.
-        qrPresence: (() => {
-          const qrRan = !activeFormats?.length || activeFormats.some((f) => f === 'qr' || f === 'qrcode');
-          return qrRan ? scanner.qr_presence() : undefined;
-        })(),
-      };
+      return still === true
+        ? await decodeStill(bitmap, formats, accuracy, latency)
+        : await decodeLive(bitmap, formats, accuracy, latency);
     } catch (err) {
       console.error('decode failed:', err);
       return { type: 'error', message: String(err instanceof Error ? err.message : err) };
     } finally {
-      if (full) markFullSweep(performance.now());
-      usedBin?.clearCache?.();
-      stillCpuBinarizerInstance?.clearCache?.();
-      liveCpuBinarizerInstance?.clearCache?.();
       msg?.bitmap?.close?.();
     }
   },

@@ -13,7 +13,7 @@
 
 import { decodeFrame, getWasmScanner } from "../src/decoder.js";
 import { createBinarizer } from "../src/binarizer-factory.js";
-import { encode_fixture } from "../src/wasm/pkg/barcode_wasm.js";
+import { encode_fixture_opts } from "../src/wasm/pkg/barcode_wasm.js";
 
 // One representative payload per family (full per-payload coverage lives
 // in test.html; this page answers "does a tilted X still read?").
@@ -111,7 +111,7 @@ async function run() {
   const scanner = await getWasmScanner();
   const rows = [];
   for (const [sym, text] of FAMILIES) {
-    const enc = /** @type {Fixture} */ (await encode_fixture(sym, text, 4, 320));
+    const enc = /** @type {Fixture} */ (await encode_fixture_opts(sym, text, 4, 320, -1, -1, 0, -1, 0, 0, 0));
     const flat = maskToCanvas(enc);
     for (const deg of ANGLES) {
       const t0 = performance.now();
