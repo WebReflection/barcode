@@ -17,10 +17,19 @@ export class GpuBinarizer {
      */
     setThreshold(t: number): void;
     /**
+     * Release the reference to the last cached source so a caller's bitmap or
+     * canvas is never retained between frames.
+     */
+    clearCache(): void;
+    /**
      * Binarize one frame. Accepts any `copyExternalImageToTexture` source
      * with dimensions: an HTMLVideoElement (videoWidth/videoHeight) or a
      * canvas / ImageBitmap (width/height) — the self-test harness feeds
      * synthetic specimen canvases through the same path.
+     *
+     * When called repeatedly on the SAME immutable source (e.g. a threshold
+     * sweep after `setThreshold`), reuses the GPU's `luma` and `blurB` buffers
+     * and runs only the final 1-pass `binarize` shader.
      * @param {HTMLVideoElement | HTMLCanvasElement | ImageBitmap | OffscreenCanvas} source
      * @returns {Promise<BinarizedFrame>}
      */

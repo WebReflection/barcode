@@ -10,7 +10,7 @@ import { CpuBinarizer } from "./cpu-binarizer.js";
 
 /**
  * @param {BinarizerOptions} [opts]
- * @returns {Promise<{ process(video: HTMLVideoElement | HTMLCanvasElement | ImageBitmap | OffscreenCanvas): Promise<import("./gpu/binarizer.js").BinarizedFrame>, destroy(): void, kind: "gpu" | "cpu", setThreshold(t: number): void }>}
+ * @returns {Promise<{ process(video: HTMLVideoElement | HTMLCanvasElement | ImageBitmap | OffscreenCanvas): Promise<import("./gpu/binarizer.js").BinarizedFrame>, destroy(): void, kind: "gpu" | "cpu", setThreshold(t: number): void, clearCache(): void }>}
  */
 export async function createBinarizer(opts = {}) {
   const full = {
@@ -21,7 +21,7 @@ export async function createBinarizer(opts = {}) {
   if ("gpu" in navigator && navigator.gpu) {
     try {
       const gpu = await GpuBinarizer.create(full);
-      return { process: (v) => gpu.process(v), destroy: () => gpu.destroy(), kind: "gpu", setThreshold: (t) => gpu.setThreshold(t) };
+      return { process: (v) => gpu.process(v), destroy: () => gpu.destroy(), kind: "gpu", setThreshold: (t) => gpu.setThreshold(t), clearCache: () => gpu.clearCache() };
     } catch (err) {
       // With requireGpu the failure must be loud — a silent CPU fallback
       // makes "which path am I testing?" unanswerable (and the CPU path is
@@ -33,5 +33,5 @@ export async function createBinarizer(opts = {}) {
     throw new Error("GPU binarizer required but WebGPU is unavailable in this context.");
   }
   const cpu = new CpuBinarizer(full);
-  return { process: (v) => cpu.process(v), destroy: () => cpu.destroy(), kind: "cpu", setThreshold: (t) => cpu.setThreshold(t) };
+  return { process: (v) => cpu.process(v), destroy: () => cpu.destroy(), kind: "cpu", setThreshold: (t) => cpu.setThreshold(t), clearCache: () => cpu.clearCache() };
 }
