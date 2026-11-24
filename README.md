@@ -132,11 +132,11 @@ imports `main.js` from a CDN must spawn a one-line same-origin shim:
 
 ```js
 // worker-shim.js — same origin, one line
-import "https://cdn.jsdelivr.net/npm/@webreflection/barcode@0.3.1/dist/worker.js";
+import "https://cdn.jsdelivr.net/npm/@webreflection/barcode@0.3.2/dist/worker.js";
 ```
 
 ```js
-import barcode from "https://cdn.jsdelivr.net/npm/@webreflection/barcode@0.3.1/dist/main.js";
+import barcode from "https://cdn.jsdelivr.net/npm/@webreflection/barcode@0.3.2/dist/main.js";
 
 const { scan, render } = barcode({ worker: "./worker-shim.js" });
 ```
