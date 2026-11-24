@@ -554,6 +554,58 @@ impl RowRuns {
     }
 }
 
+/// Pick the row-vote winner under a PLURALITY rule: the value needs at
+/// least `min_rows` agreeing rows and must agree on MORE rows than any
+/// other candidate. `count` reads the vote count out of the stored value.
+///
+/// Why not simply `max_by_key`: the human-readable digits printed under a
+/// 1D symbol binarize into a shifted, still check-valid window and can
+/// win a few rows near the frame center (where the center-out row scan
+/// starts). Measured on a real product box: `9182165783071` on 7 rows
+/// under `0197105783072` on 28 rows — a strict plurality rejects the
+/// decoy without weakening the check digit.
+pub fn plurality<'a, K, V>(
+    votes: &'a std::collections::HashMap<K, V>,
+    count: impl Fn(&V) -> usize,
+    min_rows: usize,
+) -> Option<(&'a K, &'a V)> {
+    let mut best: Option<(&'a K, &'a V)> = None;
+    let mut second = 0usize;
+    for (key, value) in votes {
+        let votes_n = count(value);
+        if votes_n < min_rows {
+            continue;
+        }
+        match best {
+            Some((_, best_value)) if count(best_value) >= votes_n => {
+                second = second.max(votes_n);
+            }
+            Some((_, best_value)) => {
+                second = second.max(count(best_value));
+                best = Some((key, value));
+            }
+            None => best = Some((key, value)),
+        }
+    }
+    best.filter(|(_, value)| count(value) > second)
+}
+
+/// True when a 1D hit's horizontal span covers (or is within 4% / 8px of)
+/// the frame's horizontal center. Used to gate fast early-return in
+/// `LinearDecoder::scan_line`: a centered exact hit stops scanning rows
+/// immediately (2 rows, sub-ms), while a peripheral hit keeps scanning so
+/// a centered barcode of the same symbology on the same or nearby rows is
+/// never starved.
+#[inline]
+pub fn x_contains_center(x_start: u32, x_end: u32, width: u32) -> bool {
+    if width == 0 {
+        return true;
+    }
+    let cx = width / 2;
+    let tol = (width / 25).max(8);
+    cx.saturating_add(tol) >= x_start && cx <= x_end.saturating_add(tol)
+}
+
 /// A symbology decoder. Implementations must be allocation-frugal on the hot
 /// path (reuse scratch buffers internally) and must never panic on hostile
 /// input: barcodes come from an untrusted camera pointed at the world.
@@ -570,6 +622,14 @@ pub trait LinearDecoder: SymbologyDecoder {
     fn reset(&mut self);
     fn scan_line(&mut self, row: &RowRuns, y: u32) -> Option<DecodeResult>;
     fn finish_votes(&self) -> Option<DecodeResult>;
+    /// All distinct validated candidates collected during the scan. When a
+    /// frame contains multiple symbols of the same symbology (e.g. an EAN-13
+    /// and a UPC-A on the same box label) and none triggered centered early
+    /// exit, returning every validated candidate lets the ranker pick the
+    /// centered one instead of whichever symbol happened to be tallest.
+    fn finish_all(&self) -> Vec<DecodeResult> {
+        self.finish_votes().into_iter().collect()
+    }
     /// Total votes accumulated since `reset()` (0 in O(1) when empty).
     /// Used by strided live scanning to trigger immediate adjacent-row
     /// (`y ± 1`) corroboration the moment any row records a vote.

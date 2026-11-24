@@ -41,5 +41,10 @@ export type DecodedCode = {
         x: number;
         y: number;
     }>;
+    /**
+     * Reticle priority attached by api/worker.js
+     * (1 = under the frame center, 0 = peripheral); absent on raw frames.
+     */
+    score?: number | undefined;
 };
 import { BarcodeScanner as WasmScanner } from "./wasm/pkg/barcode_wasm.js";

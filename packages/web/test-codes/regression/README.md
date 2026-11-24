@@ -21,3 +21,22 @@ either decode to its recorded value or be a documented hard negative
 | `databar-blur-tilt-mask-2026-11-22.png` | `databar` / `(01)40063813339314` | **Synthetic** hardening fixture: the GPU binarizer's 0.75 mask of a 2 px/module GS1 DataBar Omni at 6° roll with gaussian blur 1.2. zxing reads this exact mask; the SDK misses it on every straight still pass (linear ladder, full sweep, Otsu ROI) and reads it only after a **−3°** source rotation. The ±3 pair was added for this case: a 6° roll leaves a 2–3° residual that the DataBar row scanner tolerates (Code 39 needs ±4 instead). The committed file is the **mask**, so the gate runs on the CI's CPU-only Chromium. |
 | `ean13-dim-tilt-2026-11-22.png` | `ean13` / `4006381333931` | **Synthetic** hardening fixture (grayscale scene, not a mask): a 2 px/module EAN-13 at 6° roll with gaussian blur 1.2, captured at light 0.4 (label paper ~0.37, print ~0.04). On the **GPU** path the binarizer's global auto-levels stretch costs module edges and every pass misses while zxing reads the grayscale; the still path re-draws the source brighter (`src/source-lift.js`, gate applied by the helper) and reads it, then the small-roll ladder. The CPU binarizer's *relative* floor reads it straight, so this fixture passes on the CPU-only CI; the lift is load-bearing only on the GPU path (verified manually with WebGPU). |
 | `ean13-blur-tilt-mask-2026-11-22.png` | `ean13` / `4006381333931` | **Synthetic** hardening fixture (no personal content): the binarized mask of a 2 px/module EAN-13 at 6° roll with gaussian blur 1.2. The decoder's whole-row 95-module quantizer rejected every row (blur widens some runs and merges others) while zxing reads the same grayscale scene. Pins the per-digit variance fallback (`try_variance` in `barcode-ean13`), which matches each 4-run digit locally and still rejects a bad check digit. The committed file is the **mask** so the gate is binarizer-independent (CI has CPU-only Chromium); re-binarizing a crisp mask reproduces it. |
+| `lot-of-codes-2026-11-24.jpeg` | **7 codes** (see below) | A packed retail label (ASUS NUC product box), explicitly non-sensitive and approved by the owner. Holds a top-right QR, four Code 128 strips, an EAN-13 and a UPC-A — all visible at once, which is the report that started the center-priority work: aiming at the EAN/UPC returned the corner QR. Every case in `tests/multicode.html` is generated *in-page* from this single photo (a square crop centered on one code, the others still in frame); the centered code must win, and a surrounding code must never be returned in its place. `tests/unit.html` pins the reticle ranking itself. |
+
+Ground truth (source pixels, 1152 × 2048):
+
+| id | code | payload | center |
+| --- | --- | --- | --- |
+| `qr_topright` | `qrcode` | `W6ARAC0042936RB,WX0X` | (872, 634) |
+| `c128_sales` | `code128` | `RNUC14MNK1500002` | (488, 655) |
+| `ean_right` | `ean13` | `4711387783078` | (812, 761) |
+| `c128_pn` | `code128` | `90AR00M2-M000F0` | (433, 856) |
+| `upc_right` | `upca` | `197105783072` | (804, 887) |
+| `c128_serial` | `code128` | `W6ARAC0042936RB` | (421, 1077) |
+| `c128_check` | `code128` | `WX0X` | (843, 1046) |
+
+Documented open (tracked as **XFAIL** only on an honest empty no-read — a
+corrupted string or a surrounding code is always a hard failure): at the wide
+`860px` framing, `c128_serial` prints at ~2.1 px/module next to the brown box
+edge and returns no read; at the `640px` (~1.4× zoom) framing **all 7/7 codes**
+decode to their exact payloads in both still and live modes.

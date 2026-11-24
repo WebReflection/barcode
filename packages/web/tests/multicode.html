@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MULTICODE</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  #summary { padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; }
+  .pass { background: #d3f9d8; }
+  .fail { background: #ffd6d6; }
+  table { border-collapse: collapse; }
+  td, th { padding: 3px 8px; border: 1px solid #ddd; text-align: left; }
+  tr.fail td { background: #ffe3e3; }
+  tr.xfail td { background: #fff3cd; }
+  canvas { display: none; }
+</style>
+</head>
+<body>
+<h1>Center-priority / multi-code regression</h1>
+<div id="summary">running…</div>
+<table>
+  <thead>
+    <tr><th>case</th><th>framing</th><th>expected</th><th>got</th><th>score</th><th>ms</th></tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+<script type="module" src="./multicode.js"></script>
+</body>
+</html>

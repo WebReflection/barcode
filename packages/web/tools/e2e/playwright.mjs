@@ -166,6 +166,47 @@ async function suiteContract(page, project) {
   record({ project, suite: "contract", name: "total", ok: title === "TESTS PASS" && fails === 0, ms: Date.now() - t0, note: `${checks.length - fails}/${checks.length}` });
 }
 
+/** Pure-module unit checks: reticle ranking + ROI proposal geometry. */
+async function suiteUnit(page, project) {
+  const t0 = Date.now();
+  await page.goto(`${TESTS_FS}/unit.html`, { waitUntil: "load" });
+  const title = await waitTitle(page, "UNIT PASS", "UNIT FAILED", 60_000);
+  const rows = await page.evaluate(() =>
+    [...document.querySelectorAll("#rows tr")].map((tr) => [...tr.children].map((td) => td.textContent)),
+  );
+  for (const [name, note] of rows) {
+    record({ project, suite: "unit", name: String(name), ok: note === "PASS", ms: 0, note: note ?? "" });
+  }
+  record({ project, suite: "unit", name: "total", ok: title === "UNIT PASS", ms: Date.now() - t0, note: `${rows.filter((r) => r[1] === "PASS").length}/${rows.length}` });
+}
+
+/** Center priority on a packed multi-code label (one committed photo). */
+async function suiteMulticode(page, project) {
+  const t0 = Date.now();
+  await page.goto(`${TESTS_FS}/multicode.html`, { waitUntil: "load" });
+  const title = await waitTitle(page, "MULTICODE PASS", "MULTICODE FAILED", 240_000);
+  const rows = /** @type {any[]} */ (await page.evaluate(() => globalThis.__MULTICODE ?? []));
+  for (const row of rows) {
+    record({
+      project,
+      suite: "multicode",
+      name: `${row.code.id}@${row.side}`,
+      ok: row.ok === true,
+      xfail: row.xfail === true,
+      ms: row.ms ?? 0,
+      note: row.got ? `${row.got.symbology}:${row.got.text} s=${Number(row.got.score ?? 0).toFixed(6)}` : "(no read)",
+    });
+  }
+  record({
+    project,
+    suite: "multicode",
+    name: "total",
+    ok: title === "MULTICODE PASS",
+    ms: Date.now() - t0,
+    note: `${rows.filter((r) => r.ok).length}/${rows.length}`,
+  });
+}
+
 /** Deterministic random/corrupted masks through the real wasm boundary. */
 async function suiteFuzz(page, project) {
   const t0 = Date.now();
@@ -779,6 +820,8 @@ try {
         await suiteArtifact(browser, project);
         await suiteSelftest(page, project.name);
         await suiteContract(page, project.name);
+        await suiteUnit(page, project.name);
+        await suiteMulticode(page, project.name);
         await suiteFuzz(page, project.name);
         await context.close();
         await suiteDocs(browser, project.name);

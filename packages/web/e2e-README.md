@@ -7,6 +7,9 @@
   - `dist/` artifact smoke (`tests/artifact-test.html`, plain static hosting)
   - `tests/test.html` (synthetic round-trip, GPU/CPU)
   - `tests/contract-test.html` (worker transports, render-raw)
+  - `tests/unit.html` (pure modules: reticle ranking + ROI geometry)
+  - `tests/multicode.html` (one packed label photo, every code centered:
+    the centered code must win, a surrounding one must never be returned)
   - `scan.html` live path with a fake camera (`fakecam-spec.mjs`)
   - the committed `docs/` site (landing, render round-trip, still sample,
     worker entries, bundled self-test on Chromium)

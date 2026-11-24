@@ -1,4 +1,27 @@
 /**
+ * The reticle itself as crops, best first: the code the user is aiming
+ * at, at native resolution, isolated from every surrounding code.
+ *
+ * Connected components merge a packed label's stacked barcodes + text
+ * into one blob, and the density ranking then favours whichever code in
+ * the frame has the most bars — not the one under the line. These
+ * deterministic boxes encode the UI contract directly:
+ *
+ *   - wide horizontal strip centered on the frame's mid line (the
+ *     viewfinder's scan line) for a 1D symbol under it;
+ *   - tight strip on the same line for a short centered symbol beside a
+ *     longer neighbor on the same band;
+ *   - center square for a centered 2D symbol.
+ *
+ * @param {number} sourceW @param {number} sourceH
+ * @param {{ linear?: boolean, square?: boolean }} [opts]
+ * @returns {RoiBox[]}
+ */
+export function centerRoiCandidates(sourceW: number, sourceH: number, opts?: {
+    linear?: boolean;
+    square?: boolean;
+}): RoiBox[];
+/**
  * Propose source-space ROI boxes for the native-resolution pass, best
  * first. `frame` is the binarized full-frame mask; `sourceW/sourceH` are
  * the original bitmap dimensions that mask came from.
@@ -134,7 +157,7 @@ export function padDrawable(source: CanvasImageSource, pad?: number): Promise<{
 export type BinarizedFrame = import("./gpu/binarizer.js").BinarizedFrame;
 /**
  * A candidate box in the frame's SOURCE pixel coordinates (not mask
- * coordinates).
+ * coordinates). `linear` marks a bar-strip proposal (1D decoders only).
  */
 export type RoiBox = {
     x: number;
@@ -142,4 +165,5 @@ export type RoiBox = {
     w: number;
     h: number;
     score: number;
+    linear?: boolean;
 };

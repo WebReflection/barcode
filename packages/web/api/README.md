@@ -114,10 +114,11 @@ pipeline) reject. `Code` is
 the exact payload `Uint8Array` (binary QR byte mode, Aztec, DataMatrix,
 PDF417 payloads survive only there; `text` maps non-UTF-8 bytes
 Latin-1-style), `score` is the
-centering rank (1 = dead center, 0 = frame corner; larger symbol wins
-ties). One code per scan by design: the most accurate single read. The
-confirmation law (2 consecutive frames agreeing, per value) is what
-the ~1s live latency emerges from.
+reticle rank (1 = the code the viewfinder is aimed at, 0 = peripheral;
+see **Center priority** below, larger symbol wins ties). One code per
+scan by design: the most accurate single read. The confirmation law
+(consecutive agreeing frames, per value) is what the ~1s live latency
+emerges from.
 
 Modes — exactly one per call:
 
@@ -281,6 +282,38 @@ Re-encodes a result as a standalone SVG (`{ module, height }` to tune
 module size/height; style via `--barcode-ink` / `--barcode-paper`).
 `undefined` or an empty result → `null`. Stateless — fire N in
 parallel.
+
+### Center priority (what the viewfinder is aiming at)
+
+The default UI draws a horizontal line across the middle of the viewfinder:
+that line, and the center point it crosses, is the reticle. Every decode
+result carries a `score` derived from it (`src/rank.js`), **tiered** rather
+than merely distance-weighted:
+
+| tier | meaning | score |
+| --- | --- | --- |
+| **A** | the frame center point is inside the symbol's quad | `0.85 .. 1.00` |
+| **B** | the symbol crosses the center scan line, not the center point | `0.45 .. 0.78` |
+| **C** | surrounding / peripheral | `0 .. 0.42` |
+
+The tier floors do not overlap, so the code under the reticle always
+outranks a nearby one — which fixes the report of aiming at the EAN-13 and
+getting the QR code in the corner. Consequences worth knowing:
+
+* `codes` is sorted best-first and `scan()` resolves with `codes[0]`.
+  Tiering is a *ranking*, never a filter: a peripheral code is still
+  returned when it is the only readable one.
+* A still's expensive fallbacks (second threshold, native-resolution ROI,
+  the 5-8s DataMatrix hunt) only stop early on a **centered** hit. A decode
+  in the corner no longer ends the search that would have found the code
+  under the line.
+* The live confirmation law is score-tiered: 2 consecutive frames for a
+  centered value, more for a surrounding one, and while a centered
+  candidate is one frame from confirming a surrounding candidate may not
+  win that frame. A lone peripheral code still confirms, after more
+  agreement.
+* `type` still matters: everything mode is best-effort (see above). An
+  explicit `type` removes cross-family ambiguity, not the centering.
 
 ### The confirmation law
 

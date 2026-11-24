@@ -320,7 +320,7 @@ impl LinearDecoder for Code39Decoder {
                 e.4 = e.4.max(y);
                 *e
             };
-            if count >= self.min_rows {
+            if count >= self.min_rows && barcode_core::x_contains_center(x0, x1, row.width) {
                 return Some(self.finish(&c.text, x0, x1, y0, y1));
             }
         }
@@ -328,11 +328,16 @@ impl LinearDecoder for Code39Decoder {
     }
 
     fn finish_votes(&self) -> Option<DecodeResult> {
+        barcode_core::plurality(&self.votes, |v| v.0, self.min_rows)
+            .map(|(t, v)| self.finish(t, v.1, v.2, v.3, v.4))
+    }
+
+    fn finish_all(&self) -> Vec<DecodeResult> {
         self.votes
             .iter()
-            .max_by_key(|(_, v)| v.0)
             .filter(|(_, v)| v.0 >= self.min_rows)
             .map(|(t, v)| self.finish(t, v.1, v.2, v.3, v.4))
+            .collect()
     }
 
     fn vote_count(&self) -> usize {

@@ -13,6 +13,8 @@ import wasmUrl from "./wasm/pkg/barcode_wasm_bg.wasm?url";
  * @property {string} symbology
  * @property {Uint8Array} raw Exact payload bytes (binary QR byte mode etc.).
  * @property {Array<{x: number, y: number}>} position Corner quad in frame coordinates.
+ * @property {number} [score] Reticle priority attached by api/worker.js
+ *   (1 = under the frame center, 0 = peripheral); absent on raw frames.
  */
 
 /** @type {Promise<WasmScanner> | null} */

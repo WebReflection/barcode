@@ -87,12 +87,13 @@ struct Candidate {
     text: [u8; 8],
     x_start: u32,
     x_end: u32,
+    exact: bool,
 }
 
 #[derive(Debug)]
 pub struct Ean8Decoder {
     min_rows: usize,
-    votes: HashMap<[u8; 8], (usize, u32, u32, u32, u32)>,
+    votes: HashMap<[u8; 8], (usize, usize, u32, u32, u32, u32)>,
 }
 
 impl Ean8Decoder {
@@ -151,7 +152,7 @@ impl Ean8Decoder {
             if !Self::guards_ok(&mods) {
                 continue;
             }
-            let Some(digits) = Self::decode_digits(row, start, &mods) else {
+            let Some((digits, exact)) = Self::decode_digits(row, start, &mods) else {
                 continue;
             };
             let x_start = row.offsets[start];
@@ -160,6 +161,7 @@ impl Ean8Decoder {
                 text: digits,
                 x_start,
                 x_end,
+                exact,
             });
         }
         None
@@ -236,6 +238,7 @@ impl Ean8Decoder {
                 text: digits,
                 x_start: row.offsets[start],
                 x_end: row.offsets[start] + total,
+                exact: false,
             });
         }
         None
@@ -267,7 +270,7 @@ impl Ean8Decoder {
         Some(mods)
     }
 
-    fn decode_digits(row: &RowRuns, start: usize, mods: &[u8; 43]) -> Option<[u8; 8]> {
+    fn decode_digits(row: &RowRuns, start: usize, mods: &[u8; 43]) -> Option<([u8; 8], bool)> {
         // Expand to 67 module bits.
         let mut bits: u128 = 0;
         let mut pos = 0usize;
@@ -281,53 +284,58 @@ impl Ean8Decoder {
         }
 
         let mut digits = [0u8; 8];
+        let mut repairs = 0u8;
         for d in 0..4 {
             let off = 3 + d * 7;
             let seg = ((bits >> off) & 0x7f) as u8;
-            let li = L_BITS
-                .iter()
-                .position(|&b| b == seg)
-                .map(|i| i as u8)
-                .or_else(|| {
-                    let mut found: Option<u8> = None;
-                    for (i, &b) in L_BITS.iter().enumerate() {
-                        if dist1(seg, b) <= 1 {
-                            if found.is_some() {
-                                return None;
-                            }
-                            found = Some(i as u8);
+            let li = if let Some(i) = L_BITS.iter().position(|&b| b == seg) {
+                i as u8
+            } else {
+                repairs += 1;
+                if repairs > 1 {
+                    return None;
+                }
+                let mut found: Option<u8> = None;
+                for (i, &b) in L_BITS.iter().enumerate() {
+                    if dist1(seg, b) <= 1 {
+                        if found.is_some() {
+                            return None;
                         }
+                        found = Some(i as u8);
                     }
-                    found
-                })?;
+                }
+                found?
+            };
             digits[d] = li;
         }
         for d in 0..4 {
             let off = 36 + d * 7;
             let seg = ((bits >> off) & 0x7f) as u8;
-            let ri = R_BITS
-                .iter()
-                .position(|&b| b == seg)
-                .map(|i| i as u8)
-                .or_else(|| {
-                    let mut found: Option<u8> = None;
-                    for (i, &b) in R_BITS.iter().enumerate() {
-                        if dist1(seg, b) <= 1 {
-                            if found.is_some() {
-                                return None;
-                            }
-                            found = Some(i as u8);
+            let ri = if let Some(i) = R_BITS.iter().position(|&b| b == seg) {
+                i as u8
+            } else {
+                repairs += 1;
+                if repairs > 1 {
+                    return None;
+                }
+                let mut found: Option<u8> = None;
+                for (i, &b) in R_BITS.iter().enumerate() {
+                    if dist1(seg, b) <= 1 {
+                        if found.is_some() {
+                            return None;
                         }
+                        found = Some(i as u8);
                     }
-                    found
-                })?;
+                }
+                found?
+            };
             digits[4 + d] = ri;
         }
 
         if !check_digit_valid(&digits) {
             return None;
         }
-        Some(digits)
+        Some((digits, repairs == 0))
     }
 
     fn finish(&self, digits: [u8; 8], x0: u32, x1: u32, y0: u32, y1: u32) -> DecodeResult {
@@ -381,19 +389,22 @@ impl LinearDecoder for Ean8Decoder {
             let Some(c) = Self::try_at(row, start) else {
                 continue;
             };
-            let (count, x0, x1, y0, y1) = {
+            let (exact, x0, x1, y0, y1) = {
                 let e = self
                     .votes
                     .entry(c.text)
-                    .or_insert((0, c.x_start, c.x_end, y, y));
+                    .or_insert((0, 0, c.x_start, c.x_end, y, y));
                 e.0 += 1;
-                e.1 = e.1.min(c.x_start);
-                e.2 = e.2.max(c.x_end);
-                e.3 = e.3.min(y);
-                e.4 = e.4.max(y);
-                *e
+                if c.exact {
+                    e.1 += 1;
+                }
+                e.2 = e.2.min(c.x_start);
+                e.3 = e.3.max(c.x_end);
+                e.4 = e.4.min(y);
+                e.5 = e.5.max(y);
+                (e.1, e.2, e.3, e.4, e.5)
             };
-            if count >= self.min_rows {
+            if exact >= self.min_rows && barcode_core::x_contains_center(x0, x1, row.width) {
                 return Some(self.finish(c.text, x0, x1, y0, y1));
             }
         }
@@ -405,32 +416,44 @@ impl LinearDecoder for Ean8Decoder {
             let Some(c) = Self::try_variance(row, start) else {
                 continue;
             };
-            let (count, x0, x1, y0, y1) = {
-                let e = self
-                    .votes
-                    .entry(c.text)
-                    .or_insert((0, c.x_start, c.x_end, y, y));
-                e.0 += 1;
-                e.1 = e.1.min(c.x_start);
-                e.2 = e.2.max(c.x_end);
-                e.3 = e.3.min(y);
-                e.4 = e.4.max(y);
-                *e
-            };
-            if count >= self.min_rows {
-                return Some(self.finish(c.text, x0, x1, y0, y1));
-            }
+            let e = self
+                .votes
+                .entry(c.text)
+                .or_insert((0, 0, c.x_start, c.x_end, y, y));
+            e.0 += 1;
+            e.2 = e.2.min(c.x_start);
+            e.3 = e.3.max(c.x_end);
+            e.4 = e.4.min(y);
+            e.5 = e.5.max(y);
             break;
         }
         None
     }
 
     fn finish_votes(&self) -> Option<DecodeResult> {
-        self.votes
+        if let Some((t, v)) = self
+            .votes
             .iter()
-            .max_by_key(|(_, v)| v.0)
-            .filter(|(_, v)| v.0 >= self.min_rows)
-            .map(|(t, v)| self.finish(*t, v.1, v.2, v.3, v.4))
+            .filter(|(_, v)| v.1 >= self.min_rows)
+            .max_by_key(|(_, v)| (v.1, v.0))
+        {
+            return Some(self.finish(*t, v.2, v.3, v.4, v.5));
+        }
+        barcode_core::plurality(&self.votes, |v| v.0, self.min_rows)
+            .map(|(t, v)| self.finish(*t, v.2, v.3, v.4, v.5))
+    }
+
+    fn finish_all(&self) -> Vec<DecodeResult> {
+        let exact: Vec<DecodeResult> = self
+            .votes
+            .iter()
+            .filter(|(_, v)| v.1 >= self.min_rows)
+            .map(|(t, v)| self.finish(*t, v.2, v.3, v.4, v.5))
+            .collect();
+        if !exact.is_empty() {
+            return exact;
+        }
+        self.finish_votes().into_iter().collect()
     }
 
     fn vote_count(&self) -> usize {

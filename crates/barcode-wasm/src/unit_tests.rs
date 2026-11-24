@@ -820,6 +820,125 @@ mod oracle_fixture_tests {
 }
 
 #[cfg(test)]
+mod center_priority_tests {
+    use crate::*;
+    use barcode_fixtures::Canvas;
+
+    /// Stamp `src` onto `dst` at `(ox, oy)` in pixel coordinates.
+    fn blit(dst: &mut Canvas, src: &Canvas, ox: u32, oy: u32) {
+        let bpr = src.bytes_per_row as usize;
+        let bits = src.bits();
+        for y in 0..src.height {
+            for x in 0..src.width {
+                if (bits[y as usize * bpr + (x >> 3) as usize] >> (x & 7)) & 1 == 1 {
+                    dst.fill(ox + x, oy + y, 1, 1);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn off_center_qr_does_not_suppress_centered_linear_barcode() {
+        // Reproduces the exact packed-label scenario: a QR code sits in the
+        // top-right corner while an EAN-13 sits dead-center. WASM must return
+        // BOTH so the ranker promotes the centered EAN-13 above the corner QR.
+        let qr = crate::render::fixture_bytes_canvas(
+            "qrcode",
+            b"CORNER-QR",
+            4,
+            crate::render::EncOptions::default(),
+        )
+        .unwrap();
+        let ean = barcode_fixtures::encode_ean13("4711387783078", 3, 72, 24);
+        let mut frame = Canvas::new(640, 640);
+        blit(&mut frame, &qr, 640 - qr.width - 16, 16);
+        blit(
+            &mut frame,
+            &ean,
+            (640 - ean.width) / 2,
+            (640 - ean.height) / 2,
+        );
+        let img = BitImage::new(frame.width, frame.height, frame.bits());
+        let mut sc = BarcodeScanner::new();
+        let hits = sc.scan_tiered(&img, &Tiers::all(), false, 0);
+        assert!(
+            hits.iter()
+                .any(|h| h.symbology == Symbology::QRCode && h.text == "CORNER-QR"),
+            "expected corner QR in hits: {hits:?}"
+        );
+        assert!(
+            hits.iter()
+                .any(|h| h.symbology == Symbology::EAN13 && h.text == "4711387783078"),
+            "off-center QR must not kill centered EAN-13: {hits:?}"
+        );
+    }
+
+    #[test]
+    fn centered_ean13_beats_taller_peripheral_upca_in_same_decoder() {
+        // Ean13Decoder reads both EAN-13 and UPC-A. A taller UPC-A printed
+        // below center must not hide or outvote the shorter centered EAN-13.
+        let ean = barcode_fixtures::encode_ean13("4711387783078", 3, 52, 24);
+        let upc = barcode_fixtures::encode_ean13("0197105783072", 3, 120, 24);
+        let mut frame = Canvas::new(640, 640);
+        blit(
+            &mut frame,
+            &ean,
+            (640 - ean.width) / 2,
+            (640 - ean.height) / 2,
+        );
+        blit(&mut frame, &upc, (640 - upc.width) / 2, 460);
+        let img = BitImage::new(frame.width, frame.height, frame.bits());
+        let mut sc = BarcodeScanner::new();
+        let hits = sc.scan_tiered(&img, &Tiers::all(), false, 0);
+        assert!(
+            hits.iter()
+                .any(|h| h.symbology == Symbology::EAN13 && h.text == "4711387783078"),
+            "centered EAN-13 must survive alongside taller peripheral UPC-A: {hits:?}"
+        );
+    }
+
+    #[test]
+    fn tight_quiet_zone_code128_accepts_exact_long_and_rejects_short() {
+        // Real retail labels print ~6 modules of quiet zone before a box edge.
+        // An exact >= 4-char Code 128 must read at ~6 modules; a 1-char Code
+        // 128 must NOT read with a tight quiet zone.
+        let trim_both = |src: &Canvas, cut: u32| {
+            let bpr = src.bytes_per_row as usize;
+            let bits = src.bits();
+            let mut out = Canvas::new(src.width - 2 * cut, src.height);
+            for y in 0..src.height {
+                for x in cut..(src.width - cut) {
+                    if (bits[y as usize * bpr + (x >> 3) as usize] >> (x & 7)) & 1 == 1 {
+                        out.fill(x - cut, y, 1, 1);
+                    }
+                }
+            }
+            // Draw 2px dark label borders at both edges so quiet zone is exact.
+            out.fill(0, 0, 2, out.height);
+            out.fill(out.width - 2, 0, 2, out.height);
+            out
+        };
+        let long = trim_both(&barcode_fixtures::encode_code128("90AR00M2", 3, 40), 10);
+        let img = BitImage::new(long.width, long.height, long.bits());
+        let mut sc = BarcodeScanner::new();
+        let only = parse_formats(&["code128".into()]).unwrap();
+        let hits = sc.scan_tiered(&img, &only, false, 0);
+        assert!(
+            hits.iter().any(|h| h.text == "90AR00M2"),
+            "exact >=4-char Code 128 with ~6-module quiet zone should read: {hits:?}"
+        );
+
+        let short = trim_both(&barcode_fixtures::encode_code128("W", 3, 40), 10);
+        let simg = BitImage::new(short.width, short.height, short.bits());
+        let shits = sc.scan_tiered(&simg, &only, false, 0);
+        assert!(
+            shits.is_empty(),
+            "1-char Code 128 must not read with a tight quiet zone: {shits:?}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod frame_dump_tests {
     use crate::*;
 
