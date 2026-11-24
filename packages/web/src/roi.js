@@ -100,8 +100,11 @@ export function centerRoiCandidates(sourceW, sourceH, opts = {}) {
       if (bw < MIN_SIDE || bh < MIN_SIDE) return;
       boxes.push({ x, y, w: bw, h: bh, score, linear: true });
     };
-    push(wideW, wideH, 30);
-    push(tightW, tightH, 26);
+    // Tight strip first: 2.5x fewer pixels (so 2x Otsu finishes well inside
+    // the live ROI deadline on a phone) and clips dark box edges around
+    // shorter/medium centered strips; wide strip follows for full-width bars.
+    push(tightW, tightH, 30);
+    push(wideW, wideH, 26);
   }
   if (square) {
     const side = Math.max(MIN_SIDE, Math.round(minSide * 0.5));

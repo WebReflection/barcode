@@ -473,7 +473,7 @@ export class LiveScanner {
     // that flickers must never be able to stall a readable scan forever.
     const racing = results.some((r) => aimed(r) && streak(r) < 2);
     const need = (/** @type {DetectedCode} */ r) =>
-      (aimed(r) ? 2 : (r.score ?? 0) >= PERIPHERAL_CAP ? 4 : 6) +
+      (aimed(r) ? 2 : (r.score ?? 0) >= PERIPHERAL_CAP ? 3 : 4) +
       (racing && !aimed(r) ? 2 : 0);
     // `results` is ranked best-first, so when several values reach their
     // requirement on the same frame the centered one wins the tie.
@@ -519,10 +519,20 @@ export class LiveScanner {
       return;
     }
     if (this.#hint || !raw.length) return;
-    // Never lock the next frames onto a SURROUNDING 2D code: a corner QR
-    // used to win the close-up for 5 frames, so the centered barcode was
-    // never seen again and the corner code confirmed instead.
-    const r = raw.find((c) => HINTED.has(String(c.symbology)) && aimed(c));
+    // Never lock frame 2 onto a SURROUNDING 2D code (a corner QR used to
+    // own the close-up for 5 frames so a centered barcode was never seen).
+    // Once a lone off-center 2D symbol has already survived 2 full frames
+    // with nothing centered in view (e.g. a slightly off-center invoice DM),
+    // allow the close-up so it finishes confirming fast instead of paying
+    // full-frame DM sweeps on every frame.
+    const lone = raw.length === 1 ? raw.at(0) : null;
+    const r =
+      raw.find((c) => HINTED.has(String(c.symbology)) && aimed(c)) ??
+      (lone &&
+      HINTED.has(String(lone.symbology)) &&
+      (this.#streaks.get(`${lone.symbology}\u0000${lone.text}`)?.streak ?? 0) >= 2
+        ? lone
+        : null);
     if (!r) return;
     const video = this._opts.video;
     const vw = video.videoWidth;

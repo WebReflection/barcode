@@ -182,15 +182,15 @@ const run = async () => {
   ];
   try {
     for (const { code, side, checkCornerQr } of liveCases) {
-      // Respect the worker's 250ms live ROI cooldown between independent scenes.
-      await new Promise((r) => setTimeout(r, 260));
+      // Respect the worker's 600ms peripheral live ROI cooldown between independent scenes.
+      await new Promise((r) => setTimeout(r, 620));
       const bmp = await createImageBitmap(framed(img, code, side));
       utils[transfer]({ transfer: [bmp] });
       const t0 = performance.now();
       const res = await utils.decode({ bitmap: bmp, still: false, accuracy: "auto" });
       const ms = Math.round(performance.now() - t0);
       const codes = /** @type {any[]} */ (res?.codes ?? []);
-      const got = codes[0] ?? null;
+      const got = codes.at(0) ?? null;
       let verdict = judge(code, side, got);
       if (verdict.ok && checkCornerQr) {
         const qr = codes.find((c) => c.symbology === "qrcode");
@@ -221,7 +221,7 @@ const run = async () => {
       const t0 = performance.now();
       const res = await utils.decode({ bitmap: bmp, still: false, accuracy: "auto" });
       const ms = Math.round(performance.now() - t0);
-      const got = res?.codes?.[0] ?? null;
+      const got = res?.codes?.at(0) ?? null;
       const ok =
         got?.symbology === "qrcode" &&
         got?.text === qrCode.text &&

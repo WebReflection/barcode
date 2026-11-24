@@ -99,8 +99,8 @@ check("hasCentered is false for a lone peripheral read", () => {
 check("centerRoiCandidates covers the reticle and stays in bounds", () => {
   const boxes = centerRoiCandidates(1200, 900, { linear: true, square: true });
   if (boxes.length !== 3) throw new Error(`boxes ${boxes.length}`);
-  const [wide, tight, sq] = boxes;
-  if (!wide.linear || !tight.linear || sq.linear) throw new Error("linear flags");
+  const [tight, wide, sq] = boxes;
+  if (!tight.linear || !wide.linear || sq.linear) throw new Error("linear flags");
   for (const b of boxes) {
     if (b.x < 0 || b.y < 0 || b.x + b.w > 1200 || b.y + b.h > 900) throw new Error(`out of bounds ${JSON.stringify(b)}`);
     // The frame center must be inside every reticle crop.
