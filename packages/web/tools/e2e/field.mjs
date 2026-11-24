@@ -125,6 +125,12 @@ const params = new URLSearchParams({ corpus: corpusUrl, mode: MODE, api: `/@fs${
 if (ONLY) params.set("id", ONLY);
 if (EVERYTHING) params.set("formats", "all");
 const TESTS = fileURLToPath(new URL("../../tests/", import.meta.url));
+// Cache-bust the harness URL: Chrome restores a previously visited page
+// from bfcache for an identical URL, so a repeated on-device run kept
+// executing the PREVIOUS dist/ bundle (and reported its old results) even
+// though the server served the rebuilt wasm. The playwright driver
+// appends `_=` for the same reason.
+params.set("_", String(Date.now()));
 const pageUrl = `${BASE}/@fs${TESTS}field.html?${params}`;
 
 let exitCode = 0;

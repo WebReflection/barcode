@@ -464,6 +464,12 @@ const ANGLE_STEP: f32 = 1.0;
 const OFFSET_RANGE: f32 = 3.0; // px around the coarse corner
 const OFFSET_STEP: f32 = 1.5;
 const L_MIN_FRACTION: f32 = 0.8; // finder L must be mostly dark
+/// Alternating top + right clock tracks (ISO/IEC 16022): every real
+/// Data Matrix carries dark/light checkerboard edges opposite the solid L.
+/// Without this gate on the sampled grid, dense non-DM textures (Aztec,
+/// QR) satisfy the L probe and exhaustively match small 10×10/12×12 RS
+/// blocks on pure noise.
+const CLOCK_MIN_FRACTION: f32 = 0.75;
 
 #[inline]
 fn dark_at(map: &BinaryMap, x: f32, y: f32) -> bool {
@@ -489,9 +495,49 @@ struct GridSample {
 /// that a smeared/merged module splits the vote.
 const QUAD: [(f32, f32); 4] = [(-0.22, -0.22), (-0.22, 0.22), (0.22, -0.22), (0.22, 0.22)];
 
+/// Cheap L-only probe (no clock check, no grid allocation): used at
+/// `theta = 0` before the angle loop in `try_corner_fast`, where a tilted
+/// symbol's far clock track can be rotated off-phase even though its
+/// near-corner L is still dark.
+fn finder_l_ok(
+    map: &BinaryMap,
+    kind: CornerKind,
+    rows: usize,
+    cols: usize,
+    ox: f32,
+    oy: f32,
+    pitch: f32,
+    theta: f32,
+) -> bool {
+    let (rd, cd, _) = axes(kind);
+    let (ct, st) = (theta.cos(), theta.sin());
+    let rot = |d: (f32, f32)| (d.0 * ct - d.1 * st, d.0 * st + d.1 * ct);
+    let (rrx, rry) = rot(rd);
+    let (crx, cry) = rot(cd);
+    let pos = |r: f32, c: f32| -> (f32, f32) {
+        let dr = r + 0.5 - rows as f32;
+        (
+            ox + dr * pitch * rrx + (c + 0.5) * pitch * crx,
+            oy + dr * pitch * rry + (c + 0.5) * pitch * cry,
+        )
+    };
+    let mut l_dark = 0usize;
+    let l_total = rows + cols;
+    for r in 0..rows {
+        let (x, y) = pos(r as f32, 0.0);
+        l_dark += dark_at(map, x, y) as usize;
+    }
+    for c in 0..cols {
+        let (x, y) = pos((rows - 1) as f32, c as f32);
+        l_dark += dark_at(map, x, y) as usize;
+    }
+    (l_dark as f32) >= L_MIN_FRACTION * l_total as f32
+}
+
 /// Sample the canonical-ordered module matrix for one grid hypothesis.
-/// Returns None when the finder L is not mostly dark (cheap reject before
-/// the expensive decode).
+/// Returns None when the finder L is not mostly dark or the alternating
+/// top/right clock tracks do not match (cheap structural reject before
+/// allocating the grid or running Reed–Solomon).
 ///
 /// With `quality`, four quadrant samples per module are taken as well: a
 /// 2–2 split (or a centre that disagrees with a 3–1 majority) marks the
@@ -533,6 +579,23 @@ fn sample_grid_impl(
         l_dark += dark_at(map, x, y) as usize;
     }
     if (l_dark as f32) < L_MIN_FRACTION * l_total as f32 {
+        return None;
+    }
+    // Alternating clock tracks: top row (r = 0, even cols dark) and right
+    // col (c = cols - 1, odd rows dark). Exclude the two L endpoints
+    // (0, 0) and (rows - 1, cols - 1) already checked above, and count the
+    // shared top-right corner (0, cols - 1) once.
+    let mut clock_ok = 0usize;
+    for c in 1..cols {
+        let (x, y) = pos(0.0, c as f32);
+        clock_ok += (dark_at(map, x, y) == (c % 2 == 0)) as usize;
+    }
+    for r in 1..rows - 1 {
+        let (x, y) = pos(r as f32, (cols - 1) as f32);
+        clock_ok += (dark_at(map, x, y) == (r % 2 == 1)) as usize;
+    }
+    let clock_total = rows + cols - 3;
+    if (clock_ok as f32) < CLOCK_MIN_FRACTION * clock_total as f32 {
         return None;
     }
     let mut m = vec![0u8; rows * cols];
@@ -908,7 +971,7 @@ fn try_corner_fast(map: &BinaryMap, corner: &Corner, budget: &mut u64) -> Option
             let mut probe_ok = false;
             'probe: for &pdx in &[-OFFSET_RANGE, 0.0, OFFSET_RANGE] {
                 for &pdy in &[-OFFSET_RANGE, 0.0, OFFSET_RANGE] {
-                    if sample_grid(
+                    if finder_l_ok(
                         map,
                         corner.kind,
                         rows,
@@ -917,9 +980,7 @@ fn try_corner_fast(map: &BinaryMap, corner: &Corner, budget: &mut u64) -> Option
                         corner.y + pdy,
                         pitch,
                         0.0,
-                    )
-                    .is_some()
-                    {
+                    ) {
                         probe_ok = true;
                         break 'probe;
                     }
@@ -1133,5 +1194,96 @@ impl Location {
             at(self.rows as f32, self.cols as f32),
             at(self.rows as f32, 0.0),
         ]
+    }
+}
+
+#[cfg(test)]
+mod clock_gate_tests {
+    use super::*;
+
+    fn render_binary(
+        matrix: &[u8],
+        rows: usize,
+        cols: usize,
+        pitch: usize,
+        pad: usize,
+    ) -> BinaryMap {
+        let w = (cols + 2 * pad) * pitch;
+        let h = (rows + 2 * pad) * pitch;
+        let mut dark = vec![false; w * h];
+        for r in 0..rows {
+            for c in 0..cols {
+                if matrix[r * cols + c] != 0 {
+                    for dy in 0..pitch {
+                        for dx in 0..pitch {
+                            dark[((r + pad) * pitch + dy) * w + (c + pad) * pitch + dx] = true;
+                        }
+                    }
+                }
+            }
+        }
+        BinaryMap { w, h, dark }
+    }
+
+    #[test]
+    fn clock_track_rejects_non_alternating_borders_and_keeps_valid_dm() {
+        let enc = crate::encode::encode(b"AB").expect("10x10 DM");
+        let (rows, cols) = (enc.spec.rows, enc.spec.cols);
+        assert_eq!((rows, cols), (10, 10));
+        let pitch = 6usize;
+        let pad = 4usize;
+
+        // Genuine symbol decodes cleanly.
+        let valid_map = render_binary(&enc.matrix, rows, cols, pitch, pad);
+        let ox = (pad * pitch) as f32;
+        let oy = ((pad + rows) * pitch) as f32;
+        assert!(sample_grid(
+            &valid_map,
+            CornerKind::BottomLeft,
+            rows,
+            cols,
+            ox,
+            oy,
+            pitch as f32,
+            0.0,
+        )
+        .is_some());
+        let hits = locate_binary(&valid_map);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].decoded.payload.as_deref(), Some(b"AB".as_slice()));
+
+        // Same interior + solid L, but top and right clock tracks overwritten
+        // to solid dark (no alternating checkerboard): L probe still sees the
+        // corner, but sample_grid's clock-track gate rejects it.
+        let mut fake = enc.matrix.clone();
+        for c in 1..cols {
+            fake[c] = 1;
+        }
+        for r in 1..rows - 1 {
+            fake[r * cols + cols - 1] = 1;
+        }
+        let fake_map = render_binary(&fake, rows, cols, pitch, pad);
+        assert!(finder_l_ok(
+            &fake_map,
+            CornerKind::BottomLeft,
+            rows,
+            cols,
+            ox,
+            oy,
+            pitch as f32,
+            0.0,
+        ));
+        assert!(sample_grid(
+            &fake_map,
+            CornerKind::BottomLeft,
+            rows,
+            cols,
+            ox,
+            oy,
+            pitch as f32,
+            0.0,
+        )
+        .is_none());
+        assert!(locate_binary(&fake_map).is_empty());
     }
 }

@@ -714,6 +714,31 @@ const decodeStill = async (bitmap, formats, accuracy, latency) => {
         if (cpuCodes.length) codes = codes.concat(cpuCodes);
       }
     }
+    // A short DataMatrix-only CPU first opinion is *provisional*: even with
+    // the clock-track gate, a tiny 10x10/12x12 DM fragment has the lowest
+    // Reed-Solomon margin of any 2D family and can fire on dense Aztec/QR
+    // textures (real GS1/invoice DMs are much longer and skip this check
+    // completely, paying 0ms). Let the stricter 2D families (including QR
+    // and MicroQR, which may decode on the GPU 0.92 mask even after missing
+    // on CPU 0.7/0.82) read the GPU mask with `still: false` (no dual-polarity
+    // tilt sweep) before accepting the tiny DM hit.
+    const PROVISIONAL_DM_MAX_BYTES = 10;
+    if (
+      bin.kind === "gpu" &&
+      cpuCodes.length &&
+      cpuCodes.every(
+        (c) => c.symbology === "datamatrix" && (c.raw?.length ?? c.text.length) <= PROVISIONAL_DM_MAX_BYTES,
+      )
+    ) {
+      const strict = cpuSecondOpinionFormats(formats, cpuCodes, new Set(["datamatrix"]));
+      if (strict.length && !outOfTime()) {
+        const hits = decodeFrame(scanner, frame, strict, { ...opts, still: false });
+        if (hits.length) {
+          codes = codes.filter((c) => c.symbology !== "datamatrix").concat(hits);
+          cpuCodes = hits;
+        }
+      }
+    }
     const cpuHit = new Set(cpuCodes.map((c) => c.symbology));
 
     // 3. Off-center or weak 1D hit: check remaining 2D via ROI + 0.7 so a
