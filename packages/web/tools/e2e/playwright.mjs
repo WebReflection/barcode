@@ -41,7 +41,7 @@ if (!existsSync(resolve(pkg, "dist/main.js"))) {
   process.exit(2);
 }
 const argv = process.argv.slice(2);
-const has = (name) => argv.includes(`--${name}`);
+const has = (name) => argv.includes(name);
 const flag = (name, fallback) => {
   // `name` already includes the leading dashes (`--browser`, `--only`, …).
   const i = argv.indexOf(name);
