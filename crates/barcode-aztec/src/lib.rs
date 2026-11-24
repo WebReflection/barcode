@@ -52,7 +52,12 @@ pub fn read_frame(dark: &[u8], w: usize, h: usize) -> Vec<FrameHit> {
             let Some(orient) = detect::find_orientation(dark, w, h, &b, half) else {
                 continue;
             };
-            let map = detect::FrameMap { x: b.x, y: b.y, scale: b.scale, orient };
+            let map = detect::FrameMap {
+                x: b.x,
+                y: b.y,
+                scale: b.scale,
+                orient,
+            };
             for spec in tables::all_specs().iter().filter(|s| s.compact == !full) {
                 let size = spec.rows as usize;
                 let c = (size / 2) as i32;
@@ -148,8 +153,7 @@ pub fn read_stream_with_erasures(
         Vec::new()
     };
     let check = placement::windows(&bits, cap - k * b, k, b);
-    let check_erased: Vec<usize> =
-        placement::window_erasures(&unc, cap - k * b, k, b);
+    let check_erased: Vec<usize> = placement::window_erasures(&unc, cap - k * b, k, b);
 
     let gf = gf::field_for(b as u32);
     let attempt = |mut seq: Vec<u16>, erased: &[usize]| -> Option<Vec<u16>> {
@@ -170,7 +174,11 @@ pub fn read_stream_with_erasures(
     let mut raw_erased_all = raw_erased;
     raw_erased_all.extend(check_erased.iter().map(|&j| d + j));
     if let Some(data) = attempt([&raw[..], &check].concat(), &raw_erased_all) {
-        return Some(Stream { layers, data_cw, data });
+        return Some(Stream {
+            layers,
+            data_cw,
+            data,
+        });
     }
 
     // Candidate B: stuff-aware parse from every legal skip offset.
@@ -185,7 +193,11 @@ pub fn read_stream_with_erasures(
                 let mut er = erased;
                 er.extend(check_erased.iter().map(|&j| d + j));
                 if let Some(data) = attempt([vals, check.clone()].concat(), &er) {
-                    return Some(Stream { layers, data_cw, data });
+                    return Some(Stream {
+                        layers,
+                        data_cw,
+                        data,
+                    });
                 }
             }
         }

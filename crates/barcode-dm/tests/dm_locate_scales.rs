@@ -6,8 +6,8 @@
 //! (spec, pitch) candidate; try_corner now orders candidates by the
 //! corner legs' own pitch estimate.
 
-use barcode_dm::locator::{locate_binary, BinaryMap};
 use barcode_dm::encode::encode;
+use barcode_dm::locator::{locate_binary, BinaryMap};
 
 fn to_map(m: &[u8], r: usize, c: usize) -> BinaryMap {
     let (w, h) = (c + 8, r + 8);
@@ -43,7 +43,8 @@ fn locates_at_scan_scales() {
         for n in [6usize, 8, 10, 12, 16] {
             let hits = locate_binary(&upscale(&map, n));
             assert!(
-                hits.iter().any(|l| l.decoded.payload.as_deref() == Some(text.as_bytes())),
+                hits.iter()
+                    .any(|l| l.decoded.payload.as_deref() == Some(text.as_bytes())),
                 "{text:?}: not located at x{n}"
             );
         }

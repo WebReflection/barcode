@@ -34,7 +34,12 @@ pub(crate) fn microqr_canvas(text: &str, module: u32) -> Result<Canvas, String> 
     for y in 0..sym.size {
         for x in 0..sym.size {
             if sym.cells[y * sym.size + x] == 1 {
-                c.fill((quiet + x as u32) * module, (quiet + y as u32) * module, module, module);
+                c.fill(
+                    (quiet + x as u32) * module,
+                    (quiet + y as u32) * module,
+                    module,
+                    module,
+                );
             }
         }
     }
@@ -44,7 +49,13 @@ pub(crate) fn microqr_canvas(text: &str, module: u32) -> Result<Canvas, String> 
 /// Draw a `#`/`.` oracle matrix (1 char = 1 module) onto a Canvas with a
 /// `quiet`-module margin. Used by the frozen-specimen fixture tests.
 #[cfg(test)]
-pub(crate) fn matrix_canvas(pattern: &str, rows: u32, cols: u32, module: u32, quiet: u32) -> Canvas {
+pub(crate) fn matrix_canvas(
+    pattern: &str,
+    rows: u32,
+    cols: u32,
+    module: u32,
+    quiet: u32,
+) -> Canvas {
     let mut c = Canvas::new((cols + 2 * quiet) * module, (rows + 2 * quiet) * module);
     for (y, line) in pattern.split('\n').enumerate() {
         for (x, ch) in line.chars().enumerate() {
@@ -85,7 +96,15 @@ pub(crate) struct EncOptions {
 
 impl Default for EncOptions {
     fn default() -> Self {
-        Self { ec: -1, mask: -1, version: 0, level: -1, columns: 0, rows: 0, cols: 0 }
+        Self {
+            ec: -1,
+            mask: -1,
+            version: 0,
+            level: -1,
+            columns: 0,
+            rows: 0,
+            cols: 0,
+        }
     }
 }
 
@@ -112,16 +131,28 @@ impl EncOptions {
         Ok(self)
     }
     fn qr_ec(&self) -> u8 {
-        if self.ec < 0 { 0 } else { self.ec as u8 }
+        if self.ec < 0 {
+            0
+        } else {
+            self.ec as u8
+        }
     }
     fn qr_mask(&self) -> u8 {
-        if self.mask < 0 { 2 } else { self.mask as u8 }
+        if self.mask < 0 {
+            2
+        } else {
+            self.mask as u8
+        }
     }
     fn qr_version(&self) -> u32 {
         self.version.max(0) as u32
     }
     fn pdf_level(&self) -> u8 {
-        if self.level < 0 { barcode_pdf417::encode::DEFAULT_LEVEL } else { self.level as u8 }
+        if self.level < 0 {
+            barcode_pdf417::encode::DEFAULT_LEVEL
+        } else {
+            self.level as u8
+        }
     }
 }
 
@@ -134,7 +165,12 @@ impl EncOptions {
 /// builder with QR/PDF417/DataMatrix layout options.
 #[cfg(feature = "debug")]
 #[wasm_bindgen]
-pub fn encode_fixture(symbology: &str, text: &str, module: u32, height: u32) -> Result<JsValue, JsValue> {
+pub fn encode_fixture(
+    symbology: &str,
+    text: &str,
+    module: u32,
+    height: u32,
+) -> Result<JsValue, JsValue> {
     encode_fixture_opts(symbology, text, module, height, -1, -1, 0, -1, 0, 0, 0)
 }
 
@@ -161,9 +197,17 @@ pub fn encode_fixture_opts(
     rows: i32,
     cols: i32,
 ) -> Result<JsValue, JsValue> {
-    let o = EncOptions { ec, mask, version, level, columns, rows, cols }
-        .validate()
-        .map_err(|e| JsValue::from_str(&e))?;
+    let o = EncOptions {
+        ec,
+        mask,
+        version,
+        level,
+        columns,
+        rows,
+        cols,
+    }
+    .validate()
+    .map_err(|e| JsValue::from_str(&e))?;
     let canvas = encode_text_canvas(symbology, text, module, height, o)
         .map_err(|e| JsValue::from_str(&e))?;
     fixture_enc(canvas)
@@ -230,7 +274,11 @@ pub(crate) fn encode_text_canvas(
         // QR: EC M / mask 2 / smallest version by default; all three are
         // overridable. `height` is meaningless for 2D and ignored.
         "qr" | "qrcode" => barcode_fixtures::encode_qr_text_version(
-            text, o.qr_ec(), o.qr_mask(), o.qr_version(), module,
+            text,
+            o.qr_ec(),
+            o.qr_mask(),
+            o.qr_version(),
+            module,
         )
         .ok_or_else(|| "payload too large for QR at the requested version/EC".to_string())?,
         // Micro QR: algorithmic ISO/IEC 18004 encoder in barcode-microqr.
@@ -255,7 +303,12 @@ pub(crate) fn encode_text_canvas(
             for y in 0..r {
                 for x in 0..c {
                     if enc.matrix[y * c + x] == 1 {
-                        canvas.fill((4 + x as u32) * module, (4 + y as u32) * module, module, module);
+                        canvas.fill(
+                            (4 + x as u32) * module,
+                            (4 + y as u32) * module,
+                            module,
+                            module,
+                        );
                     }
                 }
             }
@@ -270,7 +323,12 @@ pub(crate) fn encode_text_canvas(
             for y in 0..r {
                 for x in 0..c {
                     if matrix[y * c + x] == 1 {
-                        canvas.fill((4 + x as u32) * module, (4 + y as u32) * module, module, module);
+                        canvas.fill(
+                            (4 + x as u32) * module,
+                            (4 + y as u32) * module,
+                            module,
+                            module,
+                        );
                     }
                 }
             }
@@ -284,7 +342,9 @@ pub(crate) fn encode_text_canvas(
             } else {
                 barcode_pdf417::encode::encode_full(text.as_bytes(), level)
             })
-            .map_err(|_| "payload too large for PDF417 at the requested level/columns".to_string())?;
+            .map_err(|_| {
+                "payload too large for PDF417 at the requested level/columns".to_string()
+            })?;
             let mut canvas = Canvas::new(sym.width as u32 * module, sym.height as u32 * module);
             for y in 0..sym.height {
                 for x in 0..sym.width {
@@ -343,7 +403,11 @@ pub(crate) fn fixture_bytes_canvas(
             let mask = o.qr_mask();
             let forced = o.qr_version();
             let mut found = None;
-            let versions = if (1..=40).contains(&forced) { forced..=forced } else { 1..=40 };
+            let versions = if (1..=40).contains(&forced) {
+                forced..=forced
+            } else {
+                1..=40
+            };
             for version in versions {
                 let cap = barcode_fixtures::qr_data_codewords(version, ec) as usize;
                 let count_bits = if version <= 9 { 8 } else { 16 };
@@ -398,7 +462,12 @@ pub(crate) fn fixture_bytes_canvas(
             for y in 0..r {
                 for x in 0..c {
                     if enc.matrix[y * c + x] == 1 {
-                        canvas.fill((4 + x as u32) * module, (4 + y as u32) * module, module, module);
+                        canvas.fill(
+                            (4 + x as u32) * module,
+                            (4 + y as u32) * module,
+                            module,
+                            module,
+                        );
                     }
                 }
             }
@@ -412,7 +481,12 @@ pub(crate) fn fixture_bytes_canvas(
             for y in 0..r {
                 for x in 0..c {
                     if matrix[y * c + x] == 1 {
-                        canvas.fill((4 + x as u32) * module, (4 + y as u32) * module, module, module);
+                        canvas.fill(
+                            (4 + x as u32) * module,
+                            (4 + y as u32) * module,
+                            module,
+                            module,
+                        );
                     }
                 }
             }
@@ -425,7 +499,9 @@ pub(crate) fn fixture_bytes_canvas(
             } else {
                 barcode_pdf417::encode::encode_full(data, level)
             })
-            .map_err(|_| "payload too large for PDF417 at the requested level/columns".to_string())?;
+            .map_err(|_| {
+                "payload too large for PDF417 at the requested level/columns".to_string()
+            })?;
             let mut canvas = Canvas::new(sym.width as u32 * module, sym.height as u32 * module);
             for y in 0..sym.height {
                 for x in 0..sym.width {
@@ -458,7 +534,12 @@ pub(crate) fn fixture_bytes_canvas(
             for y in 0..sym.size {
                 for x in 0..sym.size {
                     if sym.cells[y * sym.size + x] == 1 {
-                        c.fill((quiet + x as u32) * module, (quiet + y as u32) * module, module, module);
+                        c.fill(
+                            (quiet + x as u32) * module,
+                            (quiet + y as u32) * module,
+                            module,
+                            module,
+                        );
                     }
                 }
             }
@@ -474,7 +555,12 @@ pub(crate) fn fixture_bytes_canvas(
 /// harness — same mask layout as `encode_fixture`.
 #[cfg(feature = "debug")]
 #[wasm_bindgen]
-pub fn encode_fixture_hex(symbology: &str, hex: &str, module: u32, _height: u32) -> Result<JsValue, JsValue> {
+pub fn encode_fixture_hex(
+    symbology: &str,
+    hex: &str,
+    module: u32,
+    _height: u32,
+) -> Result<JsValue, JsValue> {
     if hex.len() % 2 != 0 || hex.bytes().any(|b| !b.is_ascii_hexdigit()) {
         return Err(JsValue::from_str("bad hex payload"));
     }
@@ -492,7 +578,12 @@ pub fn encode_fixture_hex(symbology: &str, hex: &str, module: u32, _height: u32)
 /// error here (the caller falls back to the text path).
 #[cfg(feature = "debug")]
 #[wasm_bindgen]
-pub fn encode_fixture_raw(symbology: &str, raw: &[u8], module: u32, _height: u32) -> Result<JsValue, JsValue> {
+pub fn encode_fixture_raw(
+    symbology: &str,
+    raw: &[u8],
+    module: u32,
+    _height: u32,
+) -> Result<JsValue, JsValue> {
     let canvas = fixture_bytes_canvas(symbology, raw, module, EncOptions::default())
         .map_err(|e| JsValue::from_str(&e))?;
     fixture_enc(canvas)
@@ -515,10 +606,18 @@ pub fn encode_fixture_raw_opts(
     rows: i32,
     cols: i32,
 ) -> Result<JsValue, JsValue> {
-    let o = EncOptions { ec, mask, version, level, columns, rows, cols }
-        .validate()
-        .map_err(|e| JsValue::from_str(&e))?;
-    let canvas = fixture_bytes_canvas(symbology, raw, module, o)
-        .map_err(|e| JsValue::from_str(&e))?;
+    let o = EncOptions {
+        ec,
+        mask,
+        version,
+        level,
+        columns,
+        rows,
+        cols,
+    }
+    .validate()
+    .map_err(|e| JsValue::from_str(&e))?;
+    let canvas =
+        fixture_bytes_canvas(symbology, raw, module, o).map_err(|e| JsValue::from_str(&e))?;
     fixture_enc(canvas)
 }

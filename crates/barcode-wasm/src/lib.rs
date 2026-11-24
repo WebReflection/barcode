@@ -8,19 +8,21 @@
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-use barcode_code128::Code128Decoder;
-use barcode_core::Point;
 use barcode_codabar::CodabarDecoder;
-use barcode_ean8::Ean8Decoder;
-use barcode_qr::QrDecoder;
-use barcode_microqr::decode_microqr;
-use barcode_upce::UpceDecoder;
+use barcode_code128::Code128Decoder;
+use barcode_code39::{code32_text, Code39Decoder};
 use barcode_code93::Code93Decoder;
-use barcode_code39::{Code39Decoder, code32_text};
+use barcode_core::Point;
 use barcode_core::{BitImage, LinearDecoder, RowRuns, Symbology, SymbologyDecoder};
+use barcode_databar::{
+    DataBarExpandedDecoder, DataBarLtdDecoder, DataBarOmniDecoder, DataBarStackedDecoder,
+};
 use barcode_ean13::Ean13Decoder;
+use barcode_ean8::Ean8Decoder;
 use barcode_itf::ItfDecoder;
-use barcode_databar::{DataBarExpandedDecoder, DataBarLtdDecoder, DataBarOmniDecoder, DataBarStackedDecoder};
+use barcode_microqr::decode_microqr;
+use barcode_qr::QrDecoder;
+use barcode_upce::UpceDecoder;
 
 #[cfg(feature = "debug")]
 mod debug;
@@ -125,9 +127,15 @@ impl BarcodeScanner {
         data: &[u8],
         budget_ms: u32,
     ) -> Result<JsValue, JsValue> {
-        self.decode_tiered(width, height, data, &Tiers::all(), true, u64::from(budget_ms))
+        self.decode_tiered(
+            width,
+            height,
+            data,
+            &Tiers::all(),
+            true,
+            u64::from(budget_ms),
+        )
     }
-
 
     /// Decode a filtered subset: `formats` names symbologies in the
     /// normalized lowercase form ("qrcode", "ean13", "code128", ...) —
@@ -311,7 +319,11 @@ impl BarcodeScanner {
             // covers both diagonals.
             const LIVE_DIAGONAL_MS: u64 = 140;
             const LIVE_DIAGONAL_DEADLINE_MS: u64 = 460;
-            let total_dm = if still { still_budget_ms } else { LIVE_DM_PRIMARY_MS };
+            let total_dm = if still {
+                still_budget_ms
+            } else {
+                LIVE_DM_PRIMARY_MS
+            };
             let (primary, mut remaining) = if still {
                 (total_dm / 2, total_dm - total_dm / 2)
             } else {
@@ -333,8 +345,7 @@ impl BarcodeScanner {
             // (web tilt bank measured 8/36 fails at ±4/±8 without them in
             // the ladder; their own orientation search only covers 90°
             // multiples).
-            let tilt_sensitive =
-                tiers.datamatrix || tiers.pdf417 || tiers.aztec || tiers.microqr;
+            let tilt_sensitive = tiers.datamatrix || tiers.pdf417 || tiers.aztec || tiers.microqr;
             if two_d.is_empty() && tilt_sensitive {
                 let area = img.width as u64 * img.height as u64;
                 let ladder: &[f64] = if area > 1_200_000 {
@@ -344,7 +355,9 @@ impl BarcodeScanner {
                 } else {
                     // Small masks: fine ladder, ~1° residual — every family
                     // then decodes to ~±13° roll.
-                    &[2.0, -2.0, 4.0, -4.0, 6.0, -6.0, 8.0, -8.0, 10.0, -10.0, 12.0, -12.0]
+                    &[
+                        2.0, -2.0, 4.0, -4.0, 6.0, -6.0, 8.0, -8.0, 10.0, -10.0, 12.0, -12.0,
+                    ]
                 };
                 // Still scans with seconds of budget are gallery photos:
                 // the geometric split can starve a tilt retry below the
@@ -352,7 +365,11 @@ impl BarcodeScanner {
                 // costs overshoot the sample budget anyway. Give every
                 // still retry a working floor (sub-second still budgets,
                 // i.e. tests/embedded callers, keep the strict split).
-                let still_min_step = if still && still_budget_ms >= 1200 { 2000 } else { 0 };
+                let still_min_step = if still && still_budget_ms >= 1200 {
+                    2000
+                } else {
+                    0
+                };
                 'ladder: for &deg in ladder {
                     // Wall-clock check: the geometric split bounds the
                     // ladder's DM *sampling*, but each step also has fixed
@@ -445,7 +462,13 @@ impl BarcodeScanner {
             // caller's budget, skip them (0° + 180° still run); the 1D
             // pre-pass on a photo has no 2D cost, so it always gets them.
             let allow_quarter = !still || now_ms().saturating_sub(start) < still_budget_ms;
-            out.extend(decode_linear(self.linear_decoders(), img, tiers, allow_quarter, still));
+            out.extend(decode_linear(
+                self.linear_decoders(),
+                img,
+                tiers,
+                allow_quarter,
+                still,
+            ));
         }
         out
     }
@@ -476,7 +499,11 @@ impl BarcodeScanner {
             }
         }
         if tiers.datamatrix {
-            out.extend(decode_datamatrix_mask_budget(img, dm_exhaustive, dm_budget_ms));
+            out.extend(decode_datamatrix_mask_budget(
+                img,
+                dm_exhaustive,
+                dm_budget_ms,
+            ));
             if !out.is_empty() {
                 return out;
             }
@@ -594,8 +621,24 @@ fn rotated_supersampled(img: &BitImage, deg: f64) -> Vec<u8> {
 /// these lowercase names; the `formats` API accepts the same forms with
 /// "qr" accepted as an alias for "qrcode".
 pub const SYMBOLOGIES: [&str; 19] = [
-    "qrcode", "microqr", "upca", "datamatrix", "aztec", "pdf417", "ean13", "ean8", "upce", "code39",
-    "code32", "code93", "code128", "itf", "codabar", "databar", "databarltd", "databarstk",
+    "qrcode",
+    "microqr",
+    "upca",
+    "datamatrix",
+    "aztec",
+    "pdf417",
+    "ean13",
+    "ean8",
+    "upce",
+    "code39",
+    "code32",
+    "code93",
+    "code128",
+    "itf",
+    "codabar",
+    "databar",
+    "databarltd",
+    "databarstk",
     "databarexpanded",
 ];
 
@@ -627,13 +670,44 @@ pub struct Tiers {
 
 impl Tiers {
     pub fn all() -> Tiers {
-        Tiers { qr: true, microqr: true, upca: true, datamatrix: true, aztec: true, pdf417: true, ean13: true, code39: true, code32: true, itf: true, code128: true, code93: true, codabar: true, ean8: true, upce: true, databar: true, databarltd: true, databarstk: true, databarexpanded: true }
+        Tiers {
+            qr: true,
+            microqr: true,
+            upca: true,
+            datamatrix: true,
+            aztec: true,
+            pdf417: true,
+            ean13: true,
+            code39: true,
+            code32: true,
+            itf: true,
+            code128: true,
+            code93: true,
+            codabar: true,
+            ean8: true,
+            upce: true,
+            databar: true,
+            databarltd: true,
+            databarstk: true,
+            databarexpanded: true,
+        }
     }
 
     fn any_linear(&self) -> bool {
-        self.upca || self.ean13 || self.code39 || self.code32 || self.itf || self.code128 || self.code93 || self.codabar || self.ean8 || self.upce || self.databar || self.databarltd || self.databarexpanded
+        self.upca
+            || self.ean13
+            || self.code39
+            || self.code32
+            || self.itf
+            || self.code128
+            || self.code93
+            || self.codabar
+            || self.ean8
+            || self.upce
+            || self.databar
+            || self.databarltd
+            || self.databarexpanded
     }
-
 }
 
 impl BarcodeScanner {
@@ -694,7 +768,9 @@ fn parse_formats(formats: &[String]) -> Result<Tiers, String> {
             "codabar" => t.codabar = true,
             "databar" | "databaromni" | "gs1databar" => t.databar = true,
             "databarltd" | "databarlimited" | "gs1databarlimited" => t.databarltd = true,
-            "databarstk" | "databarstacked" | "databarstackomni" | "gs1databarstacked" => t.databarstk = true,
+            "databarstk" | "databarstacked" | "databarstackomni" | "gs1databarstacked" => {
+                t.databarstk = true
+            }
             "databarexpanded" | "databarexp" | "gs1databarexpanded" | "rssexpanded" => {
                 t.databarexpanded = true
             }
@@ -708,7 +784,6 @@ fn parse_formats(formats: &[String]) -> Result<Tiers, String> {
     }
     Ok(t)
 }
-
 
 /// The canonical symbology list for capability reporting.
 #[wasm_bindgen]
@@ -824,10 +899,7 @@ fn scan_linear_orientation(
         let ys = if step == 0 {
             [Some(mid), None]
         } else {
-            [
-                mid.checked_sub(off),
-                (mid + off < h).then_some(mid + off),
-            ]
+            [mid.checked_sub(off), (mid + off < h).then_some(mid + off)]
         };
         if ys[0].is_none() && ys[1].is_none() {
             break;
@@ -882,25 +954,71 @@ fn scan_linear_orientation(
 /// - 270° (90° CCW): in-place reversed runs of the same `rot90_cw` mask
 ///   (no second transpose or redundant mirrored-quarter passes)
 fn decode_linear(
-    decoders: (&mut Ean13Decoder, &mut Code39Decoder, &mut ItfDecoder, &mut Code128Decoder, &mut Code93Decoder, &mut CodabarDecoder, &mut Ean8Decoder, &mut UpceDecoder, &mut DataBarOmniDecoder, &mut DataBarLtdDecoder, &mut DataBarExpandedDecoder),
+    decoders: (
+        &mut Ean13Decoder,
+        &mut Code39Decoder,
+        &mut ItfDecoder,
+        &mut Code128Decoder,
+        &mut Code93Decoder,
+        &mut CodabarDecoder,
+        &mut Ean8Decoder,
+        &mut UpceDecoder,
+        &mut DataBarOmniDecoder,
+        &mut DataBarLtdDecoder,
+        &mut DataBarExpandedDecoder,
+    ),
     img: &BitImage,
     tiers: &Tiers,
     allow_quarter: bool,
     still: bool,
 ) -> Vec<barcode_core::DecodeResult> {
-    let (ean13, code39, itf, code128, code93, codabar, ean8, upce, databar, databarltd, databarexpanded) = decoders;
+    let (
+        ean13,
+        code39,
+        itf,
+        code128,
+        code93,
+        codabar,
+        ean8,
+        upce,
+        databar,
+        databarltd,
+        databarexpanded,
+    ) = decoders;
     let mut active: Vec<&mut dyn LinearDecoder> = Vec::with_capacity(11);
-    if tiers.ean13 || tiers.upca { active.push(ean13); }
-    if tiers.code39 || tiers.code32 { active.push(code39); }
-    if tiers.itf { active.push(itf); }
-    if tiers.code128 { active.push(code128); }
-    if tiers.code93 { active.push(code93); }
-    if tiers.codabar { active.push(codabar); }
-    if tiers.ean8 { active.push(ean8); }
-    if tiers.upce { active.push(upce); }
-    if tiers.databar { active.push(databar); }
-    if tiers.databarltd { active.push(databarltd); }
-    if tiers.databarexpanded { active.push(databarexpanded); }
+    if tiers.ean13 || tiers.upca {
+        active.push(ean13);
+    }
+    if tiers.code39 || tiers.code32 {
+        active.push(code39);
+    }
+    if tiers.itf {
+        active.push(itf);
+    }
+    if tiers.code128 {
+        active.push(code128);
+    }
+    if tiers.code93 {
+        active.push(code93);
+    }
+    if tiers.codabar {
+        active.push(codabar);
+    }
+    if tiers.ean8 {
+        active.push(ean8);
+    }
+    if tiers.upce {
+        active.push(upce);
+    }
+    if tiers.databar {
+        active.push(databar);
+    }
+    if tiers.databarltd {
+        active.push(databarltd);
+    }
+    if tiers.databarexpanded {
+        active.push(databarexpanded);
+    }
     if active.is_empty() {
         return Vec::new();
     }
@@ -931,10 +1049,22 @@ fn decode_linear(
         for r in &mut out {
             let [p0, p1, p2, p3] = r.position;
             r.position = [
-                Point { x: w - p1.x, y: p1.y },
-                Point { x: w - p0.x, y: p0.y },
-                Point { x: w - p3.x, y: p3.y },
-                Point { x: w - p2.x, y: p2.y },
+                Point {
+                    x: w - p1.x,
+                    y: p1.y,
+                },
+                Point {
+                    x: w - p0.x,
+                    y: p0.y,
+                },
+                Point {
+                    x: w - p3.x,
+                    y: p3.y,
+                },
+                Point {
+                    x: w - p2.x,
+                    y: p2.y,
+                },
             ];
         }
         return out;
@@ -1004,7 +1134,10 @@ fn decode_stacked(
     let (w, h) = (img.width as f32 - 1.0, img.height as f32 - 1.0);
     for mut r in decoder.decode(&flipped) {
         let [p0, p1, p2, p3] = r.position;
-        let t = |p: Point| Point { x: w - p.x, y: h - p.y };
+        let t = |p: Point| Point {
+            x: w - p.x,
+            y: h - p.y,
+        };
         r.position = [t(p2), t(p3), t(p0), t(p1)];
         out.push(r);
     }
@@ -1014,11 +1147,34 @@ fn decode_stacked(
 impl BarcodeScanner {
     fn linear_decoders(
         &mut self,
-    ) -> (&mut Ean13Decoder, &mut Code39Decoder, &mut ItfDecoder, &mut Code128Decoder, &mut Code93Decoder, &mut CodabarDecoder, &mut Ean8Decoder, &mut UpceDecoder, &mut DataBarOmniDecoder, &mut DataBarLtdDecoder, &mut DataBarExpandedDecoder) {
-        (&mut self.ean13, &mut self.code39, &mut self.itf, &mut self.code128, &mut self.code93, &mut self.codabar, &mut self.ean8, &mut self.upce, &mut self.databar, &mut self.databarltd, &mut self.databarexpanded)
+    ) -> (
+        &mut Ean13Decoder,
+        &mut Code39Decoder,
+        &mut ItfDecoder,
+        &mut Code128Decoder,
+        &mut Code93Decoder,
+        &mut CodabarDecoder,
+        &mut Ean8Decoder,
+        &mut UpceDecoder,
+        &mut DataBarOmniDecoder,
+        &mut DataBarLtdDecoder,
+        &mut DataBarExpandedDecoder,
+    ) {
+        (
+            &mut self.ean13,
+            &mut self.code39,
+            &mut self.itf,
+            &mut self.code128,
+            &mut self.code93,
+            &mut self.codabar,
+            &mut self.ean8,
+            &mut self.upce,
+            &mut self.databar,
+            &mut self.databarltd,
+            &mut self.databarexpanded,
+        )
     }
 }
-
 
 impl WasmResult {
     fn of(r: barcode_core::DecodeResult) -> Self {
@@ -1030,6 +1186,11 @@ impl WasmResult {
             quad[i * 2] = p.x;
             quad[i * 2 + 1] = p.y;
         }
-        Self { text: r.text, raw: r.raw, symbology, quad }
+        Self {
+            text: r.text,
+            raw: r.raw,
+            symbology,
+            quad,
+        }
     }
 }

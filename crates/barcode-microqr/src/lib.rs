@@ -103,20 +103,105 @@ pub(crate) struct Spec {
 }
 
 pub(crate) const SPECS: [Spec; 8] = [
-    Spec { sym: 0, version: Version::M1, level: Level::L, size: 11, data_bits: 20,  dc: 3,  ec: 2,  half_last: true  },
-    Spec { sym: 1, version: Version::M2, level: Level::L, size: 13, data_bits: 40,  dc: 5,  ec: 5,  half_last: false },
-    Spec { sym: 2, version: Version::M2, level: Level::M, size: 13, data_bits: 32,  dc: 4,  ec: 6,  half_last: false },
-    Spec { sym: 3, version: Version::M3, level: Level::L, size: 15, data_bits: 84,  dc: 11, ec: 6,  half_last: true  },
-    Spec { sym: 4, version: Version::M3, level: Level::M, size: 15, data_bits: 68,  dc: 9,  ec: 8,  half_last: true  },
-    Spec { sym: 5, version: Version::M4, level: Level::L, size: 17, data_bits: 128, dc: 16, ec: 8,  half_last: false },
-    Spec { sym: 6, version: Version::M4, level: Level::M, size: 17, data_bits: 112, dc: 14, ec: 10, half_last: false },
-    Spec { sym: 7, version: Version::M4, level: Level::Q, size: 17, data_bits: 80,  dc: 10, ec: 14, half_last: false },
+    Spec {
+        sym: 0,
+        version: Version::M1,
+        level: Level::L,
+        size: 11,
+        data_bits: 20,
+        dc: 3,
+        ec: 2,
+        half_last: true,
+    },
+    Spec {
+        sym: 1,
+        version: Version::M2,
+        level: Level::L,
+        size: 13,
+        data_bits: 40,
+        dc: 5,
+        ec: 5,
+        half_last: false,
+    },
+    Spec {
+        sym: 2,
+        version: Version::M2,
+        level: Level::M,
+        size: 13,
+        data_bits: 32,
+        dc: 4,
+        ec: 6,
+        half_last: false,
+    },
+    Spec {
+        sym: 3,
+        version: Version::M3,
+        level: Level::L,
+        size: 15,
+        data_bits: 84,
+        dc: 11,
+        ec: 6,
+        half_last: true,
+    },
+    Spec {
+        sym: 4,
+        version: Version::M3,
+        level: Level::M,
+        size: 15,
+        data_bits: 68,
+        dc: 9,
+        ec: 8,
+        half_last: true,
+    },
+    Spec {
+        sym: 5,
+        version: Version::M4,
+        level: Level::L,
+        size: 17,
+        data_bits: 128,
+        dc: 16,
+        ec: 8,
+        half_last: false,
+    },
+    Spec {
+        sym: 6,
+        version: Version::M4,
+        level: Level::M,
+        size: 17,
+        data_bits: 112,
+        dc: 14,
+        ec: 10,
+        half_last: false,
+    },
+    Spec {
+        sym: 7,
+        version: Version::M4,
+        level: Level::Q,
+        size: 17,
+        data_bits: 80,
+        dc: 10,
+        ec: 14,
+        half_last: false,
+    },
 ];
 
 /// Coordinates of the 15-bit format strip, MSB (bit 14) to LSB (bit 0).
 pub(crate) const FORMAT_COORDS: [(usize, usize); 15] = [
-    (1, 8), (2, 8), (3, 8), (4, 8), (5, 8), (6, 8), (7, 8), (8, 8),
-    (8, 7), (8, 6), (8, 5), (8, 4), (8, 3), (8, 2), (8, 1),
+    (1, 8),
+    (2, 8),
+    (3, 8),
+    (4, 8),
+    (5, 8),
+    (6, 8),
+    (7, 8),
+    (8, 8),
+    (8, 7),
+    (8, 6),
+    (8, 5),
+    (8, 4),
+    (8, 3),
+    (8, 2),
+    (8, 1),
 ];
 
 /// Format-information XOR mask defined by ISO/IEC 18004 §7.9.2 (`100010001000101`).
@@ -188,7 +273,9 @@ pub(crate) fn count_bits(v: Version, mode_code: u8) -> Option<usize> {
 }
 
 pub(crate) fn spec_for(version: Version, level: Level) -> Option<&'static Spec> {
-    SPECS.iter().find(|s| s.version == version && s.level == level)
+    SPECS
+        .iter()
+        .find(|s| s.version == version && s.level == level)
 }
 
 /// Content-based mode detection: all ASCII digits map to numeric, the 45-char
@@ -385,7 +472,12 @@ pub fn encode_bytes(
         // 7x7 finder at top-left.
         for y in 0..7 {
             for x in 0..7 {
-                if x == 0 || x == 6 || y == 0 || y == 6 || ((2..=4).contains(&x) && (2..=4).contains(&y)) {
+                if x == 0
+                    || x == 6
+                    || y == 0
+                    || y == 6
+                    || ((2..=4).contains(&x) && (2..=4).contains(&y))
+                {
                     cells[y * size + x] = 1;
                 }
             }
@@ -436,8 +528,12 @@ pub fn encode_bytes(
         let mut best_cells = Vec::new();
         for m in 0..4u8 {
             let candidate = render(m);
-            let s1: usize = (1..size).map(|y| usize::from(candidate[y * size + (size - 1)])).sum();
-            let s2: usize = (1..size).map(|x| usize::from(candidate[(size - 1) * size + x])).sum();
+            let s1: usize = (1..size)
+                .map(|y| usize::from(candidate[y * size + (size - 1)]))
+                .sum();
+            let s2: usize = (1..size)
+                .map(|x| usize::from(candidate[(size - 1) * size + x]))
+                .sum();
             let score = s1.min(s2) * 16 + s1.max(s2);
             if best_cells.is_empty() || score > best_score {
                 best_score = score;
@@ -480,7 +576,13 @@ mod tests {
         assert_eq!(s.size, 13);
         let s = encode("12345678901234567890123", Version::M3, Level::L, None).unwrap();
         assert_eq!(s.size, 15);
-        let s = encode("12345678901234567890123456789012345", Version::M4, Level::L, None).unwrap();
+        let s = encode(
+            "12345678901234567890123456789012345",
+            Version::M4,
+            Level::L,
+            None,
+        )
+        .unwrap();
         assert_eq!(s.size, 17);
     }
 
@@ -490,8 +592,17 @@ mod tests {
         // (fixing binary render() on ASCII raw payloads).
         assert!(encode_bytes(b"12", Version::M2, Level::L, Some(Mode::Alnum), None).is_some());
         assert!(encode_bytes(b"HELLO", Version::M3, Level::L, Some(Mode::Byte), None).is_some());
-        assert!(encode_bytes(b"0123456789abcde", Version::M4, Level::L, Some(Mode::Byte), None).is_some());
-        assert!(encode_bytes(b"012345678", Version::M4, Level::Q, Some(Mode::Byte), None).is_some());
+        assert!(encode_bytes(
+            b"0123456789abcde",
+            Version::M4,
+            Level::L,
+            Some(Mode::Byte),
+            None
+        )
+        .is_some());
+        assert!(
+            encode_bytes(b"012345678", Version::M4, Level::Q, Some(Mode::Byte), None).is_some()
+        );
     }
 
     #[test]

@@ -46,7 +46,11 @@ fn rotate(packed: &[u8], w: usize, h: usize, deg: usize) -> (Vec<u8>, usize, usi
             if !img.ink(x as u32, y as u32) {
                 continue;
             }
-            let (dx, dy) = if deg == 90 { (h - 1 - y, x) } else { (y, w - 1 - x) };
+            let (dx, dy) = if deg == 90 {
+                (h - 1 - y, x)
+            } else {
+                (y, w - 1 - x)
+            };
             out[dy * bpr + (dx >> 3)] |= 1 << (dx & 7);
         }
     }

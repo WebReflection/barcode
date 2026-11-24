@@ -19,7 +19,12 @@ pub struct Canvas {
 impl Canvas {
     pub fn new(width: u32, height: u32) -> Self {
         let bytes_per_row = (width.div_ceil(8).div_ceil(4) * 4) as usize;
-        Self { width, height, bytes_per_row, data: vec![0u8; bytes_per_row * height as usize] }
+        Self {
+            width,
+            height,
+            bytes_per_row,
+            data: vec![0u8; bytes_per_row * height as usize],
+        }
     }
 
     /// Fill an ink rectangle (clipped).
@@ -42,8 +47,7 @@ impl Canvas {
     pub fn clear(&mut self, x0: u32, y0: u32, w: u32, h: u32) {
         for y in y0..(y0 + h).min(self.height) {
             for x in x0..(x0 + w).min(self.width) {
-                self.data[y as usize * self.bytes_per_row + (x >> 3) as usize] &=
-                    !(1 << (x & 7));
+                self.data[y as usize * self.bytes_per_row + (x >> 3) as usize] &= !(1 << (x & 7));
             }
         }
     }
@@ -87,7 +91,12 @@ pub fn ean13_check_digit(digits12: &str) -> char {
 
 /// Encode a UPC-A symbol (12 ASCII digits, valid check digit) into a canvas.
 /// Returns `Err` instead of panicking on invalid input.
-pub fn try_encode_upca(digits12: &str, narrow: u32, height: u32, quiet: u32) -> Result<Canvas, &'static str> {
+pub fn try_encode_upca(
+    digits12: &str,
+    narrow: u32,
+    height: u32,
+    quiet: u32,
+) -> Result<Canvas, &'static str> {
     if narrow == 0 || height == 0 {
         return Err("invalid render dimensions");
     }
@@ -121,7 +130,11 @@ fn ean13_modules(digits: &[u8; 13]) -> String {
     s.push_str("101"); // start guard
     let parity = EAN_PARITY[digits[0] as usize];
     for d in 0..6 {
-        let table = if parity.as_bytes()[d] == b'L' { &EAN_L } else { &EAN_G };
+        let table = if parity.as_bytes()[d] == b'L' {
+            &EAN_L
+        } else {
+            &EAN_G
+        };
         s.push_str(table[digits[1 + d] as usize]);
     }
     s.push_str("01010"); // center guard
@@ -134,7 +147,12 @@ fn ean13_modules(digits: &[u8; 13]) -> String {
 
 /// Encode a full 13-digit EAN-13 string (must include a valid check digit)
 /// into a canvas. Returns `Err` instead of panicking on invalid input.
-pub fn try_encode_ean13(digits: &str, narrow: u32, height: u32, quiet: u32) -> Result<Canvas, &'static str> {
+pub fn try_encode_ean13(
+    digits: &str,
+    narrow: u32,
+    height: u32,
+    quiet: u32,
+) -> Result<Canvas, &'static str> {
     if narrow == 0 || height == 0 {
         return Err("invalid render dimensions");
     }
@@ -180,28 +198,67 @@ pub fn encode_ean13_raw(digits: &[u8; 13], narrow: u32, height: u32, quiet: u32)
 // ---------------------------------------------------------------------------
 
 const C39: [(&str, &str); 44] = [
-    ("0", "000110100"), ("1", "100100001"), ("2", "001100001"), ("3", "101100000"),
-    ("4", "000110001"), ("5", "100110000"), ("6", "001110000"), ("7", "000100101"),
-    ("8", "100100100"), ("9", "001100100"),
-    ("A", "100001001"), ("B", "001001001"), ("C", "101001000"), ("D", "000011001"),
-    ("E", "100011000"), ("F", "001011000"), ("G", "000001101"), ("H", "100001100"),
-    ("I", "001001100"), ("J", "000011100"), ("K", "100000011"), ("L", "001000011"),
-    ("M", "101000010"), ("N", "000010011"), ("O", "100010010"), ("P", "001010010"),
-    ("Q", "000000111"), ("R", "100000110"), ("S", "001000110"), ("T", "000010110"),
-    ("U", "110000001"), ("V", "011000001"), ("W", "111000000"), ("X", "010010001"),
-    ("Y", "110010000"), ("Z", "011010000"),
-    ("-", "010000101"), (".", "110000100"), (" ", "011000100"), ("$", "010101000"),
-    ("/", "010100010"), ("+", "010001010"), ("%", "000101010"), ("*", "010010100"),
+    ("0", "000110100"),
+    ("1", "100100001"),
+    ("2", "001100001"),
+    ("3", "101100000"),
+    ("4", "000110001"),
+    ("5", "100110000"),
+    ("6", "001110000"),
+    ("7", "000100101"),
+    ("8", "100100100"),
+    ("9", "001100100"),
+    ("A", "100001001"),
+    ("B", "001001001"),
+    ("C", "101001000"),
+    ("D", "000011001"),
+    ("E", "100011000"),
+    ("F", "001011000"),
+    ("G", "000001101"),
+    ("H", "100001100"),
+    ("I", "001001100"),
+    ("J", "000011100"),
+    ("K", "100000011"),
+    ("L", "001000011"),
+    ("M", "101000010"),
+    ("N", "000010011"),
+    ("O", "100010010"),
+    ("P", "001010010"),
+    ("Q", "000000111"),
+    ("R", "100000110"),
+    ("S", "001000110"),
+    ("T", "000010110"),
+    ("U", "110000001"),
+    ("V", "011000001"),
+    ("W", "111000000"),
+    ("X", "010010001"),
+    ("Y", "110010000"),
+    ("Z", "011010000"),
+    ("-", "010000101"),
+    (".", "110000100"),
+    (" ", "011000100"),
+    ("$", "010101000"),
+    ("/", "010100010"),
+    ("+", "010001010"),
+    ("%", "000101010"),
+    ("*", "010010100"),
 ];
 
 fn c39_pattern(ch: char) -> Option<&'static str> {
     let c = ch.to_ascii_uppercase();
-    C39.iter().find(|(k, _)| *k == c.to_string()).map(|(_, v)| *v)
+    C39.iter()
+        .find(|(k, _)| *k == c.to_string())
+        .map(|(_, v)| *v)
 }
 
 /// Encode text (without start/stop; '*' is added) into a canvas.
 /// Returns `Err` instead of panicking on invalid input.
-pub fn try_encode_code39(text: &str, narrow: u32, ratio: f32, height: u32) -> Result<Canvas, &'static str> {
+pub fn try_encode_code39(
+    text: &str,
+    narrow: u32,
+    ratio: f32,
+    height: u32,
+) -> Result<Canvas, &'static str> {
     if text.is_empty() || text.contains('*') {
         return Err("invalid code39 payload");
     }
@@ -217,7 +274,11 @@ pub fn try_encode_code39(text: &str, narrow: u32, ratio: f32, height: u32) -> Re
         let p = c39_pattern(ch).ok_or("invalid code39 payload")?;
         patterns.push(p);
         total_elements = total_elements
-            .checked_add(p.bytes().map(|b| if b == b'1' { wide } else { narrow }).sum::<u32>())
+            .checked_add(
+                p.bytes()
+                    .map(|b| if b == b'1' { wide } else { narrow })
+                    .sum::<u32>(),
+            )
             .and_then(|v| v.checked_add(narrow))
             .ok_or("invalid render dimensions")?;
     }
@@ -261,7 +322,12 @@ const I25: [&str; 10] = [
 
 /// Encode an even-length digit string as ITF/I2of5.
 /// Returns `Err` instead of panicking on invalid input.
-pub fn try_encode_itf(text: &str, narrow: u32, ratio: f32, height: u32) -> Result<Canvas, &'static str> {
+pub fn try_encode_itf(
+    text: &str,
+    narrow: u32,
+    ratio: f32,
+    height: u32,
+) -> Result<Canvas, &'static str> {
     let wide = (narrow as f32 * ratio).round() as u32;
     if narrow == 0 || height == 0 || !(2.0..=3.0).contains(&ratio) || wide <= narrow {
         return Err("invalid render dimensions");
@@ -272,7 +338,11 @@ pub fn try_encode_itf(text: &str, narrow: u32, ratio: f32, height: u32) -> Resul
     }
 
     let elem = |i: usize, pat: &str| -> u32 {
-        if pat.as_bytes()[i] == b'1' { wide } else { narrow }
+        if pat.as_bytes()[i] == b'1' {
+            wide
+        } else {
+            narrow
+        }
     };
 
     let pairs = bytes.len() / 2;
@@ -319,7 +389,6 @@ pub fn try_encode_itf(text: &str, narrow: u32, ratio: f32, height: u32) -> Resul
 pub fn encode_itf(text: &str, narrow: u32, ratio: f32, height: u32) -> Canvas {
     try_encode_itf(text, narrow, ratio, height).expect("encode_itf")
 }
-
 
 // ---------------------------------------------------------------------------
 // Code 128 (ISO/IEC 15417)
@@ -390,13 +459,18 @@ pub fn try_encode_code128(text: &str, module: u32, height: u32) -> Result<Canvas
     if bytes.is_empty() {
         return Err("invalid code128 payload");
     }
-    let use_c = bytes.len() >= 4
-        && bytes.len() % 2 == 0
-        && bytes.iter().all(|b| b.is_ascii_digit());
+    let use_c =
+        bytes.len() >= 4 && bytes.len() % 2 == 0 && bytes.iter().all(|b| b.is_ascii_digit());
 
     // values: start + data
     let (start, mut values): (u8, Vec<u8>) = if use_c {
-        (105, bytes.chunks(2).map(|c| (c[0] - b'0') * 10 + (c[1] - b'0')).collect())
+        (
+            105,
+            bytes
+                .chunks(2)
+                .map(|c| (c[0] - b'0') * 10 + (c[1] - b'0'))
+                .collect(),
+        )
     } else if bytes.iter().all(|&b| (32..=127).contains(&b)) {
         // Fast path: set B alone covers printable ASCII (and DEL).
         (104, bytes.iter().map(|&b| b - b' ').collect())
@@ -405,7 +479,11 @@ pub fn try_encode_code128(text: &str, module: u32, height: u32) -> Result<Canvas
     };
     // check digit: (start + sum i*value_i) mod 103
     let check = ((start as usize
-        + values.iter().enumerate().map(|(i, &v)| (i + 1) * v as usize).sum::<usize>())
+        + values
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| (i + 1) * v as usize)
+            .sum::<usize>())
         % 103) as u8;
     values.push(check);
 
@@ -450,7 +528,6 @@ pub fn encode_code128(text: &str, module: u32, height: u32) -> Canvas {
     try_encode_code128(text, module, height).expect("encode_code128")
 }
 
-
 // ---------------------------------------------------------------------------
 // Code 93 (ANSI/AIM BC5)
 // ---------------------------------------------------------------------------
@@ -494,20 +571,20 @@ fn code93_values(c: char) -> Result<Vec<u8>, &'static str> {
     // base value). Base values: A=10 .. Z=35.
     let u = c as u32;
     let pair = match c {
-        '\u{00}' => (44, 30),                        // (%)U -> NUL
-        '\u{01}'..='\u{1a}' => (43, 10 + (u - 1)),   // ($)A..=Z -> 1..=26
-        '\u{1b}'..='\u{1f}' => (44, 10 + (u - 27)),  // (%)A..=E -> 27..=31
-        '!'..='#' => (45, 10 + (u - 33)),            // (/)A..=C -> 33..=35
-        '&'..='*' => (45, 15 + (u - 38)),            // (/)F..=J -> 38..=42
-        ',' => (45, 21),                             // (/)L
-        ':' => (45, 35),                             // (/)Z
-        ';'..='?' => (44, 15 + (u - 59)),            // (%)F..=J -> 59..=63
-        '@' => (44, 31),                             // (%)V
-        '['..='_' => (44, 20 + (u - 91)),            // (%)K..=O -> 91..=95
-        '`' => (44, 32),                             // (%)W
-        'a'..='z' => (46, 10 + (u - 97)),            // (+)A..=Z -> 97..=122
-        '{'..='~' => (44, 25 + (u - 123)),           // (%)P..=S -> 123..=126
-        '\u{7f}' => (44, 29),                        // (%)T
+        '\u{00}' => (44, 30),                       // (%)U -> NUL
+        '\u{01}'..='\u{1a}' => (43, 10 + (u - 1)),  // ($)A..=Z -> 1..=26
+        '\u{1b}'..='\u{1f}' => (44, 10 + (u - 27)), // (%)A..=E -> 27..=31
+        '!'..='#' => (45, 10 + (u - 33)),           // (/)A..=C -> 33..=35
+        '&'..='*' => (45, 15 + (u - 38)),           // (/)F..=J -> 38..=42
+        ',' => (45, 21),                            // (/)L
+        ':' => (45, 35),                            // (/)Z
+        ';'..='?' => (44, 15 + (u - 59)),           // (%)F..=J -> 59..=63
+        '@' => (44, 31),                            // (%)V
+        '['..='_' => (44, 20 + (u - 91)),           // (%)K..=O -> 91..=95
+        '`' => (44, 32),                            // (%)W
+        'a'..='z' => (46, 10 + (u - 97)),           // (+)A..=Z -> 97..=122
+        '{'..='~' => (44, 25 + (u - 123)),          // (%)P..=S -> 123..=126
+        '\u{7f}' => (44, 29),                       // (%)T
         _ => return Err("invalid code93 payload"),
     };
     Ok(vec![pair.0 as u8, pair.1 as u8])
@@ -527,11 +604,22 @@ pub fn try_encode_code93(text: &str, module: u32, height: u32) -> Result<Canvas,
         values.extend(code93_values(c)?);
     }
     // C check: weights 1..20 from the right-most data char, mod 47.
-    let c = values.iter().rev().enumerate()
-        .map(|(i, &v)| v as usize * (i % 20 + 1)).sum::<usize>() % 47;
+    let c = values
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, &v)| v as usize * (i % 20 + 1))
+        .sum::<usize>()
+        % 47;
     // K check: data + C, the C char weighted 1, data chars 2..15 from the right.
-    let k = (values.iter().rev().enumerate()
-        .map(|(i, &v)| v as usize * ((i + 1) % 15 + 1)).sum::<usize>() + c) % 47;
+    let k = (values
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, &v)| v as usize * ((i + 1) % 15 + 1))
+        .sum::<usize>()
+        + c)
+        % 47;
     values.push(c as u8);
     values.push(k as u8);
 
@@ -571,7 +659,6 @@ pub fn encode_code93(text: &str, module: u32, height: u32) -> Canvas {
     try_encode_code93(text, module, height).expect("encode_code93")
 }
 
-
 // ---------------------------------------------------------------------------
 // Codabar (ANSI/AIM BC3-1995)
 // ---------------------------------------------------------------------------
@@ -603,7 +690,12 @@ pub const CODABAR_CHARS: [(char, [u8; 4], [u8; 3]); 20] = [
 ];
 
 /// Encode `body` as Codabar wrapped in `A`/`B`, returning `Err` on invalid input.
-pub fn try_encode_codabar(body: &str, narrow: u32, ratio: f32, height: u32) -> Result<Canvas, &'static str> {
+pub fn try_encode_codabar(
+    body: &str,
+    narrow: u32,
+    ratio: f32,
+    height: u32,
+) -> Result<Canvas, &'static str> {
     try_encode_codabar_wrapped(body, "A", "B", narrow, ratio, height)
 }
 
@@ -647,7 +739,11 @@ pub fn try_encode_codabar_wrapped(
             .find(|(ch, _, _)| *ch == c)
             .ok_or("invalid codabar payload")?;
         for ei in 0..7 {
-            let w = if ei % 2 == 0 { bars[ei / 2] } else { spaces[(ei - 1) / 2] };
+            let w = if ei % 2 == 0 {
+                bars[ei / 2]
+            } else {
+                spaces[(ei - 1) / 2]
+            };
             widths.push((ei % 2 == 0, if w == 1 { wide } else { narrow }));
         }
         if i + 1 < seq.len() {
@@ -690,7 +786,6 @@ fn is_start_stop_like(c: char) -> bool {
     matches!(c, 'A' | 'B' | 'C' | 'D')
 }
 
-
 // ---------------------------------------------------------------------------
 // EAN-8 (ISO/IEC 15420)
 // ---------------------------------------------------------------------------
@@ -708,7 +803,12 @@ pub fn ean8_check_digit(digits7: &str) -> char {
 
 /// Encode an 8-digit EAN-8 (must include a valid check digit).
 /// Returns `Err` instead of panicking on invalid input.
-pub fn try_encode_ean8(digits: &str, narrow: u32, height: u32, quiet: u32) -> Result<Canvas, &'static str> {
+pub fn try_encode_ean8(
+    digits: &str,
+    narrow: u32,
+    height: u32,
+    quiet: u32,
+) -> Result<Canvas, &'static str> {
     if narrow == 0 || height == 0 {
         return Err("invalid render dimensions");
     }
@@ -735,10 +835,14 @@ pub fn encode_ean8_raw(digits: &str, narrow: u32, height: u32, quiet: u32) -> Ca
     assert!(bytes.iter().all(|b| b.is_ascii_digit()));
     let d: Vec<u8> = bytes.iter().map(|b| b - b'0').collect();
 
-    let l = ["0001101", "0011001", "0010011", "0111101", "0100011", "0110001",
-             "0101111", "0111011", "0110111", "0001011"];
-    let r = ["1110010", "1100110", "1101100", "1000010", "1011100", "1001110",
-             "1010000", "1000100", "1001000", "1110100"];
+    let l = [
+        "0001101", "0011001", "0010011", "0111101", "0100011", "0110001", "0101111", "0111011",
+        "0110111", "0001011",
+    ];
+    let r = [
+        "1110010", "1100110", "1101100", "1000010", "1011100", "1001110", "1010000", "1000100",
+        "1001000", "1110100",
+    ];
     let mut modules = String::from("101");
     for i in 0..4 {
         modules.push_str(l[d[i] as usize]);
@@ -761,14 +865,18 @@ pub fn encode_ean8_raw(digits: &str, narrow: u32, height: u32, quiet: u32) -> Ca
     canvas
 }
 
-
 // ---------------------------------------------------------------------------
 // UPC-E (zero-compressed UPC-A)
 // ---------------------------------------------------------------------------
 
 /// Encode `upc_a` (12 digits, number system 0 or 1, valid check digit) as
 /// its zero-compressed UPC-E symbol. Returns `Err` instead of panicking.
-pub fn try_encode_upce(upc_a: &str, narrow: u32, height: u32, quiet: u32) -> Result<Canvas, &'static str> {
+pub fn try_encode_upce(
+    upc_a: &str,
+    narrow: u32,
+    height: u32,
+    quiet: u32,
+) -> Result<Canvas, &'static str> {
     if narrow == 0 || height == 0 {
         return Err("invalid render dimensions");
     }
@@ -790,8 +898,8 @@ pub fn try_encode_upce(upc_a: &str, narrow: u32, height: u32, quiet: u32) -> Res
         return Err("invalid upce payload");
     }
 
-    let m = &d[1..6];   // manufacturer
-    let p = &d[6..11];  // product
+    let m = &d[1..6]; // manufacturer
+    let p = &d[6..11]; // product
     let u: [u8; 6] = if m[3] == 0 && m[4] == 0 && m[2] <= 2 && p[0] == 0 && p[1] == 0 {
         [m[0], m[1], p[2], p[3], p[4], m[2]]
     } else if m[3] == 0 && m[4] == 0 && p[0] == 0 && p[1] == 0 && p[2] == 0 {
@@ -805,17 +913,25 @@ pub fn try_encode_upce(upc_a: &str, narrow: u32, height: u32, quiet: u32) -> Res
     };
 
     let parity = if d[0] == 0 {
-        ["EEEOOO", "EEOEOO", "EEOOEO", "EEOOOE", "EOEEOO", "EOOEEO", "EOOOEE", "EOEOEO", "EOEOOE", "EOOEOE"]
-            [d[11] as usize]
+        [
+            "EEEOOO", "EEOEOO", "EEOOEO", "EEOOOE", "EOEEOO", "EOOEEO", "EOOOEE", "EOEOEO",
+            "EOEOOE", "EOOEOE",
+        ][d[11] as usize]
     } else {
-        ["OOOEEE", "OOEOEE", "OOEEOE", "OOEEEO", "OEOOEE", "OEEOOE", "OEEEOO", "OEOEOE", "OEOEEO", "OEEOEO"]
-            [d[11] as usize]
+        [
+            "OOOEEE", "OOEOEE", "OOEEOE", "OOEEEO", "OEOOEE", "OEEOOE", "OEEEOO", "OEOEOE",
+            "OEOEEO", "OEEOEO",
+        ][d[11] as usize]
     };
 
-    let l = ["0001101", "0011001", "0010011", "0111101", "0100011", "0110001",
-             "0101111", "0111011", "0110111", "0001011"];
-    let g = ["0100111", "0110011", "0011011", "0100001", "0011101", "0111001",
-             "0000101", "0010001", "0001001", "0010111"];
+    let l = [
+        "0001101", "0011001", "0010011", "0111101", "0100011", "0110001", "0101111", "0111011",
+        "0110111", "0001011",
+    ];
+    let g = [
+        "0100111", "0110011", "0011011", "0100001", "0011101", "0111001", "0000101", "0010001",
+        "0001001", "0010111",
+    ];
     let mut modules = String::with_capacity(51);
     modules.push_str("101");
     for (i, &digit) in u.iter().enumerate() {
@@ -840,7 +956,6 @@ pub fn try_encode_upce(upc_a: &str, narrow: u32, height: u32, quiet: u32) -> Res
 pub fn encode_upce(upc_a: &str, narrow: u32, height: u32, quiet: u32) -> Canvas {
     try_encode_upce(upc_a, narrow, height, quiet).expect("encode_upce")
 }
-
 
 // ---------------------------------------------------------------------------
 // QR Code function patterns (ISO/IEC 18004) — grid + format-info tests.
@@ -893,7 +1008,10 @@ fn qr_function_layer(
     m: u32,
     quiet: u32,
 ) -> Vec<Vec<bool>> {
-    assert!((1..=40).contains(&version), "pattern fixture covers v1..v40");
+    assert!(
+        (1..=40).contains(&version),
+        "pattern fixture covers v1..v40"
+    );
     assert!(ec_bits <= 3 && mask <= 7);
     let n = 17 + 4 * version;
     let dim = (n + 12) * m;
@@ -947,8 +1065,21 @@ fn qr_function_layer(
     let bit = |k: u32| (word >> (14 - k)) & 1;
     // (x, y) = (column, row) — same convention as the decoder's sample().
     let copy1: [(u32, u32); 15] = [
-        (0, 8), (1, 8), (2, 8), (3, 8), (4, 8), (5, 8), (7, 8), (8, 8), (8, 7), (8, 5), (8, 4),
-        (8, 3), (8, 2), (8, 1), (8, 0),
+        (0, 8),
+        (1, 8),
+        (2, 8),
+        (3, 8),
+        (4, 8),
+        (5, 8),
+        (7, 8),
+        (8, 8),
+        (8, 7),
+        (8, 5),
+        (8, 4),
+        (8, 3),
+        (8, 2),
+        (8, 1),
+        (8, 0),
     ];
     let mut copy2 = [(0u32, 0u32); 15];
     for (i, slot) in copy2.iter_mut().take(8).enumerate() {
@@ -1217,7 +1348,10 @@ fn qr_rs_parity(gf: &QrGf, data: &[u8], nn: usize) -> Vec<u8> {
 /// Block structure per (version, raw EC field) — ISO 18004 tables for
 /// versions 1-40. The second group may be (0, 0).
 fn qr_block_plan(version: u32, ec_bits: u8) -> (u32, [(u32, u32); 2]) {
-    assert!((1..=40).contains(&version), "encode_qr covers versions 1-40");
+    assert!(
+        (1..=40).contains(&version),
+        "encode_qr covers versions 1-40"
+    );
     assert!(ec_bits <= 3, "ec_bits is the raw 2-bit field");
     let row = &QR_BLOCKS[(version - 1) as usize][ec_bits as usize];
     (row[0], [(row[1], row[2]), (row[3], row[4])])
@@ -1251,7 +1385,10 @@ fn qr_mask_bit(mask: u8, row: u32, col: u32) -> bool {
 /// placed in the zigzag order with the requested mask applied, and drawn
 /// over the function patterns. Module size `module` px, quiet zone 6 modules.
 pub fn encode_qr(version: u32, ec_bits: u8, mask: u8, data: &[u8], module: u32) -> Canvas {
-    assert!((1..=40).contains(&version), "encode_qr covers versions 1-40");
+    assert!(
+        (1..=40).contains(&version),
+        "encode_qr covers versions 1-40"
+    );
     let n = 17 + 4 * version;
     let m = module;
     let quiet = 6 * m;
@@ -1277,8 +1414,10 @@ pub fn encode_qr(version: u32, ec_bits: u8, mask: u8, data: &[u8], module: u32) 
             off += sz as usize;
         }
     }
-    let parities: Vec<Vec<u8>> =
-        blocks.iter().map(|b| qr_rs_parity(&gf, b, ec_per_block as usize)).collect();
+    let parities: Vec<Vec<u8>> = blocks
+        .iter()
+        .map(|b| qr_rs_parity(&gf, b, ec_per_block as usize))
+        .collect();
 
     // Interleave: round-robin data codewords over all blocks, then parity.
     let mut stream: Vec<u8> = Vec::with_capacity(data_total as usize);
@@ -1362,15 +1501,22 @@ pub fn encode_qr_text_version(
     const ALNUM: &[u8; 45] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
     let bytes = text.as_bytes();
     let numeric = !bytes.is_empty() && bytes.iter().all(|b| b.is_ascii_digit());
-    let alnum = !numeric && text.is_ascii()
-        && bytes.iter().all(|b| ALNUM.contains(b));
+    let alnum = !numeric && text.is_ascii() && bytes.iter().all(|b| ALNUM.contains(b));
 
     // Mode + payload bits; the count-indicator width depends on the
     // version group (v1-9: 10/9/8, v10-26: 12/11/10, v27-40: 14/13/16),
     // so it is computed per candidate version below.
     let (mode, data_bits) = if numeric {
         let n = bytes.len();
-        (1u32, 10 * (n / 3) + match n % 3 { 2 => 7, 1 => 4, _ => 0 })
+        (
+            1u32,
+            10 * (n / 3)
+                + match n % 3 {
+                    2 => 7,
+                    1 => 4,
+                    _ => 0,
+                },
+        )
     } else if alnum {
         let n = bytes.len();
         (2u32, 11 * (n / 2) + 6 * (n % 2))
@@ -1420,14 +1566,24 @@ pub fn encode_qr_text_version(
         match mode {
             1 => {
                 for g in bytes.chunks(3) {
-                    let v: u32 = g.iter().map(|&d| (d - b'0') as u32).fold(0, |a, d| a * 10 + d);
-                    let w = if g.len() == 3 { 10 } else if g.len() == 2 { 7 } else { 4 };
+                    let v: u32 = g
+                        .iter()
+                        .map(|&d| (d - b'0') as u32)
+                        .fold(0, |a, d| a * 10 + d);
+                    let w = if g.len() == 3 {
+                        10
+                    } else if g.len() == 2 {
+                        7
+                    } else {
+                        4
+                    };
                     push(&mut bits, v, w);
                 }
             }
             2 => {
                 for p in bytes.chunks(2) {
-                    let v: u32 = p.iter()
+                    let v: u32 = p
+                        .iter()
                         .map(|&c| ALNUM.iter().position(|&a| a == c).unwrap() as u32)
                         .fold(0, |a, d| a * 45 + d);
                     push(&mut bits, v, if p.len() == 2 { 11 } else { 6 });
@@ -1478,7 +1634,11 @@ pub fn databar_split(v: u64) -> (u32, u32, u32, u32) {
 /// `runs[0]` is the leading paper module; odd indices are ink runs. The sum
 /// must be 96 (1 paper module + 95 symbol modules).
 pub fn databar_omni_canvas(runs: &[u32; 46], module: u32, height: u32, quiet: u32) -> Canvas {
-    assert_eq!(runs.iter().sum::<u32>(), 96, "DataBar omni spans 96 modules");
+    assert_eq!(
+        runs.iter().sum::<u32>(),
+        96,
+        "DataBar omni spans 96 modules"
+    );
     let width = (96 + 2 * quiet) * module;
     let mut canvas = Canvas::new(width, height);
     let mut x = quiet * module;
@@ -1494,7 +1654,11 @@ pub fn databar_omni_canvas(runs: &[u32; 46], module: u32, height: u32, quiet: u3
 /// The linear symbol's 96-module string (m0..m95) as ink booleans.
 /// `runs[0]` is the leading paper module; odd run indices are ink.
 pub fn databar_linear_modules(runs: &[u32; 46]) -> [bool; 96] {
-    assert_eq!(runs.iter().sum::<u32>(), 96, "DataBar omni spans 96 modules");
+    assert_eq!(
+        runs.iter().sum::<u32>(),
+        96,
+        "DataBar omni spans 96 modules"
+    );
     let mut mods = [false; 96];
     let mut m = 0usize;
     for (i, &w) in runs.iter().enumerate() {
@@ -1516,18 +1680,30 @@ pub fn databar_linear_modules(runs: &[u32; 46]) -> [bool; 96] {
 /// 5..45) — zxing round-trip validates scanner acceptance.
 pub fn databar_stacked_canvas(runs: &[u32; 46], module: u32, quiet: u32, omni: bool) -> Canvas {
     let mods = databar_linear_modules(runs);
-    let (top_rows, sep_rows, bot_rows) = if omni { (33u32, 3u32, 33u32) } else { (5, 1, 7) };
+    let (top_rows, sep_rows, bot_rows) = if omni {
+        (33u32, 3u32, 33u32)
+    } else {
+        (5, 1, 7)
+    };
     let total_rows = top_rows + sep_rows + bot_rows;
     let width = (50 + 2 * quiet) * module;
     let mut canvas = Canvas::new(width, total_rows * module);
     // Content bands: top = m0..m49 at rows 0..top_rows; bottom = m46..m95
     // at the rows after the separator zone.
-    let bands = [(0u32, 0u32, top_rows), (46u32, top_rows + sep_rows, bot_rows)];
+    let bands = [
+        (0u32, 0u32, top_rows),
+        (46u32, top_rows + sep_rows, bot_rows),
+    ];
     for (m_lo, y0, rows) in bands {
         for r in 0..rows {
             for m in 0..50usize {
                 if mods[m_lo as usize + m] {
-                    canvas.fill((quiet + m as u32) * module, (y0 + r) * module, module, module);
+                    canvas.fill(
+                        (quiet + m as u32) * module,
+                        (y0 + r) * module,
+                        module,
+                        module,
+                    );
                 }
             }
         }
@@ -1577,7 +1753,9 @@ fn finder_triples(runs: &[u32; 46]) -> ([u32; 3], [u32; 3]) {
         }
         p
     };
-    let e = runs[2..10].iter().copied()
+    let e = runs[2..10]
+        .iter()
+        .copied()
         .chain((15..23).rev().map(|i| runs[i]))
         .chain((36..44).rev().map(|i| runs[i]))
         .chain(runs[23..31].iter().copied());
@@ -1769,7 +1947,11 @@ pub fn databar_ltd_runs(v: u64) -> [u32; 46] {
 /// `runs[0]` is the leading paper module; odd run indices are ink. The sum
 /// must be 74 (1 paper module + 73 symbol modules).
 pub fn databar_ltd_canvas(runs: &[u32; 46], module: u32, height: u32, quiet: u32) -> Canvas {
-    assert_eq!(runs.iter().sum::<u32>(), 74, "DataBar Limited spans 74 modules");
+    assert_eq!(
+        runs.iter().sum::<u32>(),
+        74,
+        "DataBar Limited spans 74 modules"
+    );
     let width = (74 + 2 * quiet) * module;
     let mut canvas = Canvas::new(width, height);
     let mut x = quiet * module;
@@ -1827,9 +2009,9 @@ mod tests {
         // Total codewords per version (ISO 18004): data + EC·blocks, and
         // all four levels of a version must agree on it.
         const TOTALS: [u32; 40] = [
-            26, 44, 70, 100, 134, 172, 196, 242, 292, 346, 404, 466, 532, 581, 655, 733, 815,
-            901, 991, 1085, 1156, 1258, 1364, 1474, 1588, 1706, 1828, 1921, 2051, 2185, 2323,
-            2465, 2611, 2761, 2876, 3034, 3196, 3362, 3532, 3706,
+            26, 44, 70, 100, 134, 172, 196, 242, 292, 346, 404, 466, 532, 581, 655, 733, 815, 901,
+            991, 1085, 1156, 1258, 1364, 1474, 1588, 1706, 1828, 1921, 2051, 2185, 2323, 2465,
+            2611, 2761, 2876, 3034, 3196, 3362, 3532, 3706,
         ];
         for v in 1..=40u32 {
             let mut totals = [0u32; 4];
@@ -1840,7 +2022,10 @@ mod tests {
                 totals[ec as usize] = data + ec_per_block * blocks;
                 assert_eq!(qr_data_codewords(v, ec), data, "v{v} ec{ec} data capacity");
             }
-            assert!(totals.iter().all(|&t| t == totals[0]), "v{v} levels disagree: {totals:?}");
+            assert!(
+                totals.iter().all(|&t| t == totals[0]),
+                "v{v} levels disagree: {totals:?}"
+            );
             assert_eq!(totals[0], TOTALS[(v - 1) as usize], "v{v} total");
         }
     }
@@ -1864,7 +2049,9 @@ mod tests {
         // successful encode IS the check — here just exercise a few shapes.
         for (v, ec) in [(1u32, 1u8), (2, 0), (4, 2), (5, 3), (6, 2)] {
             let len = qr_data_codewords(v, ec) as usize;
-            let data: Vec<u8> = (0..len as u8).map(|i| i.wrapping_mul(31).wrapping_add(5)).collect();
+            let data: Vec<u8> = (0..len as u8)
+                .map(|i| i.wrapping_mul(31).wrapping_add(5))
+                .collect();
             let canvas = encode_qr(v, ec, 3, &data, 4);
             assert!(canvas.width > 0);
         }
@@ -1879,15 +2066,24 @@ mod tests {
     #[test]
     fn databar_split_roundtrips() {
         // V = (((R4*1597 + R3)*2841 + R2)*1597 + R1) must reproduce V.
-        for v in [0u64, 1, 1596, 1597, 4_537_076, 4_537_077, 7_245_711_968,
-                  7_245_711_969, 123_456_789_012, 9_999_999_999_999] {
+        for v in [
+            0u64,
+            1,
+            1596,
+            1597,
+            4_537_076,
+            4_537_077,
+            7_245_711_968,
+            7_245_711_969,
+            123_456_789_012,
+            9_999_999_999_999,
+        ] {
             let (r1, r2, r3, r4) = databar_split(v);
             assert_eq!(r1, (v % 1597) as u32);
             assert_eq!(r2, (v / 1597 % 2841) as u32);
             assert_eq!(r3, (v / 4_537_077 % 1597) as u32);
             assert_eq!(r4, (v / 7_245_711_969) as u32);
-            let recomposed =
-                r1 as u64 + 1597 * (r2 as u64 + 2841 * (r3 as u64 + 1597 * r4 as u64));
+            let recomposed = r1 as u64 + 1597 * (r2 as u64 + 2841 * (r3 as u64 + 1597 * r4 as u64));
             assert_eq!(recomposed, v, "chain round-trip failed for {v}");
         }
     }

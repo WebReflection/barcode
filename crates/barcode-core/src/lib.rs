@@ -124,7 +124,12 @@ impl<'a> BitImage<'a> {
     pub fn new(width: u32, height: u32, data: &'a [u8]) -> Self {
         let bytes_per_row = (width.div_ceil(8).div_ceil(4) * 4) as usize;
         assert!(data.len() >= height as usize * bytes_per_row);
-        Self { width, height, bytes_per_row, data }
+        Self {
+            width,
+            height,
+            bytes_per_row,
+            data,
+        }
     }
 
     #[inline]
@@ -267,7 +272,10 @@ impl<'a> BitImage<'a> {
                 let (x, y) = (dx as f64 - cx, dy as f64 - cy);
                 let sx = (cos * x + sin * y + cx) as isize;
                 let sy = (-sin * x + cos * y + cy) as isize;
-                if sx >= 0 && sy >= 0 && (sx as u32) < self.width && (sy as u32) < self.height
+                if sx >= 0
+                    && sy >= 0
+                    && (sx as u32) < self.width
+                    && (sy as u32) < self.height
                     && self.ink(sx as u32, sy as u32)
                 {
                     data[dy * bpr + (dx >> 3)] |= 1 << (dx & 7);
@@ -337,7 +345,9 @@ fn mirror_row_simd(src: &[u8], dst: &mut [u8]) {
         // keeps i <= j-16 and j <= n == src.len() == dst.len().
         let (ra, rb) = unsafe {
             let a = bitrev16(core::ptr::read_unaligned(src.as_ptr().add(i) as *const v128));
-            let b = bitrev16(core::ptr::read_unaligned(src.as_ptr().add(j - 16) as *const v128));
+            let b = bitrev16(core::ptr::read_unaligned(
+                src.as_ptr().add(j - 16) as *const v128
+            ));
             // Reverse the byte order inside each 16-byte chunk as well:
             // a byte-reversed chunk is the mirrored row chunk.
             (u8x16_swizzle_reverse(a), u8x16_swizzle_reverse(b))
@@ -630,7 +640,14 @@ mod tests {
     fn packed_transforms_match_pixel_reference() {
         // Whole-byte widths take the bit-parallel path; 13/33 keep the
         // partial-byte fallback honest. Tall enough for 16-byte chunks.
-        for &(w, h) in &[(8u32, 1u32), (13, 3), (33, 5), (64, 16), (576, 9), (1056, 2)] {
+        for &(w, h) in &[
+            (8u32, 1u32),
+            (13, 3),
+            (33, 5),
+            (64, 16),
+            (576, 9),
+            (1056, 2),
+        ] {
             let bpr = (w.div_ceil(8).div_ceil(4) * 4) as usize;
             let mut data = vec![0u8; bpr * h as usize];
             let mut seed = 0x9e3779b9u32 ^ w;
@@ -746,7 +763,10 @@ mod tests {
                 assert_eq!(rev.runs, mrow.runs, "reverse runs {w}x{h} y={y}");
                 assert_eq!(rev.offsets, mrow.offsets, "reverse offsets {w}x{h} y={y}");
                 assert_eq!(rev.prefix, mrow.prefix, "reverse prefix {w}x{h} y={y}");
-                assert_eq!(rev.last_ink_run, mrow.last_ink_run, "reverse last_ink {w}x{h} y={y}");
+                assert_eq!(
+                    rev.last_ink_run, mrow.last_ink_run,
+                    "reverse last_ink {w}x{h} y={y}"
+                );
             }
         }
     }

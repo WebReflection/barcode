@@ -39,9 +39,24 @@ fn grabbits_batch() {
             name,
             hits.len(),
             ms,
-            if hits.is_empty() { "  MISS" } else if ms < 100 { "  FAST" } else if ms < 500 { "  ok" } else { "  SLOW" }
+            if hits.is_empty() {
+                "  MISS"
+            } else if ms < 100 {
+                "  FAST"
+            } else if ms < 500 {
+                "  ok"
+            } else {
+                "  SLOW"
+            }
         );
     }
-    eprintln!("== {}/{} decoded, {}/{} fast (<100ms), {}/{} stream-feasible (<500ms)", 
-        names.len() - names.iter().filter(|p| std::fs::read(p).is_err()).count(), 0, fast, names.len(), feasible, names.len());
+    eprintln!(
+        "== {}/{} decoded, {}/{} fast (<100ms), {}/{} stream-feasible (<500ms)",
+        names.len() - names.iter().filter(|p| std::fs::read(p).is_err()).count(),
+        0,
+        fast,
+        names.len(),
+        feasible,
+        names.len()
+    );
 }

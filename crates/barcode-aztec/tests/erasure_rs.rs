@@ -14,7 +14,13 @@ fn window_cell(path: &[(u16, u16)], start: usize, cw: usize, b: usize) -> (u16, 
     path[start + cw * b]
 }
 
-fn render(matrix: &[u8], size: usize, pitch: usize, quiet: usize, smear: &[(usize, usize)]) -> Vec<u8> {
+fn render(
+    matrix: &[u8],
+    size: usize,
+    pitch: usize,
+    quiet: usize,
+    smear: &[(usize, usize)],
+) -> Vec<u8> {
     let dim = (size + 2 * quiet) * pitch;
     let mut dark = vec![0u8; dim * dim];
     for r in 0..size {
@@ -96,8 +102,8 @@ fn stuffed_windows_report_erasure_positions() {
     let d = data_cw as usize;
     let bits = placement::read_bits(&matrix, spec);
     let clean = vec![0u8; cap];
-    let (_, _, er) = placement::parse_stuffed_erasures(&bits, &clean, spec.skip as usize, b, d)
-        .expect("parse");
+    let (_, _, er) =
+        placement::parse_stuffed_erasures(&bits, &clean, spec.skip as usize, b, d).expect("parse");
     assert!(er.is_empty());
 
     // Mark the first bit of the first codeword: exactly codeword 0.

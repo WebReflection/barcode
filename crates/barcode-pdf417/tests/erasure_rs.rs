@@ -77,7 +77,10 @@ fn mixed_unknown_errors_and_erasures_decode() {
     let (_, placeholders) =
         stream::read_exact_tolerant_with_stats(&damaged, sym.width, sym.height).unwrap();
     assert_eq!(placeholders.len(), erased.len());
-    assert_eq!(decode_exact(&damaged, sym.width, sym.height), Some(PAYLOAD.to_vec()));
+    assert_eq!(
+        decode_exact(&damaged, sym.width, sym.height),
+        Some(PAYLOAD.to_vec())
+    );
 }
 
 #[test]
@@ -89,7 +92,13 @@ fn five_damaged_cells_decode_through_known_erasures() {
     let mut damaged = sym.matrix.clone();
     // stream index = row * cols + col; index 0 is the length descriptor
     for idx in 1..=DAMAGED_CELLS {
-        write_cell(&mut damaged, sym.width, band, idx / sym.cols, idx % sym.cols);
+        write_cell(
+            &mut damaged,
+            sym.width,
+            band,
+            idx / sym.cols,
+            idx % sym.cols,
+        );
     }
 
     // The tolerant reader marks exactly those cells.
@@ -108,7 +117,10 @@ fn five_damaged_cells_decode_through_known_erasures() {
     );
 
     // End-to-end: the decoder uses the erasure path and returns the payload.
-    assert_eq!(decode_exact(&damaged, sym.width, sym.height), Some(PAYLOAD.to_vec()));
+    assert_eq!(
+        decode_exact(&damaged, sym.width, sym.height),
+        Some(PAYLOAD.to_vec())
+    );
 }
 
 #[test]
@@ -118,7 +130,13 @@ fn too_many_erasures_still_reject() {
     let mut damaged = sym.matrix.clone();
     // k = 8 parity codewords: nine known erasures are beyond capacity.
     for idx in 1..=9 {
-        write_cell(&mut damaged, sym.width, band, idx / sym.cols, idx % sym.cols);
+        write_cell(
+            &mut damaged,
+            sym.width,
+            band,
+            idx / sym.cols,
+            idx % sym.cols,
+        );
     }
     assert_eq!(decode_exact(&damaged, sym.width, sym.height), None);
 }

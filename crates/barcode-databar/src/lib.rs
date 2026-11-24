@@ -85,10 +85,22 @@ impl DataBarOmniDecoder {
             text: text.to_string(),
             raw: text.as_bytes().to_vec(),
             position: [
-                Point { x: x0 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y1 as f32 },
-                Point { x: x0 as f32, y: y1 as f32 },
+                Point {
+                    x: x0 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y1 as f32,
+                },
+                Point {
+                    x: x0 as f32,
+                    y: y1 as f32,
+                },
             ],
         }
     }
@@ -142,7 +154,11 @@ impl LinearDecoder for DataBarOmniDecoder {
     }
 
     fn vote_count(&self) -> usize {
-        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
+        if self.votes.is_empty() {
+            0
+        } else {
+            self.votes.values().map(|v| v.0).sum()
+        }
     }
 }
 
@@ -157,10 +173,10 @@ fn gtin14_check(body: &[u8; 13]) -> u8 {
     ((10 - sum % 10) % 10) as u8
 }
 
-mod tables;
 mod expanded;
 mod expanded_ai;
 mod expanded_tables;
+mod tables;
 
 pub use expanded::DataBarExpandedDecoder;
 
@@ -223,7 +239,9 @@ fn finders_consistent(runs: &[u32; N_RUNS]) -> bool {
         }
         p
     };
-    let e = runs[2..10].iter().copied()
+    let e = runs[2..10]
+        .iter()
+        .copied()
         .chain((15..23).rev().map(|i| runs[i]))
         .chain((36..44).rev().map(|i| runs[i]))
         .chain(runs[23..31].iter().copied());
@@ -231,9 +249,19 @@ fn finders_consistent(runs: &[u32; N_RUNS]) -> bool {
     let raw = c + u32::from(c >= 8) + u32::from(c >= 72);
     let (cl, cr) = ((raw / 9) as usize, (raw % 9) as usize);
     let fl = tables::FINDER_T4[cl];
-    let fr = [tables::FINDER_T4[cr][2], tables::FINDER_T4[cr][1], tables::FINDER_T4[cr][0]];
-    runs[10..13].iter().zip(fl.iter()).all(|(a, &b)| *a == u32::from(b))
-        && runs[33..36].iter().zip(fr.iter()).all(|(a, &b)| *a == u32::from(b))
+    let fr = [
+        tables::FINDER_T4[cr][2],
+        tables::FINDER_T4[cr][1],
+        tables::FINDER_T4[cr][0],
+    ];
+    runs[10..13]
+        .iter()
+        .zip(fl.iter())
+        .all(|(a, &b)| *a == u32::from(b))
+        && runs[33..36]
+            .iter()
+            .zip(fr.iter())
+            .all(|(a, &b)| *a == u32::from(b))
 }
 
 /// Segment mapping: 46 module runs → GS1 AI(01) element string
@@ -242,10 +270,18 @@ fn decode_omni(runs: &[u32; N_RUNS]) -> Option<String> {
     if !finders_consistent(runs) {
         return None;
     }
-    let Some(r1) = pair3_value(&runs[23..31]) else { return None };
-    let Some(r2) = s2_pair_value(&runs[37..45]) else { return None };
-    let Some(r3) = pair2_value(&runs[15..23]) else { return None };
-    let Some(r4) = s1_pair_value(&runs[1..9]) else { return None };
+    let Some(r1) = pair3_value(&runs[23..31]) else {
+        return None;
+    };
+    let Some(r2) = s2_pair_value(&runs[37..45]) else {
+        return None;
+    };
+    let Some(r3) = pair2_value(&runs[15..23]) else {
+        return None;
+    };
+    let Some(r4) = s1_pair_value(&runs[1..9]) else {
+        return None;
+    };
     // Chain capacity (≈1.0006e13) slightly exceeds the 13-digit domain;
     // forged symbols above it are not DataBar values.
     let v = r1 as u64 + 1597 * (r2 as u64 + 2841 * (r3 as u64 + 1597 * r4 as u64));
@@ -556,10 +592,22 @@ impl DataBarStackedDecoder {
             text: text.to_string(),
             raw: text.as_bytes().to_vec(),
             position: [
-                Point { x: x0 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y1 as f32 },
-                Point { x: x0 as f32, y: y1 as f32 },
+                Point {
+                    x: x0 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y1 as f32,
+                },
+                Point {
+                    x: x0 as f32,
+                    y: y1 as f32,
+                },
             ],
         }
     }
@@ -668,8 +716,7 @@ fn ltd_rank(parts: &[u32; 7], w: u32, mut need_one: bool) -> u64 {
 fn ltd_rank_char(sp: &[u32; 7], br: &[u32; 7]) -> Option<u32> {
     let ss: u32 = sp.iter().sum();
     let sb: u32 = br.iter().sum();
-    let &(_, _, gsum, spw, brw) =
-        LTD_GROUPS.iter().find(|&&(s, b, ..)| s == ss && b == sb)?;
+    let &(_, _, gsum, spw, brw) = LTD_GROUPS.iter().find(|&&(s, b, ..)| s == ss && b == sb)?;
     if sp.iter().any(|&w| w > spw) || br.iter().any(|&w| w > brw) {
         return None;
     }
@@ -799,10 +846,22 @@ impl DataBarLtdDecoder {
             text: text.to_string(),
             raw: text.as_bytes().to_vec(),
             position: [
-                Point { x: x0 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y1 as f32 },
-                Point { x: x0 as f32, y: y1 as f32 },
+                Point {
+                    x: x0 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y1 as f32,
+                },
+                Point {
+                    x: x0 as f32,
+                    y: y1 as f32,
+                },
             ],
         }
     }
@@ -856,7 +915,11 @@ impl LinearDecoder for DataBarLtdDecoder {
     }
 
     fn vote_count(&self) -> usize {
-        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
+        if self.votes.is_empty() {
+            0
+        } else {
+            self.votes.values().map(|v| v.0).sum()
+        }
     }
 }
 
@@ -889,8 +952,11 @@ mod tests {
             let v = 4006381333931u64;
             let runs = barcode_fixtures::databar_omni_runs(v);
             let canvas = barcode_fixtures::databar_stacked_canvas(&runs, 4, 2, omni);
-            let (expect_h, top_rows, sep_rows) =
-                if omni { (69 * 4, 33, 3) } else { (13 * 4, 5, 1) };
+            let (expect_h, top_rows, sep_rows) = if omni {
+                (69 * 4, 33, 3)
+            } else {
+                (13 * 4, 5, 1)
+            };
             assert_eq!(canvas.height, expect_h);
 
             // Oracle geometry: row 0 of the top band and row 0 of the
@@ -899,18 +965,28 @@ mod tests {
             let row_str = |y: u32| -> String {
                 (0..50u32)
                     .map(|m| {
-                        if BitImage::new(canvas.width, canvas.height, &bits)
-                            .ink(2 * 4 + m * 4, y)
-                        { '1' } else { '0' }
+                        if BitImage::new(canvas.width, canvas.height, &bits).ink(2 * 4 + m * 4, y) {
+                            '1'
+                        } else {
+                            '0'
+                        }
                     })
                     .collect()
             };
             assert_eq!(row_str(0), ZINT_TOP, "top band mismatch (omni={omni})");
-            assert_eq!(row_str((top_rows + sep_rows) * 4), ZINT_BOT, "bottom band mismatch");
+            assert_eq!(
+                row_str((top_rows + sep_rows) * 4),
+                ZINT_BOT,
+                "bottom band mismatch"
+            );
 
             let img = BitImage::new(canvas.width, canvas.height, &bits);
             let mut d = DataBarStackedDecoder::new(1);
-            let got = d.decode(&img).into_iter().next().unwrap_or_else(|| panic!("stacked decode failed (omni={omni})"));
+            let got = d
+                .decode(&img)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| panic!("stacked decode failed (omni={omni})"));
             assert_eq!(got.symbology, Symbology::DataBarStacked);
             assert_eq!(got.text, "(01)40063813339314");
         }
@@ -927,8 +1003,7 @@ mod tests {
         const ZINT_MAX: &str =
             "01001111001101101011011111010101011010110001010100001011100011010111100101";
 
-        let cases: [(u64, &str); 2] =
-            [(1, ZINT_1), (1_999_999_999_999, ZINT_MAX)];
+        let cases: [(u64, &str); 2] = [(1, ZINT_1), (1_999_999_999_999, ZINT_MAX)];
         for (v, oracle) in cases {
             let runs = barcode_fixtures::databar_ltd_runs(v);
             assert_eq!(runs.iter().sum::<u32>(), 74);
@@ -952,7 +1027,10 @@ mod tests {
             let got = d.decode(&img).into_iter().next().expect("decode");
             assert_eq!(got.symbology, Symbology::DataBarLimited);
             let body = format!("{v:013}");
-            let want = format!("(01){body}{}", gtin14_check(body.as_bytes().try_into().unwrap()));
+            let want = format!(
+                "(01){body}{}",
+                gtin14_check(body.as_bytes().try_into().unwrap())
+            );
             assert_eq!(got.text, want);
         }
 
@@ -973,17 +1051,16 @@ mod tests {
     fn valid_runs() -> [u32; N_RUNS] {
         let mut runs = [1u32; N_RUNS];
         // Distribute the remaining 50 modules over non-fixed runs.
-        for &i in &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 15, 17, 19, 21,
-                    23, 25, 27, 29, 33, 35, 37, 39, 41, 43] {
+        for &i in &[
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 15, 17, 19, 21, 23, 25, 27, 29, 33, 35, 37, 39, 41,
+            43,
+        ] {
             runs[i] += 2;
         }
         runs
     }
 
-    fn normalize_canvas(
-        canvas: &barcode_fixtures::Canvas,
-        start: usize,
-    ) -> Option<[u32; N_RUNS]> {
+    fn normalize_canvas(canvas: &barcode_fixtures::Canvas, start: usize) -> Option<[u32; N_RUNS]> {
         let bits = canvas.bits();
         let img = BitImage::new(canvas.width, canvas.height, &bits);
         let mut row = RowRuns::with_capacity(128);
@@ -993,7 +1070,12 @@ mod tests {
 
     /// Like `databar_omni_canvas` but without the 96-module sum assert, for
     /// building deliberately corrupt symbols.
-    fn draw_runs(runs: &[u32; 46], module: u32, height: u32, quiet: u32) -> barcode_fixtures::Canvas {
+    fn draw_runs(
+        runs: &[u32; 46],
+        module: u32,
+        height: u32,
+        quiet: u32,
+    ) -> barcode_fixtures::Canvas {
         let width = (96 + 2 * quiet) * module;
         let mut canvas = barcode_fixtures::Canvas::new(width, height);
         let mut x = quiet * module;
@@ -1053,8 +1135,11 @@ mod tests {
             assert_eq!(digits.len(), 14);
             let expect: Vec<u8> = format!("{v:013}").bytes().map(|b| b - b'0').collect();
             assert_eq!(&digits[..13], &expect[..]);
-            let sum: usize = digits.iter().enumerate()
-                .map(|(i, &x)| x as usize * if i % 2 == 0 { 3 } else { 1 }).sum();
+            let sum: usize = digits
+                .iter()
+                .enumerate()
+                .map(|(i, &x)| x as usize * if i % 2 == 0 { 3 } else { 1 })
+                .sum();
             assert_eq!(sum % 10, 0, "bad GTIN-14 check for v={v}: {}", got.text);
         }
     }
@@ -1081,7 +1166,11 @@ mod tests {
                 "(01){body}{}",
                 gtin14_check(body.as_bytes().try_into().unwrap())
             );
-            assert_eq!(decode_omni(&runs), Some(want), "residue round-trip for v={v}");
+            assert_eq!(
+                decode_omni(&runs),
+                Some(want),
+                "residue round-trip for v={v}"
+            );
         };
         for i in 0..tables::S1_KEYS.len() as u64 {
             check(i * 7_245_711_969);

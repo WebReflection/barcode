@@ -11,7 +11,12 @@ fn load_truth() -> Option<Vec<(u8, u16, u16, Vec<u8>)>> {
     for line in text.lines() {
         let t: Vec<&str> = line.split_whitespace().collect();
         if t.first() == Some(&"VERS") {
-            out.push((t[1].parse().unwrap(), t[2].parse().unwrap(), t[3].parse().unwrap(), Vec::new()));
+            out.push((
+                t[1].parse().unwrap(),
+                t[2].parse().unwrap(),
+                t[3].parse().unwrap(),
+                Vec::new(),
+            ));
         } else if t.first() == Some(&"MATRIX") && t.len() > 1 {
             let row: Vec<u8> = t[1].chars().map(|ch| (ch == '#') as u8).collect();
             out.last_mut().unwrap().3.extend(row);
@@ -57,16 +62,30 @@ fn round_trips() {
         "Héllo — ünïcode ✓".as_bytes().to_vec(),
         b"Hello World 0123456789 - mixed case forces byte mode".to_vec(),
         (0u8..=255).collect(),
-        vec![0xffu8; 40],                 // stuffing trigger
-        vec![0x00u8; 40],                 // zero-run stuffing trigger
-        vec![b'x'; 300],                  // multi-B/S split
+        vec![0xffu8; 40], // stuffing trigger
+        vec![0x00u8; 40], // zero-run stuffing trigger
+        vec![b'x'; 300],  // multi-B/S split
         (0u8..=255).cycle().take(2000).collect(),
     ];
     for text in &cases {
         let (spec, matrix) = encode(text).unwrap();
-        let stream = barcode_aztec::read_stream(&matrix, spec)
-            .unwrap_or_else(|| panic!("{:?}: no stream ({}x{})", String::from_utf8_lossy(&text[..text.len().min(12)]), spec.rows, spec.layers));
-        assert_eq!(&barcode_aztec::text::decode_text(&stream), text, "{:?} via {}x{} L{}", String::from_utf8_lossy(&text[..text.len().min(12)]), spec.rows, spec.cols, spec.layers);
+        let stream = barcode_aztec::read_stream(&matrix, spec).unwrap_or_else(|| {
+            panic!(
+                "{:?}: no stream ({}x{})",
+                String::from_utf8_lossy(&text[..text.len().min(12)]),
+                spec.rows,
+                spec.layers
+            )
+        });
+        assert_eq!(
+            &barcode_aztec::text::decode_text(&stream),
+            text,
+            "{:?} via {}x{} L{}",
+            String::from_utf8_lossy(&text[..text.len().min(12)]),
+            spec.rows,
+            spec.cols,
+            spec.layers
+        );
     }
 }
 

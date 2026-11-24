@@ -62,7 +62,11 @@ fn runs_of(profile: &[u8]) -> Vec<Run> {
         while j < profile.len() && (profile[j] != 0) == dark {
             j += 1;
         }
-        runs.push(Run { start: i, len: j - i, dark });
+        runs.push(Run {
+            start: i,
+            len: j - i,
+            dark,
+        });
         i = j;
     }
     runs
@@ -111,7 +115,11 @@ fn multi_module_scale(runs: &[Run], m: usize, half: usize) -> f32 {
         num += x * (right - left);
         den += 2.0 * x * x;
     }
-    if den > 0.0 { num / den } else { runs[m].len as f32 }
+    if den > 0.0 {
+        num / den
+    } else {
+        runs[m].len as f32
+    }
 }
 
 /// Ring parity/length check shared by the row and column passes.
@@ -231,10 +239,19 @@ fn grid_verify(dark: &[u8], w: usize, h: usize, b: &Bullseye) -> bool {
     let half: i32 = if b.full { 6 } else { 4 };
     let ring_ok = |i: i32, j: i32| -> bool {
         let want = (i.abs().max(j.abs())) % 2 == 0;
-        (sample(dark, w, h, b.x + i as f32 * b.scale, b.y + j as f32 * b.scale) != 0) == want
+        (sample(
+            dark,
+            w,
+            h,
+            b.x + i as f32 * b.scale,
+            b.y + j as f32 * b.scale,
+        ) != 0)
+            == want
     };
     let total = (2 * half + 1) * (2 * half + 1);
-    let hit = (-half..=half).map(|i| (-half..=half).filter(|&j| ring_ok(i, j)).count() as i32).sum::<i32>();
+    let hit = (-half..=half)
+        .map(|i| (-half..=half).filter(|&j| ring_ok(i, j)).count() as i32)
+        .sum::<i32>();
     if (hit as f32) < OUTER_MIN * total as f32 {
         return false;
     }
@@ -284,12 +301,7 @@ pub struct FrameMap {
 /// Quadrant offsets (in module units) for the quality samples: inside the
 /// module at camera scales, far enough from the centre that a smeared or
 /// merged module splits the vote.
-const QUAD: [(f32, f32); 4] = [
-    (-0.22, -0.22),
-    (-0.22, 0.22),
-    (0.22, -0.22),
-    (0.22, 0.22),
-];
+const QUAD: [(f32, f32); 4] = [(-0.22, -0.22), (-0.22, 0.22), (0.22, -0.22), (0.22, 0.22)];
 
 impl FrameMap {
     pub fn pixel(&self, dx: i32, dy: i32) -> (f32, f32) {
@@ -336,7 +348,13 @@ impl FrameMap {
             let (qx, qy) = self.pixel_f(dx as f32 + ox, dy as f32 + oy);
             votes += (sample(dark, w, ht, qx, qy) != 0) as usize;
         }
-        let majority = if votes >= 3 { true } else if votes <= 1 { false } else { center };
+        let majority = if votes >= 3 {
+            true
+        } else if votes <= 1 {
+            false
+        } else {
+            center
+        };
         (center, votes == 2 || majority != center)
     }
 
@@ -366,10 +384,22 @@ fn corner_canon(half: i32) -> [([[i32; 2]; 3], [bool; 3]); 4] {
     // [prev, corner, next] module offsets from the core center, per
     // corner, plus the expected dark pattern.
     [
-        ([[-half, -half + 1], [-half, -half], [-half + 1, -half]], [true, true, true]), // TL
-        ([[half - 1, -half], [half, -half], [half, -half + 1]], [false, true, true]),   // TR
-        ([[half, half - 1], [half, half], [half - 1, half]], [true, false, false]),     // BR
-        ([[-half + 1, half], [-half, half], [-half, half - 1]], [false, false, false]), // BL
+        (
+            [[-half, -half + 1], [-half, -half], [-half + 1, -half]],
+            [true, true, true],
+        ), // TL
+        (
+            [[half - 1, -half], [half, -half], [half, -half + 1]],
+            [false, true, true],
+        ), // TR
+        (
+            [[half, half - 1], [half, half], [half - 1, half]],
+            [true, false, false],
+        ), // BR
+        (
+            [[-half + 1, half], [-half, half], [-half, half - 1]],
+            [false, false, false],
+        ), // BL
     ]
 }
 
@@ -445,7 +475,11 @@ mod tests {
         let runs = |lens: &[usize]| -> Vec<Run> {
             lens.iter()
                 .enumerate()
-                .map(|(i, &len)| Run { start: i * 40, len, dark: i % 2 == 0 })
+                .map(|(i, &len)| Run {
+                    start: i * 40,
+                    len,
+                    dark: i % 2 == 0,
+                })
                 .collect()
         };
         let nine = [35, 35, 35, 35, 36, 35, 35, 35, 35];
@@ -537,7 +571,11 @@ mod tests {
         let b = found[0];
         assert!((b.x - cx).abs() < 1.5, "x {} vs {cx}", b.x);
         assert!((b.y - cy).abs() < 1.5, "y {} vs {cy}", b.y);
-        assert!((b.scale - scale).abs() < 0.5, "scale {} vs {scale}", b.scale);
+        assert!(
+            (b.scale - scale).abs() < 0.5,
+            "scale {} vs {scale}",
+            b.scale
+        );
         assert_eq!(b.full, full);
     }
 
@@ -626,7 +664,13 @@ mod tests {
         }
     }
 
-    fn orient_of(matrix: &[u8], size: usize, scale: usize, quiet: usize, full: bool) -> Orientation {
+    fn orient_of(
+        matrix: &[u8],
+        size: usize,
+        scale: usize,
+        quiet: usize,
+        full: bool,
+    ) -> Orientation {
         let f = render(matrix, size, scale, quiet);
         let dim = (size + 2 * quiet) * scale;
         let found = find_bullseyes(&f, dim, dim);
@@ -656,9 +700,27 @@ mod tests {
 
     #[test]
     fn orientation_identity_all_core_sizes() {
-        assert_eq!(orient_of(&m(B_V2), 19, 8, 4, false), Orientation { rotation: 0, mirrored: false });
-        assert_eq!(orient_of(&m(HELLO_V1), 15, 12, 3, false), Orientation { rotation: 0, mirrored: false });
-        assert_eq!(orient_of(&m(FULL23), 23, 10, 5, true), Orientation { rotation: 0, mirrored: false });
+        assert_eq!(
+            orient_of(&m(B_V2), 19, 8, 4, false),
+            Orientation {
+                rotation: 0,
+                mirrored: false
+            }
+        );
+        assert_eq!(
+            orient_of(&m(HELLO_V1), 15, 12, 3, false),
+            Orientation {
+                rotation: 0,
+                mirrored: false
+            }
+        );
+        assert_eq!(
+            orient_of(&m(FULL23), 23, 10, 5, true),
+            Orientation {
+                rotation: 0,
+                mirrored: false
+            }
+        );
     }
 
     #[test]
@@ -672,7 +734,10 @@ mod tests {
                 let o = orient_of(&mat, 19, 8, 4, false);
                 assert_eq!(
                     o,
-                    Orientation { rotation: rot, mirrored },
+                    Orientation {
+                        rotation: rot,
+                        mirrored
+                    },
                     "rot {rot} mirrored {mirrored}"
                 );
             }
@@ -688,7 +753,10 @@ mod tests {
         let ff = render(&m(FULL23), 23, 10, 5);
         let fdim = (23 + 10) * 10;
         let fb = &find_bullseyes(&ff, fdim, fdim)[0];
-        assert_eq!(find_orientation(&ff, fdim, fdim, fb, core_half(false)), None);
+        assert_eq!(
+            find_orientation(&ff, fdim, fdim, fb, core_half(false)),
+            None
+        );
     }
 
     // ---- frame pipeline (crate::read_frame): these tests live here
@@ -705,7 +773,11 @@ mod tests {
             let dim = (size + 2 * quiet) * scale;
             let hits = crate::read_frame(&f, dim, dim);
             assert_eq!(hits.len(), 1, "size {size}");
-            assert_eq!(crate::text::decode_text(&hits[0].stream), want, "size {size}");
+            assert_eq!(
+                crate::text::decode_text(&hits[0].stream),
+                want,
+                "size {size}"
+            );
             // TL corner module center sits half a module into the quiet zone.
             let expect = (quiet as f32 + 0.5) * scale as f32;
             assert!(

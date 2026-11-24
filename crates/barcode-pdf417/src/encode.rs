@@ -30,9 +30,9 @@
 //!   tails; mode switches pad the pair with 29.
 
 use crate::rs::rs_encode;
-use crate::tables::{cluster_of_row, CLUSTER_0, CLUSTER_3, CLUSTER_6};
-use crate::text_tables::{Cell, TEXT_TABLES, ALPHA, LOWER, MIXED, PUNCT};
 use crate::stream::{START, STOP};
+use crate::tables::{cluster_of_row, CLUSTER_0, CLUSTER_3, CLUSTER_6};
+use crate::text_tables::{Cell, ALPHA, LOWER, MIXED, PUNCT, TEXT_TABLES};
 
 pub const DEFAULT_LEVEL: u8 = 2;
 
@@ -63,7 +63,7 @@ fn tc_able(ch: u8) -> bool {
 /// is Ll; P/S from Alpha/Lower/Mixed).
 fn shift_of(sub: usize, target: usize) -> Option<u8> {
     match (sub, target) {
-        (LOWER, ALPHA) => Some(27), // As
+        (LOWER, ALPHA) => Some(27),                                   // As
         (ALPHA, PUNCT) | (LOWER, PUNCT) | (MIXED, PUNCT) => Some(29), // Ps
         _ => None,
     }
@@ -119,7 +119,10 @@ fn tc_push_subs(
 ) -> usize {
     while i < text.len() && tc_able(text[i]) {
         if text[i].is_ascii_digit() {
-            let n = text[i..].iter().take_while(|&&b| b.is_ascii_digit()).count();
+            let n = text[i..]
+                .iter()
+                .take_while(|&&b| b.is_ascii_digit())
+                .count();
             if n >= 5 && !tc_decided.contains(&i) && nc_stop(i, n) {
                 break; // NC candidate: let the caller decide
             }
@@ -285,7 +288,10 @@ pub fn high_level(text: &[u8]) -> Vec<u16> {
         // Numeric: a digit run, decided by the zint-fitted threshold
         // table (see `run_wants_nc`).
         if text[i].is_ascii_digit() {
-            let n = text[i..].iter().take_while(|&&b| b.is_ascii_digit()).count();
+            let n = text[i..]
+                .iter()
+                .take_while(|&&b| b.is_ascii_digit())
+                .count();
             let end = i + n;
             // a single digit straight into a byte segment joins it
             if n == 1 && i == 0 && end < text.len() && !tc_able(text[end]) {
@@ -354,7 +360,10 @@ pub fn high_level(text: &[u8]) -> Vec<u16> {
             }
             if end < text.len() {
                 let next_is_text = if text[end].is_ascii_digit() {
-                    let rn = text[end..].iter().take_while(|&&b| b.is_ascii_digit()).count();
+                    let rn = text[end..]
+                        .iter()
+                        .take_while(|&&b| b.is_ascii_digit())
+                        .count();
                     !run_wants_nc(text, end, rn)
                 } else {
                     true
@@ -368,7 +377,14 @@ pub fn high_level(text: &[u8]) -> Vec<u16> {
             i = end;
             continue;
         }
-        i = tc_push_subs(text, i, &mut subs, &mut sub, &|_p, _n| true, &mut tc_decided);
+        i = tc_push_subs(
+            text,
+            i,
+            &mut subs,
+            &mut sub,
+            &|_p, _n| true,
+            &mut tc_decided,
+        );
     }
     flush_tc(&mut out, &mut subs);
     out
@@ -462,9 +478,8 @@ fn nc_fixed(value: u64, digits: usize) -> Vec<u16> {
 /// latches are legal inside a TC field.
 fn tc_field(s: &str) -> Vec<u16> {
     let val = |c: u8| if c == b' ' { 26u16 } else { (c - b'a') as u16 };
-    let direct = !s.is_empty()
-        && s.len() % 2 == 0
-        && s.bytes().all(|b| b.is_ascii_lowercase() || b == b' ');
+    let direct =
+        !s.is_empty() && s.len() % 2 == 0 && s.bytes().all(|b| b.is_ascii_lowercase() || b == b' ');
     if direct {
         s.as_bytes()
             .chunks(2)
@@ -528,7 +543,11 @@ fn control_block(m: &MacroFields) -> Vec<u16> {
 /// codewords sit between the data and the block (okapi's layout, read
 /// by every decoder): 900 is a no-op latch there, while pads after the
 /// block would be swallowed into the last variable-length field.
-pub fn encode_macro_full(m: &MacroFields, payload: &[u8], level: u8) -> Result<Symbol, EncodeError> {
+pub fn encode_macro_full(
+    m: &MacroFields,
+    payload: &[u8],
+    level: u8,
+) -> Result<Symbol, EncodeError> {
     let data = high_level(payload);
     let cb = control_block(m);
     assemble(data, &cb, level, 0)
@@ -536,7 +555,12 @@ pub fn encode_macro_full(m: &MacroFields, payload: &[u8], level: u8) -> Result<S
 
 /// Geometry + pads + descriptor + ECC + paint. `tail` codewords (a
 /// Macro control block, if any) are laid after the pads.
-fn assemble(data: Vec<u16>, tail: &[u16], level: u8, cols_override: u8) -> Result<Symbol, EncodeError> {
+fn assemble(
+    data: Vec<u16>,
+    tail: &[u16],
+    level: u8,
+    cols_override: u8,
+) -> Result<Symbol, EncodeError> {
     let k = crate::rs::k_for_level(level);
     let s_min = 1 + data.len() + tail.len() + k;
     let mut geo = None;

@@ -21,25 +21,27 @@ fn main() {
     if let Some(path) = std::env::args().nth(1) {
         let text = std::fs::read_to_string(path).unwrap();
         let mut rows: Vec<Vec<u8>> = Vec::new();
-        let flush =
-            |rows: &mut Vec<Vec<u8>>, w: &mut std::io::BufWriter<std::io::StdoutLock>| {
-                if rows.is_empty() {
-                    return;
-                }
-                let h = rows.len();
-                let wd = rows[0].len();
-                let flat: Vec<u8> = rows.iter().flatten().copied().collect();
-                let stream = barcode_pdf417::stream::read_exact(&flat, wd, h).expect("stream");
-                let (desc, data, _) = barcode_pdf417::stream::split_stream(&stream).unwrap();
-                let d = barcode_pdf417::stream::strip_pads(&data[..desc as usize - 1]);
-                writeln!(
-                    w,
-                    "{}",
-                    d.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
-                )
-                .unwrap();
-                rows.clear();
-            };
+        let flush = |rows: &mut Vec<Vec<u8>>, w: &mut std::io::BufWriter<std::io::StdoutLock>| {
+            if rows.is_empty() {
+                return;
+            }
+            let h = rows.len();
+            let wd = rows[0].len();
+            let flat: Vec<u8> = rows.iter().flatten().copied().collect();
+            let stream = barcode_pdf417::stream::read_exact(&flat, wd, h).expect("stream");
+            let (desc, data, _) = barcode_pdf417::stream::split_stream(&stream).unwrap();
+            let d = barcode_pdf417::stream::strip_pads(&data[..desc as usize - 1]);
+            writeln!(
+                w,
+                "{}",
+                d.iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+            .unwrap();
+            rows.clear();
+        };
         for line in text.lines() {
             if line.starts_with("SYM ") {
                 flush(&mut rows, &mut w);
@@ -63,7 +65,11 @@ fn main() {
         writeln!(
             w,
             "{}",
-            stream.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
+            stream
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
         )
         .unwrap();
     }

@@ -85,10 +85,13 @@ fn finds_corner_on_synthetic_l() {
     let map = binarize(&frame);
     let corners = find_corners(&map);
     eprintln!("synthetic corners: {corners:?}");
-    let hit = corners
-        .iter()
-        .find(|c| c.kind == CornerKind::BottomLeft && (c.x - 40.0).abs() <= 6.0 && (c.y - 200.0).abs() <= 6.0);
-    assert!(hit.is_some(), "expected BottomLeft corner near (40,200), got {corners:?}");
+    let hit = corners.iter().find(|c| {
+        c.kind == CornerKind::BottomLeft && (c.x - 40.0).abs() <= 6.0 && (c.y - 200.0).abs() <= 6.0
+    });
+    assert!(
+        hit.is_some(),
+        "expected BottomLeft corner near (40,200), got {corners:?}"
+    );
 }
 
 #[test]
@@ -102,7 +105,10 @@ fn finds_l_corner_on_viva_field_frame() {
     let corners = find_corners(&map);
     eprintln!("viva corners ({}):", corners.len());
     for c in &corners {
-        eprintln!("  ({:>5.1},{:>5.1}) {:?} h={} v={}", c.x, c.y, c.kind, c.hlen, c.vlen);
+        eprintln!(
+            "  ({:>5.1},{:>5.1}) {:?} h={} v={}",
+            c.x, c.y, c.kind, c.hlen, c.vlen
+        );
     }
     let hit = corners.iter().find(|c| {
         c.kind == CornerKind::BottomRight
@@ -231,13 +237,20 @@ fn locates_synthetic_symbol_in_all_four_orientations() {
         let locs = barcode_dm::locator::locate(&frame);
         eprintln!("{kind:?} -> {:?} locations", locs.len());
         for l in &locs {
-            eprintln!("   {}x{} pitch {} payload {:?}", l.rows, l.cols, l.pitch, l.decoded.payload);
+            eprintln!(
+                "   {}x{} pitch {} payload {:?}",
+                l.rows, l.cols, l.pitch, l.decoded.payload
+            );
         }
         let hit = locs.iter().find(|l| {
             l.rows == 12 && l.cols == 36 && l.decoded.payload.as_deref() == Some(TEST_PAYLOAD)
         });
         assert!(hit.is_some(), "{kind:?}: synthetic symbol not located");
-        assert_eq!(hit.unwrap().kind, kind, "{kind:?}: wrong corner kind reported");
+        assert_eq!(
+            hit.unwrap().kind,
+            kind,
+            "{kind:?}: wrong corner kind reported"
+        );
     }
 }
 
@@ -260,13 +273,15 @@ fn locates_viva_field_symbol() {
     }
     // The expected payload lives in a gitignored sidecar next to the
     // fixture; without it, assert the geometry only.
-    let expected = std::fs::read(
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../packages/web/test-codes/field/viva-dm-expected.txt"
-        ),
-    )
-    .map(|v| v.into_iter().filter(|b| !b.is_ascii_whitespace()).collect::<Vec<u8>>())
+    let expected = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../packages/web/test-codes/field/viva-dm-expected.txt"
+    ))
+    .map(|v| {
+        v.into_iter()
+            .filter(|b| !b.is_ascii_whitespace())
+            .collect::<Vec<u8>>()
+    })
     .ok();
     let hit = locs
         .iter()
@@ -296,10 +311,18 @@ fn collect_bars_survives_nonsquare_maps() {
             dark[y * w + x] = (x / 3 + y / 5) % 4 == 0;
         }
     }
-    let map = BinaryMap { w, h, dark: dark.clone() };
+    let map = BinaryMap {
+        w,
+        h,
+        dark: dark.clone(),
+    };
     let _ = locate_binary(&map); // must not panic; hits unlikely and unasserted
-    // And a portrait one.
-    let map_t = BinaryMap { w: h, h: w, dark: dark.iter().map(|&d| !d).collect() };
+                                 // And a portrait one.
+    let map_t = BinaryMap {
+        w: h,
+        h: w,
+        dark: dark.iter().map(|&d| !d).collect(),
+    };
     let _ = locate_binary(&map_t);
 }
 
@@ -343,7 +366,8 @@ fn reassembles_a_creased_finder_leg() {
     let map = binarize(&frame);
     let hits = locate_binary(&map);
     assert!(
-        hits.iter().any(|l| l.decoded.payload.as_deref() == Some(payload)),
+        hits.iter()
+            .any(|l| l.decoded.payload.as_deref() == Some(payload)),
         "no decode from {w}x{h} creased symbol"
     );
 }

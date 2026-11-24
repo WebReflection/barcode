@@ -67,7 +67,17 @@ const fn spec(
     s_r: usize,
     s_c: usize,
 ) -> SymbolSpec {
-    SymbolSpec { rows, cols, data, ecc, blocks, kr, kc, s_r, s_c }
+    SymbolSpec {
+        rows,
+        cols,
+        data,
+        ecc,
+        blocks,
+        kr,
+        kc,
+        s_r,
+        s_c,
+    }
 }
 
 /// All symbol sizes indexed by (rows, cols).
@@ -122,12 +132,27 @@ mod tests {
     fn capacity_matches_mapping_cells() {
         for s in SYMBOLS {
             // region tiling exactly accounts for the inner area
-            assert_eq!((s.rows - 2) - 2 * (s.kr - 1), s.kr * s.s_r, "rows {}", s.rows);
-            assert_eq!((s.cols - 2) - 2 * (s.kc - 1), s.kc * s.s_c, "cols {}", s.cols);
+            assert_eq!(
+                (s.rows - 2) - 2 * (s.kr - 1),
+                s.kr * s.s_r,
+                "rows {}",
+                s.rows
+            );
+            assert_eq!(
+                (s.cols - 2) - 2 * (s.kc - 1),
+                s.kc * s.s_c,
+                "cols {}",
+                s.cols
+            );
             // mapping cells minus the stream bits = the fixed-pattern leftover
             let leftover = s.map_rows() * s.map_cols() - 8 * s.codewords();
-            assert!(leftover == 0 || leftover == 2 || leftover == 4,
-                "leftover {} for {}x{}", leftover, s.rows, s.cols);
+            assert!(
+                leftover == 0 || leftover == 2 || leftover == 4,
+                "leftover {} for {}x{}",
+                leftover,
+                s.rows,
+                s.cols
+            );
             assert_eq!(s.ecc % s.blocks, 0, "uniform nn for {}x{}", s.rows, s.cols);
         }
     }

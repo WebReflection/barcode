@@ -389,10 +389,22 @@ impl Code128Decoder {
             text: text.to_string(),
             raw: text.as_bytes().to_vec(),
             position: [
-                Point { x: x0 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y1 as f32 },
-                Point { x: x0 as f32, y: y1 as f32 },
+                Point {
+                    x: x0 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y1 as f32,
+                },
+                Point {
+                    x: x0 as f32,
+                    y: y1 as f32,
+                },
             ],
         }
     }
@@ -410,12 +422,19 @@ impl LinearDecoder for Code128Decoder {
         }
         debug_assert!(!runs[0].0);
         for start in (1..runs.len()).step_by(2) {
-            let Some(c) = Self::try_from(row, start) else { continue };
+            let Some(c) = Self::try_from(row, start) else {
+                continue;
+            };
             let (count, exact, x0, x1, y0, y1, _score) = {
-                let e = self
-                    .votes
-                    .entry(c.text.clone())
-                    .or_insert((0, 0, c.x_start, c.x_end, y, y, f32::MAX));
+                let e = self.votes.entry(c.text.clone()).or_insert((
+                    0,
+                    0,
+                    c.x_start,
+                    c.x_end,
+                    y,
+                    y,
+                    f32::MAX,
+                ));
                 e.0 += 1;
                 if c.exact {
                     e.1 += 1;
@@ -458,7 +477,11 @@ impl LinearDecoder for Code128Decoder {
     }
 
     fn vote_count(&self) -> usize {
-        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
+        if self.votes.is_empty() {
+            0
+        } else {
+            self.votes.values().map(|v| v.0).sum()
+        }
     }
 }
 
@@ -502,9 +525,11 @@ fn build_text(start: u8, data: &[u8]) -> String {
             // its 96/97 are digit pairs). FNC4 (100 in B, 101 in A): dropped.
             (Set::B, 100) | (Set::A, 101) | (Set::A, 96 | 97) | (Set::B, 96 | 97) => {}
             // data
-            (Set::A, v) if v <= 95 => {
-                out.push(if v < 64 { (v + 32) as char } else { (v - 64) as char })
-            }
+            (Set::A, v) if v <= 95 => out.push(if v < 64 {
+                (v + 32) as char
+            } else {
+                (v - 64) as char
+            }),
             (Set::A, _) => {}
             (Set::B, v) => out.push((v + 32) as char),
             (Set::C, v) => {
@@ -534,7 +559,10 @@ mod tests {
     fn pattern_table_is_well_formed() {
         for (i, p) in PATTERNS.iter().enumerate() {
             assert_eq!(p.iter().sum::<u8>(), 11, "pattern {i} sums to 11");
-            assert!(p.iter().all(|&w| (1..=4).contains(&w)), "pattern {i} widths 1-4");
+            assert!(
+                p.iter().all(|&w| (1..=4).contains(&w)),
+                "pattern {i} widths 1-4"
+            );
         }
         // all distinct
         for i in 0..PATTERNS.len() {
@@ -556,7 +584,10 @@ mod tests {
     fn round_trip_code_c_digits() {
         for module in [2u32, 3, 4] {
             let canvas = barcode_fixtures::encode_code128("80013890976003464630", module, 30);
-            assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some("80013890976003464630"));
+            assert_eq!(
+                decode_canvas(&canvas, 2).as_deref(),
+                Some("80013890976003464630")
+            );
         }
     }
 

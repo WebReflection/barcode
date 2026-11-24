@@ -86,7 +86,11 @@ pub fn find_finder(image: &BitImage) -> Option<Finder> {
                 for top_off in 2..=4u32 {
                     let y0 = y as f32 - top_off as f32 * pitch;
                     if verify_finder(image, x as f32, y0, pitch) {
-                        return Some(Finder { x0: x as f32, y0, pitch });
+                        return Some(Finder {
+                            x0: x as f32,
+                            y0,
+                            pitch,
+                        });
                     }
                 }
             }
@@ -285,7 +289,10 @@ fn sample_rolled(
     let n = size as f64;
     for (k, (u, v)) in [(0.0, 0.0), (n, 0.0), (n, n), (0.0, n)].iter().enumerate() {
         let (x, y) = geom::apply_h(&h, *u, *v);
-        quad[k] = Point { x: x as f32, y: y as f32 };
+        quad[k] = Point {
+            x: x as f32,
+            y: y as f32,
+        };
     }
     (cells, quad)
 }
@@ -371,7 +378,11 @@ fn parse_bits(data_cws: &[u8], spec: &Spec) -> Option<Vec<u8>> {
             pos += tb;
             break;
         }
-        let mode = if mb == 0 { 0u8 } else { take(&mut pos, mb)? as u8 };
+        let mode = if mb == 0 {
+            0u8
+        } else {
+            take(&mut pos, mb)? as u8
+        };
         let cb = count_bits(spec.version, mode)?;
         let count = take(&mut pos, cb)? as usize;
         if count == 0 {
@@ -583,7 +594,10 @@ fn try_orientations(
     // Finder local corners (0,0), (7,0), (7,7), (0,7) for 0°/90°/180°/270° CW.
     let orientations = [
         (origin, theta),
-        ((origin.0 + span * c, origin.1 + span * s), theta + std::f32::consts::FRAC_PI_2),
+        (
+            (origin.0 + span * c, origin.1 + span * s),
+            theta + std::f32::consts::FRAC_PI_2,
+        ),
         (
             (origin.0 + span * (c - s), origin.1 + span * (s + c)),
             theta + std::f32::consts::PI,
@@ -627,7 +641,9 @@ pub fn decode(image: &BitImage) -> Vec<DecodeResult> {
         return out;
     }
     // Fallback axis-aligned sampler when the finder's central block is smeared.
-    if let Some((payload, quad)) = try_orientations(image, (finder.x0, finder.y0), finder.pitch, 0.0) {
+    if let Some((payload, quad)) =
+        try_orientations(image, (finder.x0, finder.y0), finder.pitch, 0.0)
+    {
         let text = barcode_core::payload_text(&payload);
         out.push(DecodeResult {
             symbology: Symbology::QRCodeMicro,

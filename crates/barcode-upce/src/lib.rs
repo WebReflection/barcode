@@ -115,7 +115,9 @@ impl UpceDecoder {
             }
         }
 
-        for f in [1.0f32, 0.92, 1.08, 0.85, 1.15, 0.8, 1.2, 0.95, 1.05, 0.9, 1.1] {
+        for f in [
+            1.0f32, 0.92, 1.08, 0.85, 1.15, 0.8, 1.2, 0.95, 1.05, 0.9, 1.1,
+        ] {
             let n = n_mod * f;
             let lo_g = 0.54 * n;
             let hi_g = 1.46 * n;
@@ -141,7 +143,11 @@ impl UpceDecoder {
             };
             let x_start = row.offsets[start];
             let x_end = row.offsets[start + 32] + runs[start + 32].1;
-            return Some(Candidate { text: digits, x_start, x_end });
+            return Some(Candidate {
+                text: digits,
+                x_start,
+                x_end,
+            });
         }
         None
     }
@@ -205,9 +211,15 @@ impl UpceDecoder {
         }
 
         // Parity pattern -> (number system, UPC-A check digit).
-        let (ns, check) = if let Some(i) = PARITY_NS0.iter().position(|s| s.as_bytes() == parity.as_slice()) {
+        let (ns, check) = if let Some(i) = PARITY_NS0
+            .iter()
+            .position(|s| s.as_bytes() == parity.as_slice())
+        {
             (0u8, i as u8)
-        } else if let Some(i) = PARITY_NS1.iter().position(|s| s.as_bytes() == parity.as_slice()) {
+        } else if let Some(i) = PARITY_NS1
+            .iter()
+            .position(|s| s.as_bytes() == parity.as_slice())
+        {
             (1u8, i as u8)
         } else {
             return None;
@@ -232,10 +244,22 @@ impl UpceDecoder {
             raw: text.as_bytes().to_vec(),
             text,
             position: [
-                Point { x: x0 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y1 as f32 },
-                Point { x: x0 as f32, y: y1 as f32 },
+                Point {
+                    x: x0 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y1 as f32,
+                },
+                Point {
+                    x: x0 as f32,
+                    y: y1 as f32,
+                },
             ],
         }
     }
@@ -261,9 +285,14 @@ impl LinearDecoder for UpceDecoder {
             if lo == 0 || hi > lo * 2 {
                 continue;
             }
-            let Some(c) = Self::try_at(row, start) else { continue };
+            let Some(c) = Self::try_at(row, start) else {
+                continue;
+            };
             let (count, x0, x1, y0, y1) = {
-                let e = self.votes.entry(c.text).or_insert((0, c.x_start, c.x_end, y, y));
+                let e = self
+                    .votes
+                    .entry(c.text)
+                    .or_insert((0, c.x_start, c.x_end, y, y));
                 e.0 += 1;
                 e.1 = e.1.min(c.x_start);
                 e.2 = e.2.max(c.x_end);
@@ -287,7 +316,11 @@ impl LinearDecoder for UpceDecoder {
     }
 
     fn vote_count(&self) -> usize {
-        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
+        if self.votes.is_empty() {
+            0
+        } else {
+            self.votes.values().map(|v| v.0).sum()
+        }
     }
 }
 
@@ -384,7 +417,10 @@ mod tests {
             all.push(p);
         }
         assert_eq!(all.len(), 20);
-        assert_eq!(all.iter().collect::<std::collections::HashSet<_>>().len(), 20);
+        assert_eq!(
+            all.iter().collect::<std::collections::HashSet<_>>().len(),
+            20
+        );
     }
 
     #[test]
@@ -447,8 +483,7 @@ mod tests {
             s.push(if img.ink(x, 0) { '1' } else { '0' });
         }
         assert_eq!(
-            s,
-            "101001110100100110111001001101101011110011001010101",
+            s, "101001110100100110111001001101101011110011001010101",
             "module string mismatch: {s}"
         );
     }

@@ -9,6 +9,7 @@
 /// Cluster 0 bar-space patterns, indexed by codeword value 0..=928.
 /// Source: USS-PDF417 Appendix H Table H-1 (public domain), extracted
 /// and validated (sum 17, cluster formula) — see docs/STATUS.md.
+#[rustfmt::skip]
 pub static CLUSTER_0: [[u8; 8]; 929] = [
     [3, 1, 1, 1, 1, 1, 3, 6],
     [4, 1, 1, 1, 1, 1, 4, 4],
@@ -944,6 +945,7 @@ pub static CLUSTER_0: [[u8; 8]; 929] = [
 /// Cluster 3 bar-space patterns, indexed by codeword value 0..=928.
 /// Source: USS-PDF417 Appendix H Table H-1 (public domain), extracted
 /// and validated (sum 17, cluster formula) — see docs/STATUS.md.
+#[rustfmt::skip]
 pub static CLUSTER_3: [[u8; 8]; 929] = [
     [5, 1, 1, 1, 1, 1, 2, 5],
     [6, 1, 1, 1, 1, 1, 3, 3],
@@ -1879,6 +1881,7 @@ pub static CLUSTER_3: [[u8; 8]; 929] = [
 /// Cluster 6 bar-space patterns, indexed by codeword value 0..=928.
 /// Source: USS-PDF417 Appendix H Table H-1 (public domain), extracted
 /// and validated (sum 17, cluster formula) — see docs/STATUS.md.
+#[rustfmt::skip]
 pub static CLUSTER_6: [[u8; 8]; 929] = [
     [2, 1, 1, 1, 1, 1, 5, 5],
     [3, 1, 1, 1, 1, 1, 6, 3],

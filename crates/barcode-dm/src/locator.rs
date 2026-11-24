@@ -150,7 +150,11 @@ fn collect_bars(map: &BinaryMap, vertical: bool) -> Vec<Bar> {
     // vertical bars (w lines of h pixels), per-row for horizontal ones
     // (h lines of w pixels). (These were swapped once; every fixture was
     // square, so it hid until a non-square camera frame hit it.)
-    let (lines, line_len) = if vertical { (map.w, map.h) } else { (map.h, map.w) };
+    let (lines, line_len) = if vertical {
+        (map.w, map.h)
+    } else {
+        (map.h, map.w)
+    };
     let at = |line: usize, i: usize| -> bool {
         if vertical {
             map.dark[i * map.w + line]
@@ -229,7 +233,12 @@ fn collect_bars(map: &BinaryMap, vertical: bool) -> Vec<Bar> {
                 }
             }
             if !extended {
-                open.push(Raw { a0: line as i32, b0, a1: line as i32 + 1, b1 });
+                open.push(Raw {
+                    a0: line as i32,
+                    b0,
+                    a1: line as i32 + 1,
+                    b1,
+                });
             }
         }
         // Bars that no run extended on this line are complete.
@@ -245,10 +254,22 @@ fn collect_bars(map: &BinaryMap, vertical: bool) -> Vec<Bar> {
     }
     bars.extend(open);
     bars.into_iter()
-        .map(|b| if vertical {
-            Bar { x0: b.a0, y0: b.b0, x1: b.a1, y1: b.b1 }
-        } else {
-            Bar { x0: b.b0, y0: b.a0, x1: b.b1, y1: b.a1 }
+        .map(|b| {
+            if vertical {
+                Bar {
+                    x0: b.a0,
+                    y0: b.b0,
+                    x1: b.a1,
+                    y1: b.b1,
+                }
+            } else {
+                Bar {
+                    x0: b.b0,
+                    y0: b.a0,
+                    x1: b.b1,
+                    y1: b.a1,
+                }
+            }
         })
         .collect()
 }
@@ -262,7 +283,6 @@ pub fn debug_bars(map: &BinaryMap, vertical: bool) -> Vec<Bar> {
 pub fn debug_corners(map: &BinaryMap) -> Vec<Corner> {
     find_corners(map)
 }
-
 
 /// Join collinear fragments of the same stroke.
 ///
@@ -380,9 +400,10 @@ pub fn find_corners(map: &BinaryMap) -> Vec<Corner> {
     // several fragment corners for the same L)
     let mut out: Vec<Corner> = Vec::new();
     for c in raw {
-        match out.iter_mut().find(|e| {
-            (e.x - c.x).abs() <= DEDUP_RADIUS && (e.y - c.y).abs() <= DEDUP_RADIUS
-        }) {
+        match out
+            .iter_mut()
+            .find(|e| (e.x - c.x).abs() <= DEDUP_RADIUS && (e.y - c.y).abs() <= DEDUP_RADIUS)
+        {
             Some(e) => {
                 e.x = e.x.min(c.x);
                 e.y = e.y.min(c.y);
@@ -466,12 +487,7 @@ struct GridSample {
 /// Quadrant offsets (in module units) for the quality samples: inside the
 /// module at every supported pitch (4..16 px), far enough from the centre
 /// that a smeared/merged module splits the vote.
-const QUAD: [(f32, f32); 4] = [
-    (-0.22, -0.22),
-    (-0.22, 0.22),
-    (0.22, -0.22),
-    (0.22, 0.22),
-];
+const QUAD: [(f32, f32); 4] = [(-0.22, -0.22), (-0.22, 0.22), (0.22, -0.22), (0.22, 0.22)];
 
 /// Sample the canonical-ordered module matrix for one grid hypothesis.
 /// Returns None when the finder L is not mostly dark (cheap reject before
@@ -534,12 +550,21 @@ fn sample_grid_impl(
                 }
                 // 2-2 is a true tie; a centre that disagrees with a 3-1
                 // majority is a misregistered/smeared module too.
-                let majority = if votes >= 3 { true } else if votes <= 1 { false } else { center };
+                let majority = if votes >= 3 {
+                    true
+                } else if votes <= 1 {
+                    false
+                } else {
+                    center
+                };
                 u[r * cols + c] = ((votes == 2) || (majority != center)) as u8;
             }
         }
     }
-    Some(GridSample { modules: m, uncertain: u })
+    Some(GridSample {
+        modules: m,
+        uncertain: u,
+    })
 }
 
 fn sample_grid(
@@ -756,9 +781,7 @@ pub fn locate_binary_budget_corners(map: &BinaryMap, budget: u64, limit: usize) 
         }
         if let Some(loc) = found {
             let fresh = !out.iter().any(|l| {
-                l.rows == loc.rows
-                    && l.cols == loc.cols
-                    && l.decoded.payload == loc.decoded.payload
+                l.rows == loc.rows && l.cols == loc.cols && l.decoded.payload == loc.decoded.payload
             });
             if fresh {
                 out.push(loc);
@@ -875,9 +898,7 @@ fn try_corner_fast(map: &BinaryMap, corner: &Corner, budget: &mut u64) -> Option
             pitches.push(n * step);
             n += 1.0;
         }
-        pitches.sort_by(|a, b| {
-            (a - p_est).abs().partial_cmp(&(b - p_est).abs()).unwrap()
-        });
+        pitches.sort_by(|a, b| (a - p_est).abs().partial_cmp(&(b - p_est).abs()).unwrap());
         for pitch in pitches {
             // Probe the finder L near the corner (fragment bar ends sit a
             // few px off the true origin, so probe the offset range's
@@ -887,7 +908,18 @@ fn try_corner_fast(map: &BinaryMap, corner: &Corner, budget: &mut u64) -> Option
             let mut probe_ok = false;
             'probe: for &pdx in &[-OFFSET_RANGE, 0.0, OFFSET_RANGE] {
                 for &pdy in &[-OFFSET_RANGE, 0.0, OFFSET_RANGE] {
-                    if sample_grid(map, corner.kind, rows, cols, corner.x + pdx, corner.y + pdy, pitch, 0.0).is_some() {
+                    if sample_grid(
+                        map,
+                        corner.kind,
+                        rows,
+                        cols,
+                        corner.x + pdx,
+                        corner.y + pdy,
+                        pitch,
+                        0.0,
+                    )
+                    .is_some()
+                    {
                         probe_ok = true;
                         break 'probe;
                     }
@@ -910,7 +942,11 @@ fn try_corner_fast(map: &BinaryMap, corner: &Corner, budget: &mut u64) -> Option
                 let (ct, st) = (theta.cos(), theta.sin());
                 let (rrx, rry) = (rd.0 * ct - rd.1 * st, rd.0 * st + rd.1 * ct);
                 let (crx, cry) = (cd.0 * ct - cd.1 * st, cd.0 * st + cd.1 * ct);
-                let (hd, vd) = if rows_on_h { (rows as f32, cols as f32) } else { (cols as f32, rows as f32) };
+                let (hd, vd) = if rows_on_h {
+                    (rows as f32, cols as f32)
+                } else {
+                    (cols as f32, rows as f32)
+                };
                 if (hl - hd * pitch).abs() < 1.5 * pitch && (vl - vd * pitch).abs() < 1.5 * pitch {
                     // The corner is only a coarse estimate, so check the
                     // dashed edges at the same offsets the sweep will try.
@@ -1065,9 +1101,7 @@ pub fn locate_binary_fast_budget(map: &BinaryMap, budget: u64) -> Vec<Location> 
         if found.is_some() {
             let loc = found.unwrap();
             let fresh = !out.iter().any(|l| {
-                l.rows == loc.rows
-                    && l.cols == loc.cols
-                    && l.decoded.payload == loc.decoded.payload
+                l.rows == loc.rows && l.cols == loc.cols && l.decoded.payload == loc.decoded.payload
             });
             if fresh {
                 out.push(loc);
@@ -1089,12 +1123,8 @@ impl Location {
         let (crx, cry) = rot(cd);
         let at = |fr: f32, fc: f32| {
             (
-                self.corner.0
-                    + (fr - self.rows as f32) * self.pitch * rrx
-                    + fc * self.pitch * crx,
-                self.corner.1
-                    + (fr - self.rows as f32) * self.pitch * rry
-                    + fc * self.pitch * cry,
+                self.corner.0 + (fr - self.rows as f32) * self.pitch * rrx + fc * self.pitch * crx,
+                self.corner.1 + (fr - self.rows as f32) * self.pitch * rry + fc * self.pitch * cry,
             )
         };
         [

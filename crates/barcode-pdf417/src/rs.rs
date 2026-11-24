@@ -145,7 +145,12 @@ fn solve_linear(mat: &[Vec<u32>], rhs: &[u32]) -> Option<Vec<u32>> {
     let mut a: Vec<Vec<u32>> = mat
         .iter()
         .zip(rhs)
-        .map(|(row, &r)| row.iter().chain(std::iter::once(&r)).map(|&v| v % 929).collect())
+        .map(|(row, &r)| {
+            row.iter()
+                .chain(std::iter::once(&r))
+                .map(|&v| v % 929)
+                .collect()
+        })
         .collect();
     for col in 0..n {
         let piv = (col..n).find(|&r| a[r][col] != 0)?;
@@ -449,7 +454,10 @@ mod tests {
             damaged[p] = (damaged[p] + 7) % 929;
         }
         assert!(!rs_valid(&damaged, 8));
-        assert!(rs_correct(&damaged, 8).is_none(), "4 unknown errors exceed (k-2)/2 = 3");
+        assert!(
+            rs_correct(&damaged, 8).is_none(),
+            "4 unknown errors exceed (k-2)/2 = 3"
+        );
         let (fixed, fixes) = rs_correct_mixed(&damaged, 8, &erased).expect("2 erasures + 2 errors");
         assert_eq!(fixed, good);
         assert_eq!(fixes.len(), 4);
@@ -493,6 +501,9 @@ mod tests {
 
     #[test]
     fn k_doubles_per_level() {
-        assert_eq!((0..=8).map(k_for_level).collect::<Vec<_>>(), vec![2, 4, 8, 16, 32, 64, 128, 256, 512]);
+        assert_eq!(
+            (0..=8).map(k_for_level).collect::<Vec<_>>(),
+            vec![2, 4, 8, 16, 32, 64, 128, 256, 512]
+        );
     }
 }

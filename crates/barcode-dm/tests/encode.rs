@@ -36,7 +36,11 @@ fn decodes_zint_bitmaps_every_size() {
     for ((rows, cols), _, matrix) in &truth {
         let dec = decode_upright(matrix, *rows, *cols)
             .unwrap_or_else(|| panic!("{rows}x{cols}: zint bitmap failed to decode"));
-        assert_eq!(dec.payload.as_deref(), Some(b"A".as_slice()), "{rows}x{cols}");
+        assert_eq!(
+            dec.payload.as_deref(),
+            Some(b"A".as_slice()),
+            "{rows}x{cols}"
+        );
     }
 }
 
@@ -60,7 +64,11 @@ fn painter_matches_zint_every_size() {
                 .take(12)
                 .map(|(i, (a, b))| (i / cols, i % cols, *a, *b))
                 .collect();
-            panic!("{rows}x{cols}: {} cell diffs, first: {:?}", diffs.len(), diffs);
+            panic!(
+                "{rows}x{cols}: {} cell diffs, first: {:?}",
+                diffs.len(),
+                diffs
+            );
         }
         checked += 1;
     }
@@ -99,11 +107,21 @@ fn paint_stream(spec: &tables::SymbolSpec, stream: &[u8]) -> Vec<u8> {
     }
     for i in 1..spec.kr {
         let y = i * spec.s_r + 2 * (i - 1) + 1;
-        for j in 0..c { m[y * c + j] = 1; if j % 2 == 0 { m[(y + 1) * c + j] = 1; } }
+        for j in 0..c {
+            m[y * c + j] = 1;
+            if j % 2 == 0 {
+                m[(y + 1) * c + j] = 1;
+            }
+        }
     }
     for i in 1..spec.kc {
         let x = i * spec.s_c + 2 * (i - 1) + 1;
-        for j in 0..r { if j % 2 == 1 { m[j * c + x] = 1; } m[j * c + x + 1] = 1; }
+        for j in 0..r {
+            if j % 2 == 1 {
+                m[j * c + x] = 1;
+            }
+            m[j * c + x + 1] = 1;
+        }
     }
     m
 }
@@ -139,9 +157,16 @@ fn a_is_byte_identical_to_zint() {
         eprintln!("skipping: testdata/dm_truth.txt not present");
         return;
     };
-    let (_, _, matrix) = truth.iter().find(|((r, c), _, _)| (*r, *c) == (10, 10)).unwrap();
+    let (_, _, matrix) = truth
+        .iter()
+        .find(|((r, c), _, _)| (*r, *c) == (10, 10))
+        .unwrap();
     let enc = encode::encode(b"A").unwrap();
-    assert_eq!((enc.spec.rows, enc.spec.cols), (10, 10), "smallest size choice");
+    assert_eq!(
+        (enc.spec.rows, enc.spec.cols),
+        (10, 10),
+        "smallest size choice"
+    );
     assert_eq!(enc.matrix, *matrix, "10x10 'A' matrix");
 }
 

@@ -3,9 +3,9 @@
 
 #[cfg(test)]
 mod upside_down_tests {
-    use crate::*;
     use crate::masks::*;
     use crate::render::*;
+    use crate::*;
     use barcode_fixtures::Canvas;
 
     /// The render-side bytes builder round-trips through the tiers for
@@ -14,13 +14,20 @@ mod upside_down_tests {
     fn fixture_bytes_canvas_round_trips() {
         let data: Vec<u8> = vec![0x00, 0x01, 0x7F, 0x80, 0xFF, 0xFE, b'#'];
         for sym in ["qrcode", "microqr", "datamatrix", "aztec", "pdf417"] {
-            let canvas =
-                fixture_bytes_canvas(sym, &data, 4, EncOptions::default()).unwrap_or_else(|e| panic!("{sym}: {e:?}"));
+            let canvas = fixture_bytes_canvas(sym, &data, 4, EncOptions::default())
+                .unwrap_or_else(|e| panic!("{sym}: {e:?}"));
             let bits = canvas.bits();
             let img = BitImage::new(canvas.width, canvas.height, &bits);
             let mut sc = BarcodeScanner::new();
             let hits = sc.scan_tiered(&img, &Tiers::all(), false, 0);
-            assert_eq!(hits.len(), 1, "{sym}: expected exactly one hit, got {:?}", hits.iter().map(|h| (&h.text, h.raw.len())).collect::<Vec<_>>());
+            assert_eq!(
+                hits.len(),
+                1,
+                "{sym}: expected exactly one hit, got {:?}",
+                hits.iter()
+                    .map(|h| (&h.text, h.raw.len()))
+                    .collect::<Vec<_>>()
+            );
             assert_eq!(hits[0].raw, data, "{sym}: raw mismatch");
         }
     }
@@ -64,7 +71,7 @@ mod upside_down_tests {
             ("codabar", "12x34"),
             ("databar", "123"),
             ("databar", "123456789012a"),
-            ("databarltd", "4006381333931"), // indicator >= 2
+            ("databarltd", "4006381333931"),  // indicator >= 2
             ("databarstk", "12345678901234"), // 14 digits (> 10^13)
             ("databarstackomni", "not-digits"),
             ("databarexpanded", ""),
@@ -165,7 +172,9 @@ mod upside_down_tests {
             assert!(
                 hits.iter().any(|r| r.text == text),
                 "short {text:?}: got {:?}",
-                hits.iter().map(|r| (&r.symbology, &r.text)).collect::<Vec<_>>(),
+                hits.iter()
+                    .map(|r| (&r.symbology, &r.text))
+                    .collect::<Vec<_>>(),
             );
         }
     }
@@ -189,7 +198,9 @@ mod upside_down_tests {
             assert!(
                 hits.iter().any(|r| r.text == text),
                 "control-byte round-trip {text:?}: got {:?}",
-                hits.iter().map(|r| (&r.symbology, &r.text)).collect::<Vec<_>>(),
+                hits.iter()
+                    .map(|r| (&r.symbology, &r.text))
+                    .collect::<Vec<_>>(),
             );
         }
     }
@@ -263,7 +274,10 @@ mod upside_down_tests {
         // The formats filter keeps the tier addressable.
         let mut sc3 = BarcodeScanner::new();
         let only = parse_formats(&["databarltd".into()]).unwrap();
-        assert!(sc3.scan_tiered(&img, &only, false, 0).iter().any(|r| r.text == want));
+        assert!(sc3
+            .scan_tiered(&img, &only, false, 0)
+            .iter()
+            .any(|r| r.text == want));
         let off = parse_formats(&["ean13".into()]).unwrap();
         assert!(sc3.scan_tiered(&img, &off, false, 0).is_empty());
     }
@@ -272,10 +286,8 @@ mod upside_down_tests {
     fn expanded_canvas(mods: &str) -> barcode_fixtures::Canvas {
         let scale = 3;
         let margin = 6;
-        let mut canvas = barcode_fixtures::Canvas::new(
-            (mods.len() as u32 + 2 * margin) * scale,
-            3 * scale,
-        );
+        let mut canvas =
+            barcode_fixtures::Canvas::new((mods.len() as u32 + 2 * margin) * scale, 3 * scale);
         for (i, ch) in mods.chars().enumerate() {
             if ch == '1' {
                 canvas.fill((margin + i as u32) * scale, 0, scale, 3 * scale);
@@ -332,12 +344,17 @@ mod upside_down_tests {
                     r.symbology == barcode_core::Symbology::DataBarExpanded && r.text == want
                 }),
                 "{name}: got {:?}",
-                hits.iter().map(|r| (&r.symbology, &r.text)).collect::<Vec<_>>(),
+                hits.iter()
+                    .map(|r| (&r.symbology, &r.text))
+                    .collect::<Vec<_>>(),
             );
 
             // The formats filter keeps the tier addressable and excludes it.
             let only = parse_formats(&["databarexpanded".into()]).unwrap();
-            assert!(sc.scan_tiered(&img, &only, false, 0).iter().any(|r| r.text == want));
+            assert!(sc
+                .scan_tiered(&img, &only, false, 0)
+                .iter()
+                .any(|r| r.text == want));
             let off = parse_formats(&["ean13".into()]).unwrap();
             assert!(sc.scan_tiered(&img, &off, false, 0).is_empty());
         }
@@ -373,7 +390,9 @@ mod upside_down_tests {
             assert!(
                 hits.iter().any(|r| r.text == text),
                 "{text}: got {:?}",
-                hits.iter().map(|r| (&r.symbology, &r.text)).collect::<Vec<_>>(),
+                hits.iter()
+                    .map(|r| (&r.symbology, &r.text))
+                    .collect::<Vec<_>>(),
             );
         }
     }
@@ -409,7 +428,7 @@ mod upside_down_tests {
                 "CODE 39",
                 barcode_fixtures::encode_code39("CODE 39", 4, 2.0, 80),
             )
-            .into_text(),
+                .into_text(),
             (
                 "12345670".into(),
                 barcode_fixtures::encode_ean8("12345670", 4, 80, 4),
@@ -418,7 +437,7 @@ mod upside_down_tests {
                 "1234567895".into(),
                 barcode_fixtures::encode_itf("1234567895", 4, 2.0, 80),
             )
-            .into_text(),
+                .into_text(),
             (
                 "9501101531000".into(),
                 barcode_fixtures::encode_ean13("9501101531000", 4, 80, 4),
@@ -456,7 +475,9 @@ mod upside_down_tests {
             assert!(
                 hits.iter().any(|r| r.text == want),
                 "upside-down decode of {want:?}: got {:?}",
-                hits.iter().map(|r| (&r.symbology, &r.text)).collect::<Vec<_>>(),
+                hits.iter()
+                    .map(|r| (&r.symbology, &r.text))
+                    .collect::<Vec<_>>(),
             );
             // The hit must sit inside the frame (x coordinates mirrored back).
             for r in hits.iter().filter(|r| r.text == want) {
@@ -485,10 +506,16 @@ mod upside_down_tests {
         assert_eq!(hit.text, "A938261563");
 
         let only32 = parse_formats(&["code32".into()]).unwrap();
-        assert!(sc.scan_tiered(&img, &only32, false, 0).iter().any(|r| r.text == "A938261563"));
+        assert!(sc
+            .scan_tiered(&img, &only32, false, 0)
+            .iter()
+            .any(|r| r.text == "A938261563"));
 
         let only39 = parse_formats(&["code39".into()]).unwrap();
-        assert!(sc.scan_tiered(&img, &only39, false, 0).iter().any(|r| r.text == "VYTH1V"));
+        assert!(sc
+            .scan_tiered(&img, &only39, false, 0)
+            .iter()
+            .any(|r| r.text == "VYTH1V"));
     }
 
     trait IntoText {
@@ -524,14 +551,26 @@ mod formats_tests {
 
         // QR canvas, 1D-only formats: the QR tier is off — nothing.
         let one_d = parse_formats(&["ean13".into(), "code128".into()]).unwrap();
-        assert_eq!(count(&sc.scan_tiered(&qr_img, &one_d, false, 0)), 0, "1D filter must silence the QR tier");
+        assert_eq!(
+            count(&sc.scan_tiered(&qr_img, &one_d, false, 0)),
+            0,
+            "1D filter must silence the QR tier"
+        );
 
         // QR canvas, qrcode-only: decodes.
         let qr_only = parse_formats(&["qr".into()]).unwrap();
-        assert_eq!(count(&sc.scan_tiered(&qr_img, &qr_only, false, 0)), 1, "qrcode filter must keep the QR tier");
+        assert_eq!(
+            count(&sc.scan_tiered(&qr_img, &qr_only, false, 0)),
+            1,
+            "qrcode filter must keep the QR tier"
+        );
 
         // EAN-13 canvas, qrcode-only: nothing (and no junk 1D votes).
-        assert_eq!(count(&sc.scan_tiered(&ean_img, &qr_only, false, 0)), 0, "qrcode filter must not fire on 1D input");
+        assert_eq!(
+            count(&sc.scan_tiered(&ean_img, &qr_only, false, 0)),
+            0,
+            "qrcode filter must not fire on 1D input"
+        );
 
         // EAN-13 canvas, ean13-only: decodes.
         let ean_only = parse_formats(&["ean13".into()]).unwrap();
@@ -605,7 +644,11 @@ mod formats_tests {
 
         // 1D-only filter: the DM tier is off - nothing.
         let one_d = parse_formats(&["ean13".into()]).unwrap();
-        assert_eq!(count(&sc.scan_tiered(&img, &one_d, false, 0)), 0, "1D filter must silence the DM tier");
+        assert_eq!(
+            count(&sc.scan_tiered(&img, &one_d, false, 0)),
+            0,
+            "1D filter must silence the DM tier"
+        );
 
         // all tiers: DM hits 2D-first.
         assert_eq!(count(&sc.scan_tiered(&img, &Tiers::all(), false, 0)), 1);
@@ -670,11 +713,19 @@ mod formats_tests {
         assert_eq!(hits[0].symbology, barcode_core::Symbology::Aztec);
         assert_eq!(hits[0].text, "B");
         // quad: TL corner module center ≈ half a module into the quiet zone.
-        assert!((hits[0].position[0].x - 36.0).abs() < 1.0, "{:?}", hits[0].position);
+        assert!(
+            (hits[0].position[0].x - 36.0).abs() < 1.0,
+            "{:?}",
+            hits[0].position
+        );
 
         // 1D-only filter: the Aztec tier is off - nothing.
         let one_d = parse_formats(&["ean13".into()]).unwrap();
-        assert_eq!(count(&sc.scan_tiered(&img, &one_d, false, 0)), 0, "1D filter must silence the Aztec tier");
+        assert_eq!(
+            count(&sc.scan_tiered(&img, &one_d, false, 0)),
+            0,
+            "1D filter must silence the Aztec tier"
+        );
 
         // All tiers: still exactly one hit (QR/DM tiers find nothing here).
         assert_eq!(count(&sc.scan_tiered(&img, &Tiers::all(), false, 0)), 1);
@@ -687,7 +738,10 @@ mod formats_tests {
                 rot[c][size - 1 - r] = (AZTEC_B[r].as_bytes()[c] == b'#') as u8;
             }
         }
-        let rot_rows: Vec<String> = rot.iter().map(|r| r.iter().map(|&b| if b == 1 { '#' } else { '.' }).collect()).collect();
+        let rot_rows: Vec<String> = rot
+            .iter()
+            .map(|r| r.iter().map(|&b| if b == 1 { '#' } else { '.' }).collect())
+            .collect();
         let rot_refs: Vec<&str> = rot_rows.iter().map(|s| s.as_str()).collect();
         let (rmask, rw, rh) = draw_aztec(&rot_refs, 8, 4);
         let rimg = BitImage::new(rw, rh, &rmask);
@@ -699,9 +753,9 @@ mod formats_tests {
 
 #[cfg(test)]
 mod oracle_fixture_tests {
-    use crate::*;
     use crate::masks::*;
     use crate::render::*;
+    use crate::*;
     use barcode_fixtures::Canvas;
 
     /// Every banked oracle specimen must decode through the production
@@ -743,7 +797,12 @@ mod oracle_fixture_tests {
                 ));
             }
         }
-        assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+        assert!(
+            failures.is_empty(),
+            "{} failures:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
     }
 
     /// The Micro QR fixture arm's tier pick must produce a decodable symbol.
@@ -769,7 +828,9 @@ mod frame_dump_tests {
     /// Dump layout: u32 w, h, bytes_per_row, flags LE, then mask bytes.
     #[test]
     fn decode_dump_frame() {
-        let Ok(path) = std::env::var("DUMP") else { return };
+        let Ok(path) = std::env::var("DUMP") else {
+            return;
+        };
         let formats: Vec<String> = std::env::var("FORMATS")
             .map(|s| s.split(',').map(str::to_string).collect())
             .unwrap_or_default();
@@ -781,7 +842,11 @@ mod frame_dump_tests {
         assert_eq!(bits.len(), bpr as usize * h as usize, "dump size mismatch");
         let img = BitImage::new(w, h, bits);
         println!("frame {w}x{h} bpr {bpr}");
-        let tiers = if formats.is_empty() { Tiers::all() } else { parse_formats(&formats).unwrap() };
+        let tiers = if formats.is_empty() {
+            Tiers::all()
+        } else {
+            parse_formats(&formats).unwrap()
+        };
         let t0 = std::time::Instant::now();
         let hits = BarcodeScanner::new().scan_tiered(&img, &tiers, false, 0);
         println!("{:?}: {} hits in {:?}", formats, hits.len(), t0.elapsed());
@@ -791,4 +856,3 @@ mod frame_dump_tests {
         assert!(!hits.is_empty(), "no decode");
     }
 }
-

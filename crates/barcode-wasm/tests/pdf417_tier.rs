@@ -14,7 +14,8 @@ const PAYLOAD: &str = "A1";
 fn pdf417_tier_decodes_padded_canvas() {
     let cw = MW * UP + 2 * QZ;
     let ch = MH * UP + 2 * QZ;
-    let src: Vec<u8> = MATRIX.split("\n")
+    let src: Vec<u8> = MATRIX
+        .split("\n")
         .flat_map(|l| l.chars().map(|c| if c == '#' { 1u8 } else { 0 }))
         .collect();
     assert_eq!(src.len(), MW * MH);
@@ -44,10 +45,18 @@ fn pdf417_tier_decodes_padded_canvas() {
     assert_eq!(hits.len(), 1, "one hit");
     assert_eq!(hits[0].symbology, barcode_core::Symbology::PDF417);
     assert_eq!(hits[0].text, PAYLOAD);
-    let xs = [hits[0].position[0].x, hits[0].position[1].x,
-              hits[0].position[2].x, hits[0].position[3].x];
-    let ys = [hits[0].position[0].y, hits[0].position[1].y,
-              hits[0].position[2].y, hits[0].position[3].y];
+    let xs = [
+        hits[0].position[0].x,
+        hits[0].position[1].x,
+        hits[0].position[2].x,
+        hits[0].position[3].x,
+    ];
+    let ys = [
+        hits[0].position[0].y,
+        hits[0].position[1].y,
+        hits[0].position[2].y,
+        hits[0].position[3].y,
+    ];
     assert!(xs.iter().cloned().fold(f32::MIN, f32::max) <= cw as f32);
     assert!(ys.iter().cloned().fold(f32::MIN, f32::max) <= ch as f32);
 }

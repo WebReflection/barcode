@@ -4,8 +4,11 @@
 
 #[test]
 fn databar_golden_vectors() {
-    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/databar_golden.txt"))
-        .expect("golden file");
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/databar_golden.txt"
+    ))
+    .expect("golden file");
     let mut n = 0;
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         let (v, runs) = line.split_once(':').expect("v:runs");

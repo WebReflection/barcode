@@ -14,7 +14,8 @@ fn main() {
             let sx = c * dx + s * dy + sc;
             let sy = -s * dx + c * dy + sc;
             if sx >= 0.0 && sy >= 0.0 && sx < side as f32 && sy < side as f32 {
-                if src_canvas.bits()[sy as usize * src_canvas.bytes_per_row as usize + (sx as usize >> 3)]
+                if src_canvas.bits()
+                    [sy as usize * src_canvas.bytes_per_row as usize + (sx as usize >> 3)]
                     >> (sx as usize & 7)
                     & 1
                     == 1
@@ -33,14 +34,23 @@ fn main() {
     let (ax, ay) = (theta.sin(), theta.cos());
     let m_est = 9.24f64;
     println!("TL finder rays (local Y = {ax:.2},{ay:.2}):");
-    for (label, dx, dy) in [("Y+", ax, ay), ("Y-", -ax, -ay), ("X+", ay, -ax), ("X-", -ay, ax)] {
+    for (label, dx, dy) in [
+        ("Y+", ax, ay),
+        ("Y-", -ax, -ay),
+        ("X+", ay, -ax),
+        ("X-", -ay, ax),
+    ] {
         let mut line = format!("  {label}: ");
         let step = 0.25 * m_est;
         let mut r = 0.5 * m_est;
         while r <= 4.5 * m_est {
             let px = (fcx + r * dx).round() as i64;
             let py = (fcy + r * dy).round() as i64;
-            let ink = px >= 0 && py >= 0 && (px as u32) < img.width && (py as u32) < img.height && img.ink(px as u32, py as u32);
+            let ink = px >= 0
+                && py >= 0
+                && (px as u32) < img.width
+                && (py as u32) < img.height
+                && img.ink(px as u32, py as u32);
             line.push(if ink { '#' } else { '.' });
             r += step;
         }

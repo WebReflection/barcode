@@ -89,20 +89,26 @@ fn decodes_datamatrix_from_packed_mask_tier() {
         env!("CARGO_MANIFEST_DIR"),
         "/../../packages/web/test-codes/field/viva-dm-expected.txt"
     )) {
-        let expected: Vec<u8> = expected.into_iter().filter(|b| !b.is_ascii_whitespace()).collect();
+        let expected: Vec<u8> = expected
+            .into_iter()
+            .filter(|b| !b.is_ascii_whitespace())
+            .collect();
         assert_eq!(hits[0].text.as_bytes(), expected.as_slice());
     }
     // quad sanity: spans ~12 x 36 modules at pitch ~8 around (419, 711)
     let q: Vec<(f32, f32)> = hits[0].position.iter().map(|p| (p.x, p.y)).collect();
     let xs: Vec<f32> = q.iter().map(|p| p.0).collect();
     let ys: Vec<f32> = q.iter().map(|p| p.1).collect();
-    let w_quad = xs.iter().cloned().fold(f32::MIN, f32::max)
-        - xs.iter().cloned().fold(f32::MAX, f32::min);
-    let h_quad = ys.iter().cloned().fold(f32::MIN, f32::max)
-        - ys.iter().cloned().fold(f32::MAX, f32::min);
+    let w_quad =
+        xs.iter().cloned().fold(f32::MIN, f32::max) - xs.iter().cloned().fold(f32::MAX, f32::min);
+    let h_quad =
+        ys.iter().cloned().fold(f32::MIN, f32::max) - ys.iter().cloned().fold(f32::MAX, f32::min);
     assert!((85.0..=110.0).contains(&w_quad), "quad width {w_quad}");
     assert!((270.0..=310.0).contains(&h_quad), "quad height {h_quad}");
     let cx = xs.iter().sum::<f32>() / 4.0;
     let cy = ys.iter().sum::<f32>() / 4.0;
-    assert!((cx - 419.0).abs() < 15.0 && (cy - 711.0).abs() < 15.0, "quad center ({cx},{cy})");
+    assert!(
+        (cx - 419.0).abs() < 15.0 && (cy - 711.0).abs() < 15.0,
+        "quad center ({cx},{cy})"
+    );
 }

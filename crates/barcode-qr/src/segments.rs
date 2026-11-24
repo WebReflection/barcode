@@ -173,12 +173,24 @@ mod tests {
         push(&mut bits, 1, 4); // numeric
         push(&mut bits, digits.len() as u32, 10);
         for g in digits.as_bytes().chunks(3) {
-            let v: u32 = g.iter().map(|&d| (d - b'0') as u32).fold(0, |a, d| a * 10 + d);
-            let w = if g.len() == 3 { 10 } else if g.len() == 2 { 7 } else { 4 };
+            let v: u32 = g
+                .iter()
+                .map(|&d| (d - b'0') as u32)
+                .fold(0, |a, d| a * 10 + d);
+            let w = if g.len() == 3 {
+                10
+            } else if g.len() == 2 {
+                7
+            } else {
+                4
+            };
             push(&mut bits, v, w);
         }
         push(&mut bits, 0, 4); // terminator
-        assert_eq!(payload_text(&parse_segments(1, &pack(&bits)).unwrap()), digits);
+        assert_eq!(
+            payload_text(&parse_segments(1, &pack(&bits)).unwrap()),
+            digits
+        );
     }
 
     #[test]
@@ -189,12 +201,17 @@ mod tests {
         push(&mut bits, 2, 4);
         push(&mut bits, text.len() as u32, 9);
         for p in text.as_bytes().chunks(2) {
-            let v: u32 = p.iter().map(|&c| ALNUM.iter().position(|&a| a == c).unwrap() as u32)
+            let v: u32 = p
+                .iter()
+                .map(|&c| ALNUM.iter().position(|&a| a == c).unwrap() as u32)
                 .fold(0, |a, d| a * 45 + d);
             push(&mut bits, v, if p.len() == 2 { 11 } else { 6 });
         }
         push(&mut bits, 0, 4);
-        assert_eq!(payload_text(&parse_segments(1, &pack(&bits)).unwrap()), text);
+        assert_eq!(
+            payload_text(&parse_segments(1, &pack(&bits)).unwrap()),
+            text
+        );
     }
 
     #[test]
@@ -207,7 +224,10 @@ mod tests {
             push(&mut bits, b as u32, 8);
         }
         push(&mut bits, 0, 4);
-        assert_eq!(payload_text(&parse_segments(1, &pack(&bits)).unwrap()), text);
+        assert_eq!(
+            payload_text(&parse_segments(1, &pack(&bits)).unwrap()),
+            text
+        );
     }
 
     #[test]
@@ -222,7 +242,10 @@ mod tests {
         push(&mut bits, b'A' as u32, 8);
         push(&mut bits, b'B' as u32, 8);
         push(&mut bits, 0, 4);
-        assert_eq!(payload_text(&parse_segments(1, &pack(&bits)).unwrap()), "12AB");
+        assert_eq!(
+            payload_text(&parse_segments(1, &pack(&bits)).unwrap()),
+            "12AB"
+        );
     }
 
     #[test]
@@ -249,7 +272,10 @@ mod tests {
         push(&mut bits, 2, 8);
         push(&mut bits, b'o' as u32, 8);
         push(&mut bits, b'k' as u32, 8);
-        assert_eq!(payload_text(&parse_segments(1, &pack(&bits)).unwrap()), "ok");
+        assert_eq!(
+            payload_text(&parse_segments(1, &pack(&bits)).unwrap()),
+            "ok"
+        );
     }
 
     #[test]
@@ -281,7 +307,10 @@ mod tests {
         push(&mut bits, 0xe9, 8); // é in ISO-8859-1 — invalid UTF-8 alone
         push(&mut bits, b'x' as u32, 8);
         push(&mut bits, 0, 4);
-        assert_eq!(payload_text(&parse_segments(1, &pack(&bits)).unwrap()), "éx");
+        assert_eq!(
+            payload_text(&parse_segments(1, &pack(&bits)).unwrap()),
+            "éx"
+        );
     }
 
     #[test]

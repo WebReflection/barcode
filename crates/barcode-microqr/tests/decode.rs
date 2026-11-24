@@ -48,8 +48,20 @@ fn numeric_roundtrips() {
     roundtrip(b"7", Version::M3, Level::L, None, 0);
     roundtrip(b"12345678901234567890123", Version::M3, Level::L, None, 2);
     roundtrip(b"123456789012345678", Version::M3, Level::M, None, 0);
-    roundtrip(b"12345678901234567890123456789012345", Version::M4, Level::L, None, 1);
-    roundtrip(b"123456789012345678901234567890", Version::M4, Level::M, None, 2);
+    roundtrip(
+        b"12345678901234567890123456789012345",
+        Version::M4,
+        Level::L,
+        None,
+        1,
+    );
+    roundtrip(
+        b"123456789012345678901234567890",
+        Version::M4,
+        Level::M,
+        None,
+        2,
+    );
     roundtrip(b"123456789012345678901", Version::M4, Level::Q, None, 3);
 }
 
@@ -58,10 +70,28 @@ fn alnum_roundtrips() {
     roundtrip(b"A1", Version::M2, Level::L, Some(Mode::Alnum), 0);
     roundtrip(b"HI-9$", Version::M2, Level::L, Some(Mode::Alnum), 2);
     roundtrip(b"A B", Version::M3, Level::L, Some(Mode::Alnum), 0);
-    roundtrip(b"HELLO-WORLD/26", Version::M3, Level::L, Some(Mode::Alnum), 3);
+    roundtrip(
+        b"HELLO-WORLD/26",
+        Version::M3,
+        Level::L,
+        Some(Mode::Alnum),
+        3,
+    );
     roundtrip(b"X.Y:Z", Version::M2, Level::M, Some(Mode::Alnum), 0);
-    roundtrip(b"MICROQR-M4-ALNUM-TEST", Version::M4, Level::L, Some(Mode::Alnum), 1);
-    roundtrip(b"M4-Q-ALNUM-13", Version::M4, Level::Q, Some(Mode::Alnum), 2);
+    roundtrip(
+        b"MICROQR-M4-ALNUM-TEST",
+        Version::M4,
+        Level::L,
+        Some(Mode::Alnum),
+        1,
+    );
+    roundtrip(
+        b"M4-Q-ALNUM-13",
+        Version::M4,
+        Level::Q,
+        Some(Mode::Alnum),
+        2,
+    );
 }
 
 #[test]
@@ -70,7 +100,13 @@ fn byte_roundtrips() {
     roundtrip(b"aA\xfe", Version::M3, Level::L, Some(Mode::Byte), 1);
     roundtrip(b"\xff\x00\x7f", Version::M3, Level::M, Some(Mode::Byte), 0);
     roundtrip(b"HELLO", Version::M3, Level::L, Some(Mode::Byte), 2);
-    roundtrip(b"15-byte-payload", Version::M4, Level::L, Some(Mode::Byte), 3);
+    roundtrip(
+        b"15-byte-payload",
+        Version::M4,
+        Level::L,
+        Some(Mode::Byte),
+        3,
+    );
     roundtrip(b"13-byte-m4-m!", Version::M4, Level::M, Some(Mode::Byte), 0);
     roundtrip(b"9-byte-q!", Version::M4, Level::Q, Some(Mode::Byte), 1);
 }
@@ -91,7 +127,10 @@ fn reed_solomon_error_correction_and_m1_detection() {
     // Also flip 2 format strip modules (BCH corrects up to 3).
     dmg_m2[8 * 13 + 2] ^= 1;
     dmg_m2[4 * 13 + 8] ^= 1;
-    assert_eq!(decode_grid(&dmg_m2, 13).as_deref(), Some(b"HELLO".as_slice()));
+    assert_eq!(
+        decode_grid(&dmg_m2, 13).as_deref(),
+        Some(b"HELLO".as_slice())
+    );
 
     // M4-Q (t=7): corrupt 5 spread modules across the symbol -> RS recovers cleanly!
     let m4 = encode_bytes(b"M4Q-RS-OK", Version::M4, Level::Q, Some(Mode::Byte), None).unwrap();
@@ -99,7 +138,10 @@ fn reed_solomon_error_correction_and_m1_detection() {
     for (x, y) in [(16, 16), (14, 10), (12, 5), (10, 14), (4, 12)] {
         dmg_m4[y * 17 + x] ^= 1;
     }
-    assert_eq!(decode_grid(&dmg_m4, 17).as_deref(), Some(b"M4Q-RS-OK".as_slice()));
+    assert_eq!(
+        decode_grid(&dmg_m4, 17).as_deref(),
+        Some(b"M4Q-RS-OK".as_slice())
+    );
 }
 
 #[test]
@@ -150,7 +192,11 @@ fn no_false_positive_on_blank_or_random_grids() {
             for cell in &mut grid {
                 *cell = (next() & 1) as u8;
             }
-            assert_eq!(decode_grid(&grid, size), None, "random false positive at size {size}");
+            assert_eq!(
+                decode_grid(&grid, size),
+                None,
+                "random false positive at size {size}"
+            );
         }
     }
 }
@@ -189,7 +235,12 @@ fn rotated(src: &Canvas, deg: f32) -> Canvas {
             let dy = y as f32 - cy;
             let sx = (cos * dx - sin * dy + cx).round() as i64;
             let sy = (sin * dx + cos * dy + cy).round() as i64;
-            if sx >= 0 && sy >= 0 && sx < i64::from(w) && sy < i64::from(h) && ink(sx as u32, sy as u32) {
+            if sx >= 0
+                && sy >= 0
+                && sx < i64::from(w)
+                && sy < i64::from(h)
+                && ink(sx as u32, sy as u32)
+            {
                 out.fill(x, y, 1, 1);
             }
         }

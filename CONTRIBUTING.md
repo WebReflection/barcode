@@ -53,6 +53,8 @@ build or test suite reads them.
 
 ## Before opening a PR
 
+- `cargo fmt --all -- --check` (CI fails on unformatted Rust; `cargo fmt --all`
+  fixes it — the spec data tables are `#[rustfmt::skip]`ped on purpose)
 - `cargo test --workspace` (CI runs it with `--locked`; `--release` if you want
   the optimized sweep)
 - `npm run check` in `packages/web`

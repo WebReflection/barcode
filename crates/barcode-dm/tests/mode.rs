@@ -34,13 +34,19 @@ const VECTORS: &[(&str, &str)] = &[
     // C40 shift 3 ('`', affine 96+v).
     ("6041414141414141414141414141", "e60c8f59bf59bf59bf59bffe"),
     // C40 upper shift: shift2->30, shift1(0), raw.
-    ("8041414141414141414141414141414141414141", "e60af1023f59bf59bf59bf59bf59bf59b1fe"),
+    (
+        "8041414141414141414141414141414141414141",
+        "e60af1023f59bf59bf59bf59bf59bf59b1fe",
+    ),
     // Text shift 3 ('A' via table 64+v).
     ("4161616161616161616161616161", "ef0cb759bf59bf59bf59bffe"),
     // Text shift 2 ('!').
     ("2161616161616161616161616161", "ef064f59bf59bf59bf59bffe"),
     // Text upper shift.
-    ("8061616161616161616161616161616161616161", "ef0af1023f59bf59bf59bf59bf59bf59b1fe"),
+    (
+        "8061616161616161616161616161616161616161",
+        "ef0af1023f59bf59bf59bf59bf59bf59b1fe",
+    ),
     // Text basic only, exact fill (no unlatch).
     ("6161616161616161616161616161", "ef59bf59bf59bf59bf59b1fe"),
     // X12 with '*' first and trailing 254 + 129.
@@ -60,7 +66,10 @@ const VECTORS: &[(&str, &str)] = &[
     // Base256 after nothing else: includes the wrapped stored value 0
     // (v=209, p=14) that pins the mod-256 rule, plus a 129 EOD after
     // the segment (zint quirk).
-    ("4142c8c9cacbcccdcecfd0d1", "e7380299b44be2780fa53cd3690081ed"),
+    (
+        "4142c8c9cacbcccdcecfd0d1",
+        "e7380299b44be2780fa53cd3690081ed",
+    ),
     // C40 (9 A's) then Base256 starting at 1-based p=9: absolute
     // position convention (3 A's + 10 bytes ride Base256, n=13).
     (
@@ -87,7 +96,10 @@ fn upper_shift_also_applies_to_basic_values() {
     // value 'A' -> 65 + 128. Encoders wrap the reduced byte in shift 1
     // (see the \x8e vector), but the flag semantics are uniform: the
     // next produced character gets +128 whatever encoded it.
-    assert_eq!(decode_payload(&[230, 10, 255]).as_deref(), Some(&[0xC1][..]));
+    assert_eq!(
+        decode_payload(&[230, 10, 255]).as_deref(),
+        Some(&[0xC1][..])
+    );
 }
 
 #[test]
@@ -133,6 +145,12 @@ fn fnc1_flag_and_field_separator() {
         Some(&b"901050883\x1d100006316163\x1d"[..])
     );
     // A leading FNC1 emits nothing; a later one emits GS.
-    assert_eq!(decode_payload(&[232, 220, 129]).as_deref(), Some(&b"90"[..]));
-    assert_eq!(decode_payload(&[220, 232, 129]).as_deref(), Some(&b"90\x1d"[..]));
+    assert_eq!(
+        decode_payload(&[232, 220, 129]).as_deref(),
+        Some(&b"90"[..])
+    );
+    assert_eq!(
+        decode_payload(&[220, 232, 129]).as_deref(),
+        Some(&b"90\x1d"[..])
+    );
 }

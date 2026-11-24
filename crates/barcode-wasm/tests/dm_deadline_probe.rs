@@ -41,12 +41,24 @@ fn still_wall_bounded() {
         // Wall clock + the fixed cost of the last in-flight DM step and
         // the linear tier on a junk-rich frame (measured ~2.9s at the
         // 500ms budget; the guard is for multi-second regressions).
-        assert!(wall <= budget as u128 + 3000, "wall {wall}ms exceeded budget {budget}ms + slack");
+        assert!(
+            wall <= budget as u128 + 3000,
+            "wall {wall}ms exceeded budget {budget}ms + slack"
+        );
     }
     // the DM-only tier: the ladder's tilt retries used to multiply the
     // budget several-fold on this junk-rich frame
     let t0 = Instant::now();
-    let hits = scanner.decode_still_core(w, h, &frame.data, Tiers { datamatrix: true, ..Default::default() }, 500);
+    let hits = scanner.decode_still_core(
+        w,
+        h,
+        &frame.data,
+        Tiers {
+            datamatrix: true,
+            ..Default::default()
+        },
+        500,
+    );
     let wall = t0.elapsed().as_millis();
     eprintln!("dm-only 500ms -> wall {wall}ms, hits={}", hits.len());
     assert!(wall <= 500 + 1500, "dm-only wall {wall}ms");

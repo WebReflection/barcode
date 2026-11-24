@@ -19,12 +19,7 @@ use crate::Finder;
 /// Quadrant offsets (in module units) for the quality samples: inside a
 /// module at camera scales, far enough from the centre that a smeared or
 /// merged module splits the vote.
-const QUAD: [(f32, f32); 4] = [
-    (-0.22, -0.22),
-    (-0.22, 0.22),
-    (0.22, -0.22),
-    (0.22, 0.22),
-];
+const QUAD: [(f32, f32); 4] = [(-0.22, -0.22), (-0.22, 0.22), (0.22, -0.22), (0.22, 0.22)];
 
 /// EC level from the 2-bit format field (ISO 18004 §8.9: M=00, L=01, H=10, Q=11).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,10 +65,19 @@ fn n_bits_of(word: u32) -> u32 {
 /// Syndrome -> error-pattern map for a BCH code: every n-bit error pattern
 /// of weight <= max_errors, keyed by its remainder under the generator.
 /// Built once per code (the two QR codes are known constants).
-fn error_map(gen: u32, gen_bits: u32, n: u32, max_errors: u32) -> &'static std::collections::HashMap<u32, u32> {
+fn error_map(
+    gen: u32,
+    gen_bits: u32,
+    n: u32,
+    max_errors: u32,
+) -> &'static std::collections::HashMap<u32, u32> {
     static FORMAT: OnceLock<std::collections::HashMap<u32, u32>> = OnceLock::new();
     static VERSION: OnceLock<std::collections::HashMap<u32, u32>> = OnceLock::new();
-    let which = if gen == FORMAT_GEN as u32 { &FORMAT } else { &VERSION };
+    let which = if gen == FORMAT_GEN as u32 {
+        &FORMAT
+    } else {
+        &VERSION
+    };
     which.get_or_init(|| {
         let mut map = std::collections::HashMap::new();
         for pattern in 1u32..(1 << n) {
@@ -110,8 +114,21 @@ fn bch_correct(word: u32, gen: u32, gen_bits: u32, n: u32, max_errors: u32) -> O
 /// version stored these as (row, col); every non-90° rotation then read
 /// a transposed word and died at the format check.)
 pub const COPY1: [(u32, u32); 15] = [
-    (0, 8), (1, 8), (2, 8), (3, 8), (4, 8), (5, 8), (7, 8), (8, 8), (8, 7), (8, 5), (8, 4),
-    (8, 3), (8, 2), (8, 1), (8, 0),
+    (0, 8),
+    (1, 8),
+    (2, 8),
+    (3, 8),
+    (4, 8),
+    (5, 8),
+    (7, 8),
+    (8, 8),
+    (8, 7),
+    (8, 5),
+    (8, 4),
+    (8, 3),
+    (8, 2),
+    (8, 1),
+    (8, 0),
 ];
 
 /// Copy 2: bits 0-7 under the top-right finder, bits 8-14 right of the
@@ -278,7 +295,13 @@ impl Grid {
         for (du, dv) in QUAD {
             votes += self.sample_f(img, u + du, v + dv) as usize;
         }
-        let majority = if votes >= 3 { true } else if votes <= 1 { false } else { center };
+        let majority = if votes >= 3 {
+            true
+        } else if votes <= 1 {
+            false
+        } else {
+            center
+        };
         (center, votes == 2 || majority != center)
     }
 
@@ -332,7 +355,11 @@ pub fn read_format_ranked(img: &BitImage, grid: &Grid) -> Option<(EcLevel, u8, u
     } else if clean(w2) {
         (w2 as u32, 2)
     } else if let (Some(a), Some(b)) = (c1, c2) {
-        if a == b { (a, 1) } else { return None; }
+        if a == b {
+            (a, 1)
+        } else {
+            return None;
+        }
     } else {
         return None;
     };
@@ -404,10 +431,13 @@ mod tests {
         // grids never sample a clean copy of a real symbol.
         let mut fallback: Option<(Grid, u8)> = None;
         for perm in crate::LABELINGS {
-            let [tl, tr, bl] =
-                [finders[perm[0]], finders[perm[1]], finders[perm[2]]];
-            let Some(grid) = Grid::from_finders(&tl, &tr, &bl) else { continue };
-            let Some((ec, mask, quality)) = read_format_ranked(&img, &grid) else { continue };
+            let [tl, tr, bl] = [finders[perm[0]], finders[perm[1]], finders[perm[2]]];
+            let Some(grid) = Grid::from_finders(&tl, &tr, &bl) else {
+                continue;
+            };
+            let Some((ec, mask, quality)) = read_format_ranked(&img, &grid) else {
+                continue;
+            };
             if crate::codewords::read_codewords(&img, &grid, ec, mask).is_some() {
                 return grid;
             }
@@ -437,7 +467,10 @@ mod tests {
         let canvas = barcode_fixtures::encode_qr_pattern(2, 1, 5);
         let grid = grid_of(&canvas);
         assert_eq!(grid.size, 25, "v2 size");
-        assert_eq!(read_format(&image_of(&canvas), &grid), Some((EcLevel::L, 5)));
+        assert_eq!(
+            read_format(&image_of(&canvas), &grid),
+            Some((EcLevel::L, 5))
+        );
     }
 
     #[test]
@@ -452,7 +485,10 @@ mod tests {
             canvas.clear(x, y, m, m);
         }
         let grid = grid_of(&canvas);
-        assert_eq!(read_format(&image_of(&canvas), &grid), Some((EcLevel::L, 3)));
+        assert_eq!(
+            read_format(&image_of(&canvas), &grid),
+            Some((EcLevel::L, 3))
+        );
     }
 
     #[test]
@@ -492,7 +528,13 @@ mod tests {
         }
         // The true v1 grid, built from geometry (grid_of needs a valid
         // format read, which is exactly what this corruption defeats).
-        let grid = Grid { size: 21, tl: (38.0, 38.0), step_x: (4.0, 0.0), step_y: (0.0, 4.0), h: None };
+        let grid = Grid {
+            size: 21,
+            tl: (38.0, 38.0),
+            step_x: (4.0, 0.0),
+            step_y: (0.0, 4.0),
+            h: None,
+        };
         assert_eq!(read_format(&image_of(&canvas), &grid), None);
     }
 
@@ -500,6 +542,9 @@ mod tests {
     fn dark_module_is_inplace() {
         let canvas = barcode_fixtures::encode_qr_pattern(1, 0, 0);
         let grid = grid_of(&canvas);
-        assert!(grid.sample(&image_of(&canvas), 8, 13), "dark module (8, n-8)");
+        assert!(
+            grid.sample(&image_of(&canvas), 8, 13),
+            "dark module (8, n-8)"
+        );
     }
 }

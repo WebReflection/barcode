@@ -58,10 +58,22 @@ impl DataBarExpandedDecoder {
             text: text.to_string(),
             raw: text.as_bytes().to_vec(),
             position: [
-                Point { x: x0 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y1 as f32 },
-                Point { x: x0 as f32, y: y1 as f32 },
+                Point {
+                    x: x0 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y1 as f32,
+                },
+                Point {
+                    x: x0 as f32,
+                    y: y1 as f32,
+                },
             ],
         }
     }
@@ -108,7 +120,9 @@ impl DataBarExpandedDecoder {
             values.push(value);
             j += 8;
             if values.len() % 2 == 0 && j + 5 <= runs.len() {
-                if let Some(b) = quantize_fixed::<5>(&runs[j..j + 5], module_unit(&runs[j..j + 5], 15)) {
+                if let Some(b) =
+                    quantize_fixed::<5>(&runs[j..j + 5], module_unit(&runs[j..j + 5], 15))
+                {
                     if b.iter().sum::<u32>() == 15 {
                         j += 5;
                     }
@@ -178,7 +192,11 @@ impl LinearDecoder for DataBarExpandedDecoder {
     }
 
     fn vote_count(&self) -> usize {
-        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
+        if self.votes.is_empty() {
+            0
+        } else {
+            self.votes.values().map(|v| v.0).sum()
+        }
     }
 }
 
@@ -562,10 +580,7 @@ fn decode_bits(bits: &[bool]) -> Option<String> {
                 }
                 let prefix = if (method - 56) % 2 == 0 { 310 } else { 320 };
                 let gtin = gtin14(9, groups)?;
-                let mut text = format!(
-                    "(01){gtin}({prefix}{x}){}",
-                    weight_6(weight % 100_000)
-                );
+                let mut text = format!("(01){gtin}({prefix}{x}){}", weight_6(weight % 100_000));
                 if date != NO_DATE {
                     let day = date % 32;
                     let month = (date / 32) % 12 + 1;
@@ -653,14 +668,25 @@ mod tests {
         // Data-character values measured from the bardecode examples,
         // excluding the leading check character.
         let cases: [(&[u32], &str); 4] = [
-            (&[512, 629, 1135, 3024, 1750], "(01)90012345678908(3103)001750"),
-            (&[640, 629, 1135, 3027, 868], "(01)90012345678908(3203)003156"),
-            (&[800, 78, 2701, 3962, 2804, 2306], "(01)90012345678908(3922)795"),
-            (&[832, 78, 2701, 3962, 2088, 683, 1032], "(01)90012345678908(3932)0401234"),
+            (
+                &[512, 629, 1135, 3024, 1750],
+                "(01)90012345678908(3103)001750",
+            ),
+            (
+                &[640, 629, 1135, 3027, 868],
+                "(01)90012345678908(3203)003156",
+            ),
+            (
+                &[800, 78, 2701, 3962, 2804, 2306],
+                "(01)90012345678908(3922)795",
+            ),
+            (
+                &[832, 78, 2701, 3962, 2088, 683, 1032],
+                "(01)90012345678908(3932)0401234",
+            ),
         ];
         for (values, want) in cases {
             assert_eq!(decode_bits(&values_to_bits(values)).as_deref(), Some(want));
         }
     }
 }
-

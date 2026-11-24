@@ -67,7 +67,7 @@ fn token(mode: Mode, code: u16) -> Tok {
         Mode::Mixed => match code {
             0 => Tok::PSh,
             1 => Tok::Chars(b" "),
-            2..=14 => Tok::Byte(code as u8 - 1),          // ^A..^M
+            2..=14 => Tok::Byte(code as u8 - 1), // ^A..^M
             15..=19 => Tok::Byte(0x1b + code as u8 - 15), // ^[ ^\ ^] ^^ ^_
             20..=27 => Tok::Chars(&MIXED_TAIL[(code - 20) as usize..(code - 19) as usize]),
             28 => Tok::Latch(Mode::Lower),
@@ -162,7 +162,10 @@ impl Reader<'_> {
 pub fn decode_text(stream: &Stream) -> Vec<u8> {
     let b = bits_for_layers(stream.layers) as usize;
     let logical = destuff(&concat_bits(&stream.data, b), b);
-    let mut r = Reader { bits: &logical, pos: 0 };
+    let mut r = Reader {
+        bits: &logical,
+        pos: 0,
+    };
     let mut out = Vec::new();
     let mut mode = Mode::Upper;
     let mut shift: Option<Mode> = None;
@@ -213,7 +216,11 @@ mod tests {
     use super::*;
 
     fn stream(layers: u8, data: &[u16]) -> Stream {
-        Stream { layers, data_cw: data.len() as u16, data: data.to_vec() }
+        Stream {
+            layers,
+            data_cw: data.len() as u16,
+            data: data.to_vec(),
+        }
     }
 
     /// Mini-encoder per the zint-verified window-relative model: fill
@@ -267,7 +274,10 @@ mod tests {
         // lowercase -> digit needs the explicit D/L latch
         assert_eq!(decode_text(&stream(1, &[56, 11, 51, 31])), b"a4");
         // 'é' = UTF-8 bytes via B/S with a stuff bit in the first window
-        assert_eq!(decode_text(&stream(2, &[62, 5, 33, 53, 15])), "é".as_bytes());
+        assert_eq!(
+            decode_text(&stream(2, &[62, 5, 33, 53, 15])),
+            "é".as_bytes()
+        );
     }
 
     /// Build message bits from (code, width) pairs — the encoder's input.
@@ -284,30 +294,57 @@ mod tests {
     #[test]
     fn round_trips_latches_and_shifts() {
         let cases: &[(&str, Vec<(u16, usize)>)] = &[
-            ("hello world", vec![(28, 5)] // L/L
-                .into_iter()
-                .chain("hello".bytes().map(|c| ((2 + c - b'a') as u16, 5)))
-                .chain(vec![(1, 5)]) // SP
-                .chain("world".bytes().map(|c| ((2 + c - b'a') as u16, 5)))
-                .collect()),
-            ("Code 128!", vec![
-                (4, 5),   // C
-                (28, 5),  // L/L
-                (16, 5), (5, 5), (6, 5), // o d e
-                (1, 5),   // SP
-                (30, 5),  // D/L
-                (3, 4), (4, 4), (10, 4), // 1 2 8
-                (0, 4),   // P/S (digit-mode code width)
-                (6, 5),   // !
-            ]),
-            ("a\r\n: ", vec![(28, 5), (2, 5), (0, 5), (2, 5), (0, 5), (5, 5)]),
+            (
+                "hello world",
+                vec![(28, 5)] // L/L
+                    .into_iter()
+                    .chain("hello".bytes().map(|c| ((2 + c - b'a') as u16, 5)))
+                    .chain(vec![(1, 5)]) // SP
+                    .chain("world".bytes().map(|c| ((2 + c - b'a') as u16, 5)))
+                    .collect(),
+            ),
+            (
+                "Code 128!",
+                vec![
+                    (4, 5),  // C
+                    (28, 5), // L/L
+                    (16, 5),
+                    (5, 5),
+                    (6, 5),  // o d e
+                    (1, 5),  // SP
+                    (30, 5), // D/L
+                    (3, 4),
+                    (4, 4),
+                    (10, 4), // 1 2 8
+                    (0, 4),  // P/S (digit-mode code width)
+                    (6, 5),  // !
+                ],
+            ),
+            (
+                "a\r\n: ",
+                vec![(28, 5), (2, 5), (0, 5), (2, 5), (0, 5), (5, 5)],
+            ),
             // x via L/L, DEL via M/L + mixed 27
             ("x\x7f", vec![(28, 5), (25, 5), (29, 5), (27, 5)]),
             // 99 bottles: digits, digit-SP, U/L, L/L, lowercase
-            ("99 bottles", vec![
-                (30, 5), (11, 4), (11, 4), (1, 4), (14, 4), (28, 5),
-                (3, 5), (16, 5), (21, 5), (21, 5), (13, 5), (6, 5), (20, 5),
-            ]),
+            (
+                "99 bottles",
+                vec![
+                    (30, 5),
+                    (11, 4),
+                    (11, 4),
+                    (1, 4),
+                    (14, 4),
+                    (28, 5),
+                    (3, 5),
+                    (16, 5),
+                    (21, 5),
+                    (21, 5),
+                    (13, 5),
+                    (6, 5),
+                    (20, 5),
+                ],
+            ),
         ];
         for (want, codes) in cases {
             assert_eq!(encoded_text(&bits_of(codes), 2), want.as_bytes(), "{want}");

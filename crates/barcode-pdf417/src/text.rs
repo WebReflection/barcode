@@ -1,6 +1,6 @@
 //! Text compaction decoding (spec 2.2.4.4).
 
-use crate::text_tables::{Cell, TEXT_TABLES, ALPHA, LOWER, MIXED, PUNCT};
+use crate::text_tables::{Cell, ALPHA, LOWER, MIXED, PUNCT, TEXT_TABLES};
 
 /// Persistent Text Compaction state: current sub-mode plus a pending
 /// shift. Lives across 913 byte shifts (the sub-mode resumes after the
@@ -13,7 +13,10 @@ pub struct TextState {
 
 impl Default for TextState {
     fn default() -> Self {
-        TextState { sub: ALPHA, shift_back: None }
+        TextState {
+            sub: ALPHA,
+            shift_back: None,
+        }
     }
 }
 

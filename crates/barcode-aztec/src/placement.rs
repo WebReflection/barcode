@@ -51,9 +51,8 @@ pub fn data_path(spec: &Spec) -> Vec<(u16, u16)> {
         s
     };
     // Grid cells render as dashes and carry no stream bit.
-    let keep = |y: usize, x: usize| -> bool {
-        spec.compact || (y % 16 != c % 16 && x % 16 != c % 16)
-    };
+    let keep =
+        |y: usize, x: usize| -> bool { spec.compact || (y % 16 != c % 16 && x % 16 != c % 16) };
 
     let mut cells = Vec::with_capacity(spec.cap_bits() as usize);
     let push = |cells: &mut Vec<(u16, u16)>, y: usize, x: usize| {
@@ -122,7 +121,12 @@ pub fn windows(bits: &[u8], start: usize, n: usize, b: usize) -> Vec<u16> {
 /// the final codeword, which carries the padding raw — the next bit is a
 /// complementary stuff bit and is skipped. Returns the values and the end
 /// position, or None if the stream is too short or a stuff bit is missing.
-pub fn parse_stuffed(bits: &[u8], start: usize, b: usize, n_cw: usize) -> Option<(Vec<u16>, usize)> {
+pub fn parse_stuffed(
+    bits: &[u8],
+    start: usize,
+    b: usize,
+    n_cw: usize,
+) -> Option<(Vec<u16>, usize)> {
     parse_stuffed_impl(bits, None, start, b, n_cw).map(|(v, p, _)| (v, p))
 }
 
@@ -236,7 +240,9 @@ mod tests {
         let p = data_path(f);
         assert_eq!(p[0], (0, 0));
         // grid lines at final coords 2 and 34 (18 = center, part of core)
-        assert!(p.iter().all(|&(r, c)| ![2, 18, 34].contains(&r) && ![2, 18, 34].contains(&c)));
+        assert!(p
+            .iter()
+            .all(|&(r, c)| ![2, 18, 34].contains(&r) && ![2, 18, 34].contains(&c)));
     }
 
     /// Reference grid: full symbols skip every 16th row/col (mod center).
@@ -290,8 +296,7 @@ mod tests {
             "#.####..#.###..",
             "#....#.#.#.##.#",
         ];
-        rows
-            .iter()
+        rows.iter()
             .flat_map(|r| r.bytes().map(|b| (b == b'#') as u8))
             .collect()
     }

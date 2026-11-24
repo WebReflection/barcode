@@ -10,7 +10,12 @@ fn load_truth() -> Option<Vec<(u8, u16, u16, Vec<u8>)>> {
     for line in text.lines() {
         let t: Vec<&str> = line.split_whitespace().collect();
         if t.first() == Some(&"VERS") {
-            out.push((t[1].parse().unwrap(), t[2].parse().unwrap(), t[3].parse().unwrap(), Vec::new()));
+            out.push((
+                t[1].parse().unwrap(),
+                t[2].parse().unwrap(),
+                t[3].parse().unwrap(),
+                Vec::new(),
+            ));
         } else if t.first() == Some(&"MATRIX") && t.len() > 1 {
             let row: Vec<u8> = t[1].chars().map(|ch| (ch == '#') as u8).collect();
             out.last_mut().unwrap().3.extend(row);
@@ -30,8 +35,10 @@ fn derive_structure() {
             continue;
         }
         let spec = tables::spec_for(*rows, *cols, *vers <= 4).expect("spec");
-        let (layers, d) = mode::read_mode(&m, spec).unwrap_or_else(|| panic!("vers {vers}: no mode"));
-        let stream = barcode_aztec::read_stream(&m, spec).unwrap_or_else(|| panic!("vers {vers}: no stream"));
+        let (layers, d) =
+            mode::read_mode(&m, spec).unwrap_or_else(|| panic!("vers {vers}: no mode"));
+        let stream = barcode_aztec::read_stream(&m, spec)
+            .unwrap_or_else(|| panic!("vers {vers}: no stream"));
         let d = d as usize;
         let k = spec.total as usize - d;
         let bits = placement::read_bits(&m, spec);
@@ -39,7 +46,10 @@ fn derive_structure() {
         let cap = spec.cap_bits() as usize;
         let data_windows = placement::windows(&bits, spec.skip as usize, d, b);
         let check_windows = placement::windows(&bits, cap - k * b, k, b);
-        let skip_bits: String = bits[..spec.skip as usize].iter().map(|v| v.to_string()).collect();
+        let skip_bits: String = bits[..spec.skip as usize]
+            .iter()
+            .map(|v| v.to_string())
+            .collect();
         // RS hypothesis check: check_cw == rs_encode(gf, data, K)?
         // The check codewords are rs_encode over the RAW WRITTEN windows
         // (stuff bits included in the stream, as written). Pinned for every

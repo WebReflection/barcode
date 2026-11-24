@@ -58,10 +58,13 @@ fn invoice_survives_more_damage_as_known_erasures() {
     }
 
     // 12 > t = 9: error-only decoding must fail.
-    assert!(decode_upright(&matrix, rows, cols).is_none(), "12 errors > t=9");
+    assert!(
+        decode_upright(&matrix, rows, cols).is_none(),
+        "12 errors > t=9"
+    );
     // With the same 12 codewords as erasures (e + 2t = 12 <= nn) it reads.
-    let decoded = decode_upright_with_erasures(&matrix, rows, cols, &uncertain)
-        .expect("erasure decode");
+    let decoded =
+        decode_upright_with_erasures(&matrix, rows, cols, &uncertain).expect("erasure decode");
     assert_eq!(decoded.payload.as_deref(), Some(INVOICE));
     assert!(nn >= 12, "nn {nn}");
 

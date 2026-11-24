@@ -79,22 +79,142 @@ fn round_trip(payload: &[u8], m: MacroFields) {
 /// count 1/99999, empty-to-max file IDs, all optional field types).
 #[test]
 fn macro_round_trips() {
-    round_trip(b"hello", MacroFields { segment_index: 0, file_id: &[123], last: false, file_name: None, sender: None, addressee: None, segment_count: None, timestamp: None, file_size: None, checksum: None });
-    round_trip(b"hello", MacroFields { segment_index: 1, file_id: &[123], last: true, file_name: Some("name.txt"), sender: None, addressee: None, segment_count: Some(2), timestamp: None, file_size: None, checksum: None });
-    round_trip(b"A", MacroFields { segment_index: 0, file_id: &[7], last: false, file_name: None, sender: None, addressee: None, segment_count: None, timestamp: None, file_size: None, checksum: None });
-    round_trip(b"12345678901234567890", MacroFields { segment_index: 1, file_id: &[42], last: false, file_name: None, sender: None, addressee: None, segment_count: None, timestamp: None, file_size: None, checksum: None });
-    round_trip(b"solo", MacroFields { segment_index: 0, file_id: &[9], last: true, file_name: Some("solo.bin"), sender: None, addressee: None, segment_count: Some(1), timestamp: None, file_size: None, checksum: None });
-    round_trip(b"data", MacroFields { segment_index: 99997, file_id: &[899], last: false, file_name: Some("a-very-long-file-name-example.txt"), sender: None, addressee: None, segment_count: None, timestamp: None, file_size: None, checksum: None });
-    round_trip(b"meta", MacroFields { segment_index: 0, file_id: &[5], last: true, file_name: Some("f.bin"), sender: None, addressee: None, segment_count: Some(3), timestamp: Some(1767225000), file_size: Some(1234), checksum: Some(4711) });
+    round_trip(
+        b"hello",
+        MacroFields {
+            segment_index: 0,
+            file_id: &[123],
+            last: false,
+            file_name: None,
+            sender: None,
+            addressee: None,
+            segment_count: None,
+            timestamp: None,
+            file_size: None,
+            checksum: None,
+        },
+    );
+    round_trip(
+        b"hello",
+        MacroFields {
+            segment_index: 1,
+            file_id: &[123],
+            last: true,
+            file_name: Some("name.txt"),
+            sender: None,
+            addressee: None,
+            segment_count: Some(2),
+            timestamp: None,
+            file_size: None,
+            checksum: None,
+        },
+    );
+    round_trip(
+        b"A",
+        MacroFields {
+            segment_index: 0,
+            file_id: &[7],
+            last: false,
+            file_name: None,
+            sender: None,
+            addressee: None,
+            segment_count: None,
+            timestamp: None,
+            file_size: None,
+            checksum: None,
+        },
+    );
+    round_trip(
+        b"12345678901234567890",
+        MacroFields {
+            segment_index: 1,
+            file_id: &[42],
+            last: false,
+            file_name: None,
+            sender: None,
+            addressee: None,
+            segment_count: None,
+            timestamp: None,
+            file_size: None,
+            checksum: None,
+        },
+    );
+    round_trip(
+        b"solo",
+        MacroFields {
+            segment_index: 0,
+            file_id: &[9],
+            last: true,
+            file_name: Some("solo.bin"),
+            sender: None,
+            addressee: None,
+            segment_count: Some(1),
+            timestamp: None,
+            file_size: None,
+            checksum: None,
+        },
+    );
+    round_trip(
+        b"data",
+        MacroFields {
+            segment_index: 99997,
+            file_id: &[899],
+            last: false,
+            file_name: Some("a-very-long-file-name-example.txt"),
+            sender: None,
+            addressee: None,
+            segment_count: None,
+            timestamp: None,
+            file_size: None,
+            checksum: None,
+        },
+    );
+    round_trip(
+        b"meta",
+        MacroFields {
+            segment_index: 0,
+            file_id: &[5],
+            last: true,
+            file_name: Some("f.bin"),
+            sender: None,
+            addressee: None,
+            segment_count: Some(3),
+            timestamp: Some(1767225000),
+            file_size: Some(1234),
+            checksum: Some(4711),
+        },
+    );
     round_trip(
         &[0x00u8, 0x01, 0xFF, 0xFE],
-        MacroFields { segment_index: 99998, file_id: &[0, 899], last: true, file_name: Some("z"), sender: None, addressee: None, segment_count: Some(99999), timestamp: Some(4102444800), file_size: Some(68719476735), checksum: Some(65535) },
+        MacroFields {
+            segment_index: 99998,
+            file_id: &[0, 899],
+            last: true,
+            file_name: Some("z"),
+            sender: None,
+            addressee: None,
+            segment_count: Some(99999),
+            timestamp: Some(4102444800),
+            file_size: Some(68719476735),
+            checksum: Some(65535),
+        },
     );
     // sender + addressee (H.4's own example strings) alongside every
     // other optional field, over a binary payload
     round_trip(
         &[0x00u8, 0x01, 0xFF, 0xFE],
-        MacroFields { segment_index: 2, file_id: &[0, 899], last: false, file_name: Some("z"), sender: Some("cen be"), addressee: Some("iso ch"), segment_count: Some(99999), timestamp: Some(4102444800), file_size: Some(68719476735), checksum: Some(65535) },
+        MacroFields {
+            segment_index: 2,
+            file_id: &[0, 899],
+            last: false,
+            file_name: Some("z"),
+            sender: Some("cen be"),
+            addressee: Some("iso ch"),
+            segment_count: Some(99999),
+            timestamp: Some(4102444800),
+            file_size: Some(68719476735),
+            checksum: Some(65535),
+        },
     );
 }
 
@@ -131,7 +251,11 @@ fn control_block_matches_h4_example() {
     let cb = &[
         928, 111, 100, 17, 53, 923, 1, 111, 104, 923, 3, 64, 416, 34, 923, 4, 258, 446, 67,
     ];
-    assert_eq!(&data[data.len() - cb.len()..], cb, "H.4 first-segment block mismatch");
+    assert_eq!(
+        &data[data.len() - cb.len()..],
+        cb,
+        "H.4 first-segment block mismatch"
+    );
 
     let last = encode_macro_full(
         &MacroFields {
@@ -150,12 +274,15 @@ fn control_block_matches_h4_example() {
         DEFAULT_LEVEL,
     )
     .unwrap();
-    let stream =
-        barcode_pdf417::stream::read_exact(&last.matrix, last.width, last.height).unwrap();
+    let stream = barcode_pdf417::stream::read_exact(&last.matrix, last.width, last.height).unwrap();
     let (_, data, _) = barcode_pdf417::stream::split_stream(&stream).unwrap();
     let data = barcode_pdf417::stream::strip_pads(data);
     let cb = &[928, 111, 103, 17, 53, 923, 1, 111, 104, 922];
-    assert_eq!(&data[data.len() - cb.len()..], cb, "H.4 last-segment block mismatch");
+    assert_eq!(
+        &data[data.len() - cb.len()..],
+        cb,
+        "H.4 last-segment block mismatch"
+    );
 }
 
 /// The m2 configuration's control block must equal Okapi's codeword for
@@ -163,7 +290,18 @@ fn control_block_matches_h4_example() {
 #[test]
 fn control_block_matches_okapi() {
     let sym = encode_macro_full(
-        &MacroFields { segment_index: 0, file_id: &[123], last: false, file_name: Some("name.txt"), sender: None, addressee: None, segment_count: None, timestamp: None, file_size: None, checksum: None },
+        &MacroFields {
+            segment_index: 0,
+            file_id: &[123],
+            last: false,
+            file_name: Some("name.txt"),
+            sender: None,
+            addressee: None,
+            segment_count: None,
+            timestamp: None,
+            file_size: None,
+            checksum: None,
+        },
         b"hello",
         DEFAULT_LEVEL,
     )
@@ -175,7 +313,14 @@ fn control_block_matches_okapi() {
     assert_eq!(&data[data.len() - cb.len()..], cb, "control block mismatch");
     // everything before the block is the payload TC stream + 900 pads
     let prefix = &data[..data.len() - cb.len()];
-    assert_eq!(prefix[..3], [817, 131, 344], "payload TC stream must precede the block");
-    assert!(prefix[3..].iter().all(|&v| v == 900), "only pad latches allowed before the block");
+    assert_eq!(
+        prefix[..3],
+        [817, 131, 344],
+        "payload TC stream must precede the block"
+    );
+    assert!(
+        prefix[3..].iter().all(|&v| v == 900),
+        "only pad latches allowed before the block"
+    );
     assert_eq!(desc as usize, data.len() + 1, "descriptor counts the block");
 }

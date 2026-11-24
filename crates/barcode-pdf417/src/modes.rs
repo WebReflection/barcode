@@ -72,11 +72,11 @@ pub fn interpret(cws: &[u16]) -> Option<Vec<u8>> {
                             // next tag/terminator (923/922 are latches that
                             // cannot occur inside valid field data).
                             let (skip, _len) = match rest.get(j + 1) {
-                                Some(1) => (1, 2),   // segment count
-                                Some(2) => (1, 4),   // time stamp
-                                Some(6) => (1, 2),   // checksum
+                                Some(1) => (1, 2), // segment count
+                                Some(2) => (1, 4), // time stamp
+                                Some(6) => (1, 2), // checksum
                                 Some(d) if (0..=9).contains(d) || (65..=90).contains(d) => (1, 0),
-                                _ => return None,    // unknown designator
+                                _ => return None, // unknown designator
                             };
                             j += 1 + skip;
                             if _len == 0 {
@@ -228,7 +228,10 @@ mod tests {
     /// Spec 2.2.4.5 worked example: bytes 01..06 -> [924, 1, 620, 89, 74, 846].
     #[test]
     fn spec_byte_example() {
-        assert_eq!(interpret(&[924, 1, 620, 89, 74, 846]).unwrap(), [1u8, 2, 3, 4, 5, 6]);
+        assert_eq!(
+            interpret(&[924, 1, 620, 89, 74, 846]).unwrap(),
+            [1u8, 2, 3, 4, 5, 6]
+        );
     }
 
     /// Spec 2.2.4.6 worked example: 000213298174000.

@@ -140,9 +140,10 @@ fn mode_stream(text: &[u8]) -> Vec<u8> {
             continue;
         }
         // Punct-only byte: P/S shift covers one code from every state.
-        if direct_punct(byte).is_some() && ![Mode::Upper, Mode::Lower, Mode::Mixed, Mode::Digit]
-            .iter()
-            .any(|&m| direct(m, byte).is_some())
+        if direct_punct(byte).is_some()
+            && ![Mode::Upper, Mode::Lower, Mode::Mixed, Mode::Digit]
+                .iter()
+                .any(|&m| direct(m, byte).is_some())
         {
             let w = if mode == Mode::Digit { 4 } else { 5 };
             push_code(&mut msg, 0, w); // P/S
@@ -365,7 +366,9 @@ fn paint(spec: &Spec, bits: &[u8], d: u16) -> Vec<u8> {
     let lw = if spec.compact { 2 } else { 4 };
     let ncheck = if spec.compact { 5 } else { 6 };
     let mw = ((spec.layers as u32 - 1) << ld) | (d as u32 - 1);
-    let mut nibs: Vec<u16> = (0..lw).map(|i| ((mw >> (4 * (lw - 1 - i))) & 0xF) as u16).collect();
+    let mut nibs: Vec<u16> = (0..lw)
+        .map(|i| ((mw >> (4 * (lw - 1 - i))) & 0xF) as u16)
+        .collect();
     nibs.extend(rs_encode(&field_for(4), &nibs, ncheck));
     let mut msg_bits = Vec::with_capacity(nibs.len() * 4);
     for &n in &nibs {

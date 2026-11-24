@@ -99,7 +99,16 @@ pub fn mapping_positions(spec: &SymbolSpec) -> Vec<(u16, u16)> {
             ]
             .iter()
             {
-                place(&mut assigned, &mut positions, nrow, ncol, shift_r, shift_c, r, c);
+                place(
+                    &mut assigned,
+                    &mut positions,
+                    nrow,
+                    ncol,
+                    shift_r,
+                    shift_c,
+                    r,
+                    c,
+                );
             }
         };
     }
@@ -117,7 +126,16 @@ pub fn mapping_positions(spec: &SymbolSpec) -> Vec<(u16, u16)> {
             ]
             .iter()
             {
-                place(&mut assigned, &mut positions, nrow, ncol, shift_r, shift_c, r, c);
+                place(
+                    &mut assigned,
+                    &mut positions,
+                    nrow,
+                    ncol,
+                    shift_r,
+                    shift_c,
+                    r,
+                    c,
+                );
             }
         };
     }
@@ -135,7 +153,16 @@ pub fn mapping_positions(spec: &SymbolSpec) -> Vec<(u16, u16)> {
             ]
             .iter()
             {
-                place(&mut assigned, &mut positions, nrow, ncol, shift_r, shift_c, r, c);
+                place(
+                    &mut assigned,
+                    &mut positions,
+                    nrow,
+                    ncol,
+                    shift_r,
+                    shift_c,
+                    r,
+                    c,
+                );
             }
         };
     }
@@ -153,7 +180,16 @@ pub fn mapping_positions(spec: &SymbolSpec) -> Vec<(u16, u16)> {
             ]
             .iter()
             {
-                place(&mut assigned, &mut positions, nrow, ncol, shift_r, shift_c, r, c);
+                place(
+                    &mut assigned,
+                    &mut positions,
+                    nrow,
+                    ncol,
+                    shift_r,
+                    shift_c,
+                    r,
+                    c,
+                );
             }
         };
     }
@@ -279,10 +315,21 @@ mod tests {
             let (mr, mc) = (spec.map_rows(), spec.map_cols());
             // exactly the stream-bit cells are visited; the rest render as
             // the fixed pattern (12x12/16x16/20x20/24x24)
-            assert_eq!(pos.len(), 8 * spec.codewords(), "{}x{}", spec.rows, spec.cols);
+            assert_eq!(
+                pos.len(),
+                8 * spec.codewords(),
+                "{}x{}",
+                spec.rows,
+                spec.cols
+            );
             let mut seen = vec![false; mr * mc];
             for &(r, c) in &pos {
-                assert!(!seen[r as usize * mc + c as usize], "{}x{}", spec.rows, spec.cols);
+                assert!(
+                    !seen[r as usize * mc + c as usize],
+                    "{}x{}",
+                    spec.rows,
+                    spec.cols
+                );
                 seen[r as usize * mc + c as usize] = true;
             }
         }

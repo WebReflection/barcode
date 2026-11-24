@@ -13,13 +13,7 @@ fn inverted(c: &Canvas) -> Vec<u8> {
 fn assert_reads(name: &str, c: &Canvas, tiers: Tiers, want: &str) {
     let inv = inverted(c);
     let mut sc = BarcodeScanner::new();
-    let hits = sc.decode_still_core(
-        c.width as usize,
-        c.height as usize,
-        &inv,
-        tiers,
-        4000,
-    );
+    let hits = sc.decode_still_core(c.width as usize, c.height as usize, &inv, tiers, 4000);
     let hit = hits.iter().find(|h| h.text == want);
     assert!(
         hit.is_some(),
@@ -36,13 +30,7 @@ fn assert_reads(name: &str, c: &Canvas, tiers: Tiers, want: &str) {
     );
     // Also assert the upright fixture still reads (no polarity regression).
     let mut sc = BarcodeScanner::new();
-    let hits = sc.decode_still_core(
-        c.width as usize,
-        c.height as usize,
-        c.bits(),
-        tiers,
-        4000,
-    );
+    let hits = sc.decode_still_core(c.width as usize, c.height as usize, c.bits(), tiers, 4000);
     assert!(
         hits.iter().any(|h| h.text == want),
         "{name}: upright fixture stopped reading"
@@ -51,11 +39,19 @@ fn assert_reads(name: &str, c: &Canvas, tiers: Tiers, want: &str) {
 
 /// Render a module matrix with a quiet zone (2D families).
 fn render(matrix: &[u8], rows: usize, cols: usize, module: u32, quiet: u32) -> Canvas {
-    let mut c = Canvas::new((cols as u32 + 2 * quiet) * module, (rows as u32 + 2 * quiet) * module);
+    let mut c = Canvas::new(
+        (cols as u32 + 2 * quiet) * module,
+        (rows as u32 + 2 * quiet) * module,
+    );
     for y in 0..rows {
         for x in 0..cols {
             if matrix[y * cols + x] == 1 {
-                c.fill((quiet + x as u32) * module, (quiet + y as u32) * module, module, module);
+                c.fill(
+                    (quiet + x as u32) * module,
+                    (quiet + y as u32) * module,
+                    module,
+                    module,
+                );
             }
         }
     }
@@ -74,22 +70,68 @@ fn inverted_2d_families_read() {
     let quiet = 4;
 
     let qr = barcode_fixtures::encode_qr_text("INVERTED-QR", 0, 2, module).unwrap();
-    assert_reads("qrcode", &qr, Tiers { qr: true, ..Default::default() }, "INVERTED-QR");
+    assert_reads(
+        "qrcode",
+        &qr,
+        Tiers {
+            qr: true,
+            ..Default::default()
+        },
+        "INVERTED-QR",
+    );
 
     let mq = microqr_canvas("INVERTED", module, quiet);
-    assert_reads("microqr", &mq, Tiers { microqr: true, ..Default::default() }, "INVERTED");
+    assert_reads(
+        "microqr",
+        &mq,
+        Tiers {
+            microqr: true,
+            ..Default::default()
+        },
+        "INVERTED",
+    );
 
     let dm = barcode_dm::encode::encode(b"INVERTED-DM").unwrap();
     let dm_c = render(&dm.matrix, dm.spec.rows, dm.spec.cols, module, quiet);
-    assert_reads("datamatrix", &dm_c, Tiers { datamatrix: true, ..Default::default() }, "INVERTED-DM");
+    assert_reads(
+        "datamatrix",
+        &dm_c,
+        Tiers {
+            datamatrix: true,
+            ..Default::default()
+        },
+        "INVERTED-DM",
+    );
 
     let (spec, matrix) = barcode_aztec::encode::encode(b"INVERTED-AZTEC").unwrap();
-    let az_c = render(&matrix, spec.rows as usize, spec.cols as usize, module, quiet);
-    assert_reads("aztec", &az_c, Tiers { aztec: true, ..Default::default() }, "INVERTED-AZTEC");
+    let az_c = render(
+        &matrix,
+        spec.rows as usize,
+        spec.cols as usize,
+        module,
+        quiet,
+    );
+    assert_reads(
+        "aztec",
+        &az_c,
+        Tiers {
+            aztec: true,
+            ..Default::default()
+        },
+        "INVERTED-AZTEC",
+    );
 
     let pf = barcode_pdf417::encode::encode_full(b"INVERTED-PDF417", 2).unwrap();
     let pf_c = render(&pf.matrix, pf.height, pf.width, module, 2);
-    assert_reads("pdf417", &pf_c, Tiers { pdf417: true, ..Default::default() }, "INVERTED-PDF417");
+    assert_reads(
+        "pdf417",
+        &pf_c,
+        Tiers {
+            pdf417: true,
+            ..Default::default()
+        },
+        "INVERTED-PDF417",
+    );
 }
 
 #[test]
@@ -99,15 +141,87 @@ fn inverted_1d_families_read() {
     let quiet = 10 * module;
 
     let cases: Vec<(&str, Canvas, Tiers, &str)> = vec![
-        ("ean13", barcode_fixtures::encode_ean13("4006381333931", module, height, quiet), Tiers { ean13: true, ..Default::default() }, "4006381333931"),
-        ("upca", barcode_fixtures::encode_upca("036000291452", module, height, quiet), Tiers { upca: true, ..Default::default() }, "036000291452"),
-        ("ean8", barcode_fixtures::encode_ean8("96385074", module, height, quiet), Tiers { ean8: true, ..Default::default() }, "96385074"),
-        ("upce", barcode_fixtures::encode_upce("042100005264", module, height, quiet), Tiers { upce: true, ..Default::default() }, "042100005264"),
-        ("code39", barcode_fixtures::encode_code39("ABC-123", module, 3.0, height), Tiers { code39: true, ..Default::default() }, "ABC-123"),
-        ("code93", barcode_fixtures::encode_code93("TEST93", module, height), Tiers { code93: true, ..Default::default() }, "TEST93"),
-        ("code128", barcode_fixtures::encode_code128("CODE128", module, height), Tiers { code128: true, ..Default::default() }, "CODE128"),
-        ("itf", barcode_fixtures::encode_itf("12345670", module, 2.5, height), Tiers { itf: true, ..Default::default() }, "12345670"),
-        ("codabar", barcode_fixtures::encode_codabar("40156", module, 2.5, height), Tiers { codabar: true, ..Default::default() }, "40156"),
+        (
+            "ean13",
+            barcode_fixtures::encode_ean13("4006381333931", module, height, quiet),
+            Tiers {
+                ean13: true,
+                ..Default::default()
+            },
+            "4006381333931",
+        ),
+        (
+            "upca",
+            barcode_fixtures::encode_upca("036000291452", module, height, quiet),
+            Tiers {
+                upca: true,
+                ..Default::default()
+            },
+            "036000291452",
+        ),
+        (
+            "ean8",
+            barcode_fixtures::encode_ean8("96385074", module, height, quiet),
+            Tiers {
+                ean8: true,
+                ..Default::default()
+            },
+            "96385074",
+        ),
+        (
+            "upce",
+            barcode_fixtures::encode_upce("042100005264", module, height, quiet),
+            Tiers {
+                upce: true,
+                ..Default::default()
+            },
+            "042100005264",
+        ),
+        (
+            "code39",
+            barcode_fixtures::encode_code39("ABC-123", module, 3.0, height),
+            Tiers {
+                code39: true,
+                ..Default::default()
+            },
+            "ABC-123",
+        ),
+        (
+            "code93",
+            barcode_fixtures::encode_code93("TEST93", module, height),
+            Tiers {
+                code93: true,
+                ..Default::default()
+            },
+            "TEST93",
+        ),
+        (
+            "code128",
+            barcode_fixtures::encode_code128("CODE128", module, height),
+            Tiers {
+                code128: true,
+                ..Default::default()
+            },
+            "CODE128",
+        ),
+        (
+            "itf",
+            barcode_fixtures::encode_itf("12345670", module, 2.5, height),
+            Tiers {
+                itf: true,
+                ..Default::default()
+            },
+            "12345670",
+        ),
+        (
+            "codabar",
+            barcode_fixtures::encode_codabar("40156", module, 2.5, height),
+            Tiers {
+                codabar: true,
+                ..Default::default()
+            },
+            "40156",
+        ),
     ];
     for (name, c, tiers, want) in cases {
         assert_reads(name, &c, tiers, want);
@@ -133,7 +247,10 @@ fn inverted_1d_live_framing_reads() {
     }
     let inv = inverted(&frame);
     let mut sc = BarcodeScanner::new();
-    let tiers = Tiers { code128: true, ..Default::default() };
+    let tiers = Tiers {
+        code128: true,
+        ..Default::default()
+    };
     let hits = sc.decode_live_core(frame.width as usize, frame.height as usize, &inv, tiers);
     assert!(
         hits.iter().any(|h| h.text == "INVERTED-CODE128"),
@@ -164,15 +281,39 @@ fn inverted_databar_families_read() {
 
     let runs = barcode_fixtures::databar_omni_runs(v);
     let c = barcode_fixtures::databar_omni_canvas(&runs, module, height, 10 * module);
-    assert_reads("databar", &c, Tiers { databar: true, ..Default::default() }, want);
+    assert_reads(
+        "databar",
+        &c,
+        Tiers {
+            databar: true,
+            ..Default::default()
+        },
+        want,
+    );
 
     let runs = barcode_fixtures::databar_ltd_runs(v);
     let c = barcode_fixtures::databar_ltd_canvas(&runs, module, height, 10 * module);
-    assert_reads("databarltd", &c, Tiers { databarltd: true, ..Default::default() }, want);
+    assert_reads(
+        "databarltd",
+        &c,
+        Tiers {
+            databarltd: true,
+            ..Default::default()
+        },
+        want,
+    );
 
     let runs = barcode_fixtures::databar_omni_runs(v);
     let c = barcode_fixtures::databar_stacked_canvas(&runs, module, 10 * module, false);
-    assert_reads("databarstk", &c, Tiers { databarstk: true, ..Default::default() }, want);
+    assert_reads(
+        "databarstk",
+        &c,
+        Tiers {
+            databarstk: true,
+            ..Default::default()
+        },
+        want,
+    );
 }
 
 /// Paste the INVERTED rendering of a fixture into the middle of a white
@@ -216,7 +357,10 @@ fn inverted_code_on_a_light_page_reads_still() {
         page.width as usize,
         page.height as usize,
         page.bits(),
-        Tiers { qr: true, ..Default::default() },
+        Tiers {
+            qr: true,
+            ..Default::default()
+        },
         4000,
     );
     assert!(
@@ -230,7 +374,10 @@ fn inverted_code_on_a_light_page_reads_still() {
 fn still_inverted_does_not_leak_polarity_and_live_ttl_decays() {
     let code = barcode_fixtures::encode_code128("INV-LEAK-1", 4, 80);
     let inv = inverted(&code);
-    let tiers = Tiers { code128: true, ..Default::default() };
+    let tiers = Tiers {
+        code128: true,
+        ..Default::default()
+    };
 
     // 1. A still inverted read must NOT set remembered polarity for future live scans.
     let mut sc = BarcodeScanner::new();
@@ -240,8 +387,16 @@ fn still_inverted_does_not_leak_polarity_and_live_ttl_decays() {
     // leaked from the still scan, decode_live_core would try inverted first
     // and decode it; without a leak, live does not invert a <50% ink frame.
     let island = inverted_on_white_page(&code, 1056);
-    let leaked = sc.decode_live_core(island.width as usize, island.height as usize, island.bits(), tiers);
-    assert!(leaked.is_empty(), "still inverted leaked polarity into live scan");
+    let leaked = sc.decode_live_core(
+        island.width as usize,
+        island.height as usize,
+        island.bits(),
+        tiers,
+    );
+    assert!(
+        leaked.is_empty(),
+        "still inverted leaked polarity into live scan"
+    );
 
     // 2. A live inverted hit remembers polarity for close-up confirmation,
     //    then decays cleanly after a few blank misses so it does not linger.
@@ -260,15 +415,26 @@ fn still_inverted_does_not_leak_polarity_and_live_ttl_decays() {
         }
         f
     });
-    assert!(sc2.decode_live_core(1056, 1056, &full_inv, tiers).iter().any(|h| h.text == "INV-LEAK-1"));
+    assert!(sc2
+        .decode_live_core(1056, 1056, &full_inv, tiers)
+        .iter()
+        .any(|h| h.text == "INV-LEAK-1"));
     // Feed 3 blank (normal white) frames to expire the TTL.
     let blank = Canvas::new(128, 128);
     for _ in 0..3 {
-        assert!(sc2.decode_live_core(128, 128, blank.bits(), tiers).is_empty());
+        assert!(sc2
+            .decode_live_core(128, 128, blank.bits(), tiers)
+            .is_empty());
     }
     // After decay, a <50% ink inverted island is no longer decoded via stale polarity.
     assert!(
-        sc2.decode_live_core(island.width as usize, island.height as usize, island.bits(), tiers).is_empty(),
+        sc2.decode_live_core(
+            island.width as usize,
+            island.height as usize,
+            island.bits(),
+            tiers
+        )
+        .is_empty(),
         "live inverted TTL failed to decay after blank misses"
     );
 }
