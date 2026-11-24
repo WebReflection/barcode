@@ -95,25 +95,6 @@ export function cropDrawable(source: CanvasImageSource | HTMLVideoElement, box: 
     }[];
 }>;
 /**
- * Shrink a linear proposal to the actual symbol INSIDE it, in source
- * pixels. Two things a generous crop brings in that the row scanner
- * cannot tolerate:
- *
- * 1. a solid dark edge — the label border, or the cardboard behind it —
- *    sitting where the mandated quiet zone should be. A column that is
- *    ink on nearly every row is a border, never a barcode element, so
- *    such edges are trimmed first (bounded to 30% of the box per side).
- * 2. paper margins beyond the bars. After the trim, the box shrinks to
- *    its ink extents plus a small pad; the caller can then re-pad on
- *    paper white to restore the quiet zone exactly.
- *
- * @param {BinarizedFrame} frame
- * @param {RoiBox} box
- * @param {number} sourceW @param {number} sourceH
- * @returns {RoiBox | null}
- */
-export function tightenLinearBox(frame: BinarizedFrame, box: RoiBox, sourceW: number, sourceH: number): RoiBox | null;
-/**
  * Horizontal mirror of a crop, at source resolution. A 180°-presented
  * 1D symbol is the common phone case (the label is upside down), and the
  * mask-level mirror in wasm is starved when the binarization itself is

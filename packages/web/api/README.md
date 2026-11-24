@@ -293,7 +293,7 @@ than merely distance-weighted:
 | tier | meaning | score |
 | --- | --- | --- |
 | **A** | the frame center point is inside the symbol's quad | `0.85 .. 1.00` |
-| **B** | the symbol crosses the center scan line, not the center point | `0.45 .. 0.82` |
+| **B** | the symbol crosses the center scan line, not the center point | `0.45 .. 0.78` |
 | **C** | surrounding / peripheral | `0 .. 0.42` |
 
 The tier floors do not overlap, so the code under the reticle always

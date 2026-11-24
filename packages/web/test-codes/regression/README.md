@@ -35,8 +35,8 @@ Ground truth (source pixels, 1152 × 2048):
 | `c128_serial` | `code128` | `W6ARAC0042936RB` | (421, 1077) |
 | `c128_check` | `code128` | `WX0X` | (843, 1046) |
 
-Documented open (the suite tracks them as **XFAIL**, never as a different code): the
-P/N and Serial strips print at ~2.3 / ~2.1 px per module and the fuzzy Code 128
-matcher still misreads a character at the 860px framing (`9&AR&/M2-M00&F0`,
-`*(ARA%&0"233&%B`). At the 640px (~1.4× zoom) framing the P/N strip reads
-exactly. Fixing that is the next 1D-recall item, not a center-priority one.
+Documented open (tracked as **XFAIL** only on an honest empty no-read — a
+corrupted string or a surrounding code is always a hard failure): at the wide
+`860px` framing, `c128_serial` prints at ~2.1 px/module next to the brown box
+edge and returns no read; at the `640px` (~1.4× zoom) framing **all 7/7 codes**
+decode to their exact payloads in both still and live modes.

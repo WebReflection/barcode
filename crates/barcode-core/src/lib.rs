@@ -590,6 +590,22 @@ pub fn plurality<'a, K, V>(
     best.filter(|(_, value)| count(value) > second)
 }
 
+/// True when a 1D hit's horizontal span covers (or is within 4% / 8px of)
+/// the frame's horizontal center. Used to gate fast early-return in
+/// `LinearDecoder::scan_line`: a centered exact hit stops scanning rows
+/// immediately (2 rows, sub-ms), while a peripheral hit keeps scanning so
+/// a centered barcode of the same symbology on the same or nearby rows is
+/// never starved.
+#[inline]
+pub fn x_contains_center(x_start: u32, x_end: u32, width: u32) -> bool {
+    if width == 0 {
+        return true;
+    }
+    let cx = width / 2;
+    let tol = (width / 25).max(8);
+    cx.saturating_add(tol) >= x_start && cx <= x_end.saturating_add(tol)
+}
+
 /// A symbology decoder. Implementations must be allocation-frugal on the hot
 /// path (reuse scratch buffers internally) and must never panic on hostile
 /// input: barcodes come from an untrusted camera pointed at the world.
@@ -606,6 +622,14 @@ pub trait LinearDecoder: SymbologyDecoder {
     fn reset(&mut self);
     fn scan_line(&mut self, row: &RowRuns, y: u32) -> Option<DecodeResult>;
     fn finish_votes(&self) -> Option<DecodeResult>;
+    /// All distinct validated candidates collected during the scan. When a
+    /// frame contains multiple symbols of the same symbology (e.g. an EAN-13
+    /// and a UPC-A on the same box label) and none triggered centered early
+    /// exit, returning every validated candidate lets the ranker pick the
+    /// centered one instead of whichever symbol happened to be tallest.
+    fn finish_all(&self) -> Vec<DecodeResult> {
+        self.finish_votes().into_iter().collect()
+    }
     /// Total votes accumulated since `reset()` (0 in O(1) when empty).
     /// Used by strided live scanning to trigger immediate adjacent-row
     /// (`y ± 1`) corroboration the moment any row records a vote.
@@ -619,11 +643,9 @@ pub fn decode_linear_single<D: LinearDecoder>(dec: &mut D, image: &BitImage) -> 
     dec.reset();
     for y in 0..image.height {
         row.scan_row(image, y);
-        // Every row votes: the plurality in `finish_votes` arbitrates. An
-        // early return here would trust the FIRST row that decodes, and a
-        // symbol's human-readable digits can decode a few rows before its
-        // bars do.
-        dec.scan_line(&row, y);
+        if let Some(hit) = dec.scan_line(&row, y) {
+            return vec![hit];
+        }
     }
     dec.finish_votes().into_iter().collect()
 }

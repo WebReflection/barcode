@@ -308,17 +308,21 @@ impl LinearDecoder for Code39Decoder {
             let Some(c) = Self::try_from(row, start) else {
                 continue;
             };
-            let e = self
-                .votes
-                .entry(c.text.clone())
-                .or_insert((0, c.x_start, c.x_end, y, y));
-            // Every row votes; `finish_votes` arbitrates by plurality. An
-            // early return here would trust the first row that decodes.
-            e.0 += 1;
-            e.1 = e.1.min(c.x_start);
-            e.2 = e.2.max(c.x_end);
-            e.3 = e.3.min(y);
-            e.4 = e.4.max(y);
+            let (count, x0, x1, y0, y1) = {
+                let e = self
+                    .votes
+                    .entry(c.text.clone())
+                    .or_insert((0, c.x_start, c.x_end, y, y));
+                e.0 += 1;
+                e.1 = e.1.min(c.x_start);
+                e.2 = e.2.max(c.x_end);
+                e.3 = e.3.min(y);
+                e.4 = e.4.max(y);
+                *e
+            };
+            if count >= self.min_rows && barcode_core::x_contains_center(x0, x1, row.width) {
+                return Some(self.finish(&c.text, x0, x1, y0, y1));
+            }
         }
         None
     }
@@ -326,6 +330,14 @@ impl LinearDecoder for Code39Decoder {
     fn finish_votes(&self) -> Option<DecodeResult> {
         barcode_core::plurality(&self.votes, |v| v.0, self.min_rows)
             .map(|(t, v)| self.finish(t, v.1, v.2, v.3, v.4))
+    }
+
+    fn finish_all(&self) -> Vec<DecodeResult> {
+        self.votes
+            .iter()
+            .filter(|(_, v)| v.0 >= self.min_rows)
+            .map(|(t, v)| self.finish(t, v.1, v.2, v.3, v.4))
+            .collect()
     }
 
     fn vote_count(&self) -> usize {

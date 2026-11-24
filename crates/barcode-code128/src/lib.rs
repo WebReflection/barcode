@@ -65,20 +65,22 @@ const CHAR_AVG_VARIANCE: f32 = 0.55;
 const STOP_AVG_VARIANCE: f32 = 0.6;
 const ELEMENT_VARIANCE: f32 = 1.4;
 
-/// The left quiet zone is the structural gate the mod-103 checksum
-/// cannot be: a start pattern *inside* another symbol's bars (ITF/Code
-/// 39) has a 1-3 module inter-element space before it, and a 1-in-103
-/// checksum coincidence on consecutive rows used to confirm values like
-/// `:52620` on a pharma box holding only Code 32 + DataMatrix + ITF-10.
-///
-/// The standard mandates 10 modules, but real retail labels print ~6
-/// when the bars butt against the label's edge (the committed
-/// `code128-small-quiet-zone` fixture measured 6 and zxing reads it).
-/// 4.5 still rejects every intra-symbol space a Code 39/ITF/DataBar
-/// strip can contain, which is what the gate exists for; the stop
-/// pattern, the 1/103 checksum and the row plurality do the rest. Half a
-/// module of tolerance for print/crop smear.
-const QUIET_MODULES: f32 = 4.5;
+/// ISO/IEC 15417 requires a quiet zone of at least 10 modules before the
+/// start and after the stop. The left one is also the structural gate the
+/// mod-103 checksum cannot be: a start pattern *inside* another symbol's
+/// bars (ITF/Code 39) has a narrow inter-element space before it, and a
+/// 1-in-103 checksum coincidence on consecutive rows used to confirm
+/// values like `:52620` on a pharma box holding only Code 32 + DataMatrix
+/// + ITF-10. Half a module of tolerance for print/crop smear.
+const QUIET_MODULES: f32 = 9.5;
+
+/// Tight quiet-zone floor accepted ONLY for exact, multi-character
+/// (`>= 4` data codewords) symbols whose left AND right quiet zones both
+/// exceed this floor. Real retail labels print ~6 modules next to a box
+/// edge (`lot-of-codes`, `code128-small-quiet-zone`), while inter-element
+/// spaces inside Code 39 / ITF / DataBar are 1–3 modules; restricting this
+/// floor to exact multi-char decodes keeps fuzzy/short false positives out.
+const TIGHT_QUIET_MODULES: f32 = 4.5;
 
 /// `PATTERNS` transposed for the SIMD closest-pattern search: element-major,
 /// padded to a multiple of the 4-lane vector. The padding patterns are
@@ -243,11 +245,11 @@ impl Code128Decoder {
                 return Some((v as u8, unit, true, 0.0));
             }
         }
-        // A 1-module element printed at ~2 px/module can binarize to a
-        // single pixel (0.43 modules): the old 0.5 floor rejected the
-        // WHOLE character, so a packed label's 2.1-2.4 px/module Code 128
-        // never produced a candidate. Let the fuzzy matcher arbitrate.
-        if raw.iter().any(|&v| v < 0.25 || v > 4.75) {
+        // A 1-module element printed at 2.1-2.8 px/module can binarize to a
+        // single pixel (0.36-0.47 modules). Allow down to 0.35 so clean
+        // low-pitch symbols (including Safari/WebKit GPU masks) still decode;
+        // tight quiet zones remain gated on `total_fuzzy <= 2 && avg_err <= 0.08`.
+        if raw.iter().any(|&v| v < 0.35 || v > 4.65) {
             return None;
         }
         closest_pattern(&raw).map(|(err, v)| (v, unit, false, err))
@@ -255,8 +257,9 @@ impl Code128Decoder {
 
     /// The start-only variant of [`char_value`]: bounds, unit, quiet zone,
     /// then the three start patterns (exact rounding, else closest within
-    /// the same tolerances, verified via `closest_pattern`).
-    fn start_value(row: &RowRuns, k: usize) -> Option<(u8, f32, bool, f32)> {
+    /// the same tolerances, verified via `closest_pattern`). Returns
+    /// `(start_value, unit, exact, err, tight_quiet)`.
+    fn start_value(row: &RowRuns, k: usize) -> Option<(u8, f32, bool, f32, bool)> {
         let runs = &row.runs;
         if k + 6 > runs.len() {
             return None;
@@ -267,10 +270,16 @@ impl Code128Decoder {
             return None;
         }
         // ISO/IEC 15417 quiet zone: the start must be preceded by white
-        // space, not by another symbol's bar.
-        if k == 0 || runs[k - 1].0 || (runs[k - 1].1 as f32) < QUIET_MODULES * unit {
+        // space, not by another symbol's bar. Allow [4.5, 9.5) modules only
+        // as a tight-quiet candidate (later restricted to >=4-char low-error).
+        if k == 0 || runs[k - 1].0 {
             return None;
         }
+        let quiet_px = runs[k - 1].1 as f32;
+        if quiet_px < TIGHT_QUIET_MODULES * unit {
+            return None;
+        }
+        let tight_quiet = quiet_px < QUIET_MODULES * unit;
         let inv_unit = 1.0 / unit;
         let mut raw = [0f32; 6];
         let mut exact = true;
@@ -284,10 +293,10 @@ impl Code128Decoder {
         if exact {
             let w = raw.map(|v| v.round() as u8);
             if let Some((_, v)) = START_PATTERNS.iter().find(|(p, _)| *p == w) {
-                return Some((*v, unit, true, 0.0));
+                return Some((*v, unit, true, 0.0, tight_quiet));
             }
         }
-        if raw.iter().any(|&v| v < 0.25 || v > 4.75) {
+        if raw.iter().any(|&v| v < 0.35 || v > 4.65) {
             return None;
         }
         let mut near_start = false;
@@ -308,10 +317,12 @@ impl Code128Decoder {
             return None;
         }
         let (err, v) = closest_pattern(&raw)?;
-        matches!(v, 103..=105).then_some((v, unit, false, err))
+        matches!(v, 103..=105).then_some((v, unit, false, err, tight_quiet))
     }
 
-    /// The 7-run stop: 2,3,3,1,1,1,2 modules.
+    /// The 7-run stop: 2,3,3,1,1,1,2 modules, plus minimal trailing quiet zone
+    /// (>= 4.5 modules) so a fake stop inside another symbol's bars is rejected.
+    /// Returns `(kind: 0=none 1=fuzzy 2=exact, mean_err)`.
     fn stop_at_impl(row: &RowRuns, k: usize) -> (u8, f32) {
         let runs = &row.runs;
         if k + 7 > runs.len() {
@@ -321,6 +332,11 @@ impl Code128Decoder {
         let unit = sum as f32 / 13.0;
         if unit < 1.0 {
             return (0, 0.0);
+        }
+        if let Some(&(ink, w)) = runs.get(k + 7) {
+            if ink || (w as f32) < TIGHT_QUIET_MODULES * unit {
+                return (0, 0.0);
+            }
         }
         let inv_unit = 1.0 / unit;
         let mut err = 0.0f32;
@@ -348,7 +364,8 @@ impl Code128Decoder {
 
     /// Decode a symbol whose first bar run is at `start`.
     fn try_from(row: &RowRuns, start: usize) -> Option<Candidate> {
-        let Some((first, _unit, mut exact, first_err)) = Self::start_value(row, start) else {
+        let Some((first, _unit, mut exact, first_err, tight_left)) = Self::start_value(row, start)
+        else {
             return None;
         };
         let _set = match first {
@@ -358,6 +375,7 @@ impl Code128Decoder {
         };
         let mut values: Vec<u8> = vec![first];
         let mut score = first_err;
+        let mut fuzzy_chars: usize = usize::from(!exact);
         let mut k = start + 6;
         let mut fallback: Option<(Candidate, usize)> = None;
         loop {
@@ -366,13 +384,28 @@ impl Code128Decoder {
                 if stop != 0 {
                     let check = *values.last().unwrap();
                     let data = &values[1..values.len() - 1];
-                    if !data.is_empty() && check_valid(first, data, check) {
+                    let cand_exact = exact && stop == 2;
+                    let total_fuzzy = fuzzy_chars + usize::from(stop != 2);
+                    let total_err = score + stop_err;
+                    let avg_err = total_err / ((data.len() + 3) as f32);
+                    // Tight left quiet zones ([4.5, 9.5) modules) require >= 4
+                    // codewords AND either exact decoding or at most 2
+                    // low-error fuzzy characters (mod-103 catches 100% of
+                    // single-char errors, whereas >=3 fuzzy chars can collide
+                    // into corrupted strings like `9&AR&/M2-M00&F0`). 1-char
+                    // symbols require exact decoding AND full quiet zones so
+                    // noisy text/bars never decode as `"W"`.
+                    let structural_ok = (!tight_left
+                        || (data.len() >= 4
+                            && (cand_exact || (total_fuzzy <= 2 && avg_err <= 0.08))))
+                        && (data.len() >= 2 || cand_exact);
+                    if !data.is_empty() && structural_ok && check_valid(first, data, check) {
                         let cand = Candidate {
                             text: build_text(first, data),
                             x_start: row.offsets[start],
                             x_end: row.offsets[k + 6] + row.runs[k + 6].1,
-                            exact: exact && stop == 2,
-                            score: score + stop_err,
+                            exact: cand_exact,
+                            score: total_err,
                         };
                         if cand.exact {
                             return Some(cand);
@@ -387,6 +420,9 @@ impl Code128Decoder {
                 return fallback.map(|(c, _)| c);
             };
             exact &= this_exact;
+            if !this_exact {
+                fuzzy_chars += 1;
+            }
             score += err;
             values.push(v);
             k += 6;
@@ -456,49 +492,65 @@ impl LinearDecoder for Code128Decoder {
                 e.6 = e.6.min(c.score);
                 *e
             };
-            if count >= self.min_rows && exact >= self.min_rows {
+            let need = if c.text.len() <= 1 {
+                self.min_rows.max(3)
+            } else {
+                self.min_rows
+            };
+            if count >= need && exact >= need && barcode_core::x_contains_center(x0, x1, row.width)
+            {
                 return Some(self.finish(&c.text, x0, x1, y0, y1));
             }
         }
         None
     }
 
-    /// Exact rows win over fuzzy ones, and BOTH need a plurality: a
-    /// fragment of the same strip (measured: `"W"` inside `"WX0X"`) can
-    /// win a couple of rows without ever being a real symbol. The fuzzy
-    /// fallback keeps the tight-label lever alive but demands a clear
-    /// majority too, so a corrupted string (`8(A%AC&042936RB`) can no
-    /// longer outrank the exact read of the same strip.
+    /// Exact rows win over fuzzy ones; fuzzy hits need a plurality and a
+    /// bounded per-character pattern error so eroded low-pitch bars don't
+    /// confirm corrupted strings ahead of 2x Otsu ROI.
     fn finish_votes(&self) -> Option<DecodeResult> {
-        // (count, exact) accessors for the vote tuple.
-        let count = |v: &(usize, usize, u32, u32, u32, u32, f32)| v.0;
-        let exact = |v: &(usize, usize, u32, u32, u32, u32, f32)| v.1;
-        // Exact: plurality of the exact-row count.
-        let mut pick: Option<(&String, &(usize, usize, u32, u32, u32, u32, f32))> = None;
-        let mut second = 0;
-        for (t, v) in &self.votes {
-            if exact(v) < self.min_rows {
-                continue;
-            }
-            match pick {
-                Some((_, p)) if exact(p) >= exact(v) => second = second.max(exact(v)),
-                Some((_, p)) => {
-                    second = second.max(exact(p));
-                    pick = Some((t, v));
+        if let Some((t, v)) = self
+            .votes
+            .iter()
+            .filter(|(t, v)| {
+                v.1 >= if t.len() <= 1 {
+                    self.min_rows.max(3)
+                } else {
+                    self.min_rows
                 }
-                None => pick = Some((t, v)),
-            }
+            })
+            .max_by_key(|(_, v)| (v.1, v.0))
+        {
+            return Some(self.finish(t, v.2, v.3, v.4, v.5));
         }
-        if pick.is_some_and(|(_, p)| exact(p) > second) {
-            return pick.map(|(t, v)| self.finish(t, v.2, v.3, v.4, v.5));
-        }
-        // Fuzzy: a print-damaged symbol has no exact rows at all (the
-        // receipt fixture), so this path cannot demand them. It still
-        // demands a plurality of the total votes, which is what rejects a
-        // fragment of the strip ("W" inside "WX0X") and a corrupted read
-        // that only a handful of rows produced.
-        barcode_core::plurality(&self.votes, count, self.min_rows)
+        // Fuzzy fallback: pick the candidate with the lowest pattern-fit MSE
+        // (`v.6`). On thermal receipts (`esselunga-receipt-112253`), merged/
+        // eroded bars land around 0.1–0.3 per char and the true sequence fits
+        // the table much better than a misaligned checksum collision.
+        self.votes
+            .iter()
+            .filter(|(t, v)| v.0 >= self.min_rows && t.len() >= 2)
+            .min_by(|(_, a), (_, b)| a.6.total_cmp(&b.6))
             .map(|(t, v)| self.finish(t, v.2, v.3, v.4, v.5))
+    }
+
+    fn finish_all(&self) -> Vec<DecodeResult> {
+        let exact: Vec<DecodeResult> = self
+            .votes
+            .iter()
+            .filter(|(t, v)| {
+                v.1 >= if t.len() <= 1 {
+                    self.min_rows.max(3)
+                } else {
+                    self.min_rows
+                }
+            })
+            .map(|(t, v)| self.finish(t, v.2, v.3, v.4, v.5))
+            .collect();
+        if !exact.is_empty() {
+            return exact;
+        }
+        self.finish_votes().into_iter().collect()
     }
 
     fn vote_count(&self) -> usize {

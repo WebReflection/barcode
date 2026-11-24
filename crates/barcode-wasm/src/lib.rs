@@ -474,15 +474,23 @@ impl BarcodeScanner {
             // drop any 1D hit that overlaps a decoded 2D symbol's quad —
             // that hit is the 2D symbol's own texture, and suppressing it
             // is what the old whole-frame exclusivity rule existed for.
-            let boxes: Vec<(f32, f32, f32, f32)> = two_d.iter().map(quad_box).collect();
+            let boxes: Vec<(f32, f32, f32, f32)> = two_d
+                .iter()
+                .map(|r| {
+                    let (a, b, c, d) = quad_box(r);
+                    // Inflate by 12% of the symbol's longest edge (min 8px) so
+                    // noisy 1D hits along a 2D symbol's outer quiet-zone border
+                    // are suppressed along with its interior texture.
+                    let pad = ((c - a).max(d - b) * 0.12).max(8.0);
+                    (a - pad, b - pad, c + pad, d + pad)
+                })
+                .collect();
             out.extend(two_d);
             out.extend(
                 decode_linear(self.linear_decoders(), img, tiers, allow_quarter, still)
                     .into_iter()
                     .filter(|r| {
                         let (x0, y0, x1, y1) = quad_box(r);
-                        // Inflated overlap test: a 1D strip drawn from the
-                        // SAME pixels as a 2D symbol is its texture.
                         !boxes
                             .iter()
                             .any(|&(a, b, c, d)| x0 < c && x1 > a && y0 < d && y1 > b)
@@ -1007,9 +1015,7 @@ fn scan_linear_orientation(
     }
     for (i, d) in active.iter_mut().enumerate() {
         if !done[i] {
-            if let Some(hit) = d.finish_votes() {
-                out.push(hit);
-            }
+            out.extend(d.finish_all());
         }
     }
     out

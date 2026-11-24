@@ -13,27 +13,33 @@
  *
  *   Tier A — the frame center point is inside the symbol's quad
  *            (`0.85 .. 1.00`): the code under the reticle.
- *   Tier B — the quad crosses the center scan line (the UI line) but not
- *            the center point (`0.45 .. 0.82`).
+ *   Tier B — the quad crosses the horizontal center scan line (or the
+ *            vertical axis for a vertically oriented 1D strip), but not
+ *            the center point (`0.45 .. 0.78`).
  *   Tier C — surrounding / peripheral (`0 .. 0.42`), steeply decaying.
  *
- * The floors do not overlap, so a centered code always outranks a nearby
- * one. Tiering is a *ranking*, never a filter: a peripheral code is still
- * returned, it just loses the race. The public contract (`score` 1 = dead
- * center, 0 = frame corner; bigger symbol breaks ties) is unchanged.
+ * The floors do not overlap and `CENTERED_SCORE` sits at Tier A's floor
+ * (`0.85`), so a non-centered Tier B symbol can never trigger centered
+ * early exits or 2-frame centered confirmation. Tiering is a *ranking*,
+ * never a filter: a peripheral code is still returned, it just loses the
+ * race. The public contract (`score` 1 = dead center, 0 = frame corner;
+ * bigger symbol breaks ties) is unchanged.
  */
 
 /** @typedef {{ position: Array<{x: number, y: number}>, score?: number }} Rankable */
 
-/** Tier A floor: the frame center point is inside the quad. */
-export const CENTERED_SCORE = 0.78;
+/** Tier A floor: only a quad containing the frame center is "centered". */
+export const CENTERED_SCORE = 0.85;
 /** Tier C ceiling: surrounding codes never reach a centered tier. */
 export const PERIPHERAL_CAP = 0.42;
 /** How much of the viewfinder edge the UI scan line spans (12% inset). */
 const INSET = 0.12;
 /** Tolerance (fraction of the shorter side) for a center point sitting on
- *  a thin 1D strip's edge after mask rounding. */
-const TOL = 0.02;
+ *  a thin 1D strip's edge: a 1D decoder that early-returns after 2 rows
+ *  reports a 1-2px-tall sliver even when the physical bars span ~10% of the
+ *  frame across the reticle. 5% (~32px on 640px) covers the bar half-height
+ *  while staying well inside the ~15-20% gap to any neighbouring code. */
+const TOL = 0.05;
 
 /**
  * Attach `score` to every code and sort best-first. Coordinates are
@@ -79,9 +85,15 @@ export const rankCodes = (codes, width, height) => {
     const n = position.length;
     const inside =
       cx >= x0 - tol && cx <= x1 + tol && cy >= y0 - tol && cy <= y1 + tol;
+    // The UI draws a horizontal scan line across the middle of the frame.
+    // Only vertically oriented strips (height > 1.5 * width) also qualify on
+    // the vertical center axis — otherwise codes stacked above or below the
+    // reticle on a packed label (like a top-right QR above an EAN-13) would
+    // get promoted from Tier C into Tier B.
+    const verticalStrip = y1 - y0 > (x1 - x0) * 1.5;
     const onLine =
       (cy >= y0 - tol && cy <= y1 + tol && x1 >= lx0 && x0 <= lx1) ||
-      (cx >= x0 - tol && cx <= x1 + tol && y1 >= ly0 && y0 <= ly1);
+      (verticalStrip && cx >= x0 - tol && cx <= x1 + tol && y1 >= ly0 && y0 <= ly1);
     // Distance from the center point to the axis-aligned quad box (0 when
     // inside), blended with the centroid distance.
     const dBox = Math.hypot(
@@ -93,7 +105,7 @@ export const rankCodes = (codes, width, height) => {
     const radial = Math.exp(-3.2 * dNorm * dNorm);
     let score;
     if (inside) score = 0.85 + 0.15 * (1 - Math.min(1, dCentroid / radius));
-    else if (onLine) score = Math.min(0.82, 0.45 + 0.37 * radial);
+    else if (onLine) score = Math.min(0.78, 0.45 + 0.33 * radial);
     else score = Math.min(PERIPHERAL_CAP, PERIPHERAL_CAP * radial);
     code.score = Math.max(0, Math.min(1, score));
   }

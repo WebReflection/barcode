@@ -6,7 +6,7 @@
  */
 
 import { CENTERED_SCORE, PERIPHERAL_CAP, hasCentered, isCentered, rankCodes } from "../src/rank.js";
-import { centerRoiCandidates, tightenLinearBox } from "../src/roi.js";
+import { centerRoiCandidates } from "../src/roi.js";
 
 /** @type {[string, () => void][]} */
 const CHECKS = [];
@@ -22,9 +22,6 @@ const quad = (x0, y0, x1, y1) => [
 ];
 /** @param {number} x @param {number} y @param {number} side */
 const square = (x, y, side) => quad(x, y, x + side, y + side);
-
-const close = (/** @type {number} */ a, /** @type {number} */ b, /** @type {number} */ eps = 1e-6) =>
-  Math.abs(a - b) <= eps;
 
 check("a dead-center quad scores ~1 and is centered", () => {
   const [code] = rankCodes([{ position: square(400, 400, 200) }], 1000, 1000);
@@ -47,24 +44,34 @@ check("a corner quad is peripheral and capped", () => {
   }
 });
 
-check("tiers never overlap: centered > scan-line > peripheral", () => {
+check("tiers never overlap and Tier B never passes isCentered", () => {
   const centered = rankCodes([{ position: square(430, 430, 140) }], 1000, 1000)[0];
-  // A bar strip on the center line but ending left of the center column,
-  // so the frame center point is NOT inside it.
+  // A bar strip on the horizontal center line but ending left of the center
+  // column, so the frame center point is NOT inside it.
   const onLine = rankCodes([{ position: quad(60, 470, 380, 530) }], 1000, 1000)[0];
   const peripheral = rankCodes([{ position: square(20, 20, 90) }], 1000, 1000)[0];
   if (!(centered.score > onLine.score)) throw new Error(`centered ${centered.score} <= onLine ${onLine.score}`);
   if (!(onLine.score > peripheral.score)) throw new Error(`onLine ${onLine.score} <= peripheral ${peripheral.score}`);
   if (!(centered.score >= CENTERED_SCORE)) throw new Error("centered below the gate");
-  if (!(onLine.score <= 0.82 + 1e-9)) throw new Error(`onLine ${onLine.score} above the Tier B ceiling`);
+  if (!(onLine.score < CENTERED_SCORE)) throw new Error(`Tier B ${onLine.score} must stay below CENTERED_SCORE ${CENTERED_SCORE}`);
   if (!isCentered(centered)) throw new Error("centered must pass isCentered");
+  if (isCentered(onLine)) throw new Error("Tier B must NOT pass isCentered");
+});
+
+check("a square/horizontal code stacked above the reticle stays Tier C", () => {
+  // Directly above (500, 500) on x = 500 (like a top-right QR above an EAN
+  // on a packed label): must NOT get a Tier B bonus just for sharing x = cx.
+  const qrAbove = rankCodes([{ position: square(440, 160, 120) }], 1000, 1000)[0];
+  const barBelow = rankCodes([{ position: quad(300, 680, 700, 740) }], 1000, 1000)[0];
+  if (!(qrAbove.score <= PERIPHERAL_CAP + 1e-9)) throw new Error(`qrAbove ${qrAbove.score} leaked out of Tier C`);
+  if (!(barBelow.score <= PERIPHERAL_CAP + 1e-9)) throw new Error(`barBelow ${barBelow.score} leaked out of Tier C`);
 });
 
 check("a vertical strip crossing the vertical center axis is Tier B", () => {
-  // Tall but stopping well above the center row: crosses x = 500 only.
+  // Tall vertical 1D strip (h > 1.5 * w) stopping above the center row.
   const code = rankCodes([{ position: quad(470, 40, 530, 380) }], 1000, 1000)[0];
   if (!(code.score > PERIPHERAL_CAP)) throw new Error(`score ${code.score}`);
-  if (!(code.score <= 0.82 + 1e-9)) throw new Error(`score ${code.score} above Tier B`);
+  if (!(code.score < CENTERED_SCORE)) throw new Error(`score ${code.score} above Tier B`);
 });
 
 check("ranking is best-first and keeps every candidate", () => {
@@ -72,7 +79,7 @@ check("ranking is best-first and keeps every candidate", () => {
     [
       { position: square(20, 20, 80), id: "corner" },
       { position: square(430, 430, 140), id: "center" },
-      { position: quad(60, 470, 700, 530), id: "line" },
+      { position: quad(60, 470, 380, 530), id: "line" },
     ],
     1000,
     1000,
@@ -101,24 +108,6 @@ check("centerRoiCandidates covers the reticle and stays in bounds", () => {
   }
   if (tight.w >= wide.w) throw new Error("the tight strip must be narrower");
   if (!(sq.w === sq.h)) throw new Error("the square crop must be square");
-});
-
-check("tightenLinearBox drops a dark label border from a bar strip", () => {
-  // 400x120 frame: a dark 3px border on the left, then 30px of paper, then
-  // a 300px bar strip made of alternating 4px bars.
-  const frame = { width: 400, height: 120, bytesPerRow: 52, data: new Uint8Array(52 * 120) };
-  const ink = (/** @type {number} */ x, /** @type {number} */ y) => {
-    frame.data[y * frame.bytesPerRow + (x >> 3)] |= 1 << (x & 7);
-  };
-  for (let y = 0; y < 120; y++) for (let x = 0; x < 3; x++) ink(x, y);
-  for (let y = 40; y < 80; y++) for (let x = 33; x < 333; x++) if (((x - 33) >> 2) % 2 === 0) ink(x, y);
-  const generous = { x: 0, y: 20, w: 400, h: 80, score: 10 };
-  const tight = tightenLinearBox(frame, generous, 400, 120);
-  if (!tight) throw new Error("expected a tightened box");
-  // The 3px dark border must be OUTSIDE the crop (a few px of pad past the
-  // first bar is fine and desirable: the caller re-pads on paper white).
-  if (!(tight.x > 3)) throw new Error(`tightened x ${tight.x} still includes the border`);
-  if (!(tight.x + tight.w <= 342)) throw new Error(`tightened right ${tight.x + tight.w}`);
 });
 
 const run = () => {

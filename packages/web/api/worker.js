@@ -20,9 +20,9 @@ import { CpuBinarizer } from '../src/cpu-binarizer.js';
 import { getWasmScanner, decodeFrame } from '../src/decoder.js';
 import { rotateDrawable } from '../src/source-rotate.js';
 import { liftDim } from '../src/source-lift.js';
-import { centerRoiCandidates, cropDrawable, linearRoiCandidates, mirrorDrawable, otsuMask, padDrawable, roiCandidates, tightenLinearBox } from '../src/roi.js';
+import { centerRoiCandidates, cropDrawable, linearRoiCandidates, mirrorDrawable, otsuMask, padDrawable, roiCandidates } from '../src/roi.js';
 import { ALL_FORMATS, LINEAR, cheapFormats, dueForFullSweep, is2DResult, markFullSweep, needsScheduling } from '../src/live-schedule.js';
-import { CENTERED_SCORE, hasCentered, isCentered, rankCodes } from '../src/rank.js';
+import { hasCentered, isCentered, rankCodes } from '../src/rank.js';
 import {
   encode_fixture_opts,
   encode_fixture_raw_opts,
@@ -322,19 +322,20 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
     : [];
   const center = centerRoiCandidates(sourceW, sourceH, { linear: wantsLinear, square: wants2D });
   /** @type {{ x: number, y: number, w: number, h: number, score: number, linear?: boolean }[]} */
+  // When `centerOnly` is false, keep at most the primary center strip/square
+  // ahead of the density proposals so off-center small codes still get slots
+  // inside `limit + 2`.
   const proposals = centerOnly
     ? center
-    : [...center, ...linear, ...roiCandidates(frame, sourceW, sourceH, limit)];
-  // Every linear proposal also gets its ink-tight twin: the generous crop
-  // keeps the quiet-zone margin an inverted symbol needs, the tight one
-  // excludes a dark box/label edge that would otherwise eat the zone.
-  for (const box of [...proposals]) {
-    if (!box.linear) continue;
-    const tight = tightenLinearBox(frame, box, sourceW, sourceH);
-    if (tight) proposals.push(tight);
-  }
+    : [
+        ...center.slice(0, 2),
+        ...linear,
+        ...roiCandidates(frame, sourceW, sourceH, limit),
+        ...center.slice(2),
+      ];
   /** @type {{ x: number, y: number, w: number, h: number, score: number, linear?: boolean }[]} */
   const boxes = [];
+  const cap = centerOnly ? center.length : limit + 3;
   for (const box of proposals) {
     const overlap = boxes.some((p) => {
       const ix = Math.max(0, Math.min(box.x + box.w, p.x + p.w) - Math.max(box.x, p.x));
@@ -348,12 +349,7 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
       return ix * iy > 0.6 * Math.min(box.w * box.h, p.w * p.h);
     });
     if (!overlap) boxes.push(box);
-    // The caller's crop budget is the bound: extra candidates multiply
-    // the wasm sweep, and a junk frame produces no valid crop anyway.
-    // Linear candidates now come in two flavours (tight dense-row bands
-    // plus the looser original proposals), so allow the extra pair; the
-    // deadline below still caps the actual work.
-    if (boxes.length >= limit + 2) break;
+    if (boxes.length >= cap) break;
   }
   if (!boxes.length) return [];
   bin.setThreshold?.(0.92);
@@ -365,7 +361,7 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
           latency: Math.max(250, Math.min(opts.latency ?? 5000, remaining(), ROI_BOX_CAP_MS)),
         }
       : opts;
-  /** @type {{ box: { x: number, y: number, w: number, h: number, linear?: boolean }, crop: Awaited<ReturnType<typeof cropDrawable>> }[]} */
+  /** @type {{ box: { x: number, y: number, w: number, h: number, linear?: boolean }, crop: Awaited<ReturnType<typeof cropDrawable>>, padded?: Awaited<ReturnType<typeof padDrawable>> }[]} */
   const crops = [];
   /**
    * @param {DecodedCode[]} hits
@@ -426,7 +422,9 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
   for (const box of boxes) {
     if (remaining() <= 0) break;
     const crop = await cropDrawable(bitmap, box);
-    crops.push({ box, crop });
+    /** @type {{ box: { x: number, y: number, w: number, h: number, linear?: boolean }, crop: Awaited<ReturnType<typeof cropDrawable>>, padded?: Awaited<ReturnType<typeof padDrawable>> }} */
+    const entry = { box, crop };
+    crops.push(entry);
     // A bar strip is decoded by the row scanners only.
     const boxFormats = box.linear ? linearOnly : formats;
     /** @type {import('../src/gpu/binarizer.js').BinarizedFrame} */
@@ -457,6 +455,7 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
       // White-pad restores the 10-module Code 128 quiet zone on tight labels.
       const padPx = Math.max(16, Math.min(96, Math.round(box.h)));
       const padded = await padDrawable(crop.canvas, padPx);
+      entry.padded = padded;
       const fp = await bin.process(padded.canvas);
       const padMap = {
         ...crop,
@@ -486,8 +485,10 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
 
   // Pass 2: the local threshold floods thin spaces on a blurry bar strip;
   // a global Otsu split over a 2x upscale keeps them white. Only linear crops,
-  // only after every cheap opinion missed.
-  for (const { box, crop } of crops) {
+  // only after every cheap opinion missed. Try the unpadded crop first, then
+  // the paper-white padded copy (restores tight quiet zones AND shifts Otsu
+  // away from dark box edges).
+  for (const { box, crop, padded } of crops) {
     if (!box.linear || remaining() <= 0) continue;
     /** @param {number} fw @param {number} fh @param {{x: number, y: number}[]} points */
     const scaledMap = (fw, fh, points) =>
@@ -510,28 +511,83 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
         }
       }
     }
+    if (padded && remaining() > 0) {
+      const otsu = otsuMask(padded.canvas, 2);
+      const padScaled = {
+        ...crop,
+        /** @param {number} fw @param {number} fh @param {{x: number, y: number}[]} points */
+        map: (fw, fh, points) =>
+          crop.map(
+            crop.width,
+            crop.height,
+            padded.map(
+              padded.width,
+              padded.height,
+              points.map((p) => ({
+                x: (p.x * padded.width) / fw,
+                y: (p.y * padded.height) / fh,
+              })),
+            ),
+          ),
+      };
+      const found = offer(decodeFrame(scanner, otsu, linearOnly, callOpts()), otsu, padScaled);
+      if (found) {
+        const settled = settle(found);
+        if (settled) return settled;
+      }
+    }
   }
   if (peripheral) return peripheral;
   return weakHit ? done(weakHit.hits, weakHit.mask, weakHit.mapper) : [];
 };
 
 /**
- * Append `hits` not already present in `dst` (by `symbology\0text`).
+ * Append `hits` not already present in `dst` (by `symbology\0text`, or
+ * spatially overlapping an existing hit of the same symbology). The
+ * spatial guard prevents a harsher fallback pass (0.88 / Otsu / 0.7) from
+ * re-decoding the SAME physical barcode into a noisier variant and
+ * outranking the clean primary read (measured on a thermal receipt).
  * Returns whether at least one new hit was added.
  * @param {DecodedCode[]} dst
  * @param {DecodedCode[]} hits
  */
 const mergeUnique = (dst, hits) => {
   if (!hits.length) return false;
+  /** @param {DecodedCode['position']} p */
+  const boxOf = (p) => {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const { x, y } of p ?? []) {
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+    return { x0, y0, x1, y1 };
+  };
   const seen = new Set(dst.map((c) => c.symbology + '\u0000' + c.text));
   let added = false;
   for (const hit of hits) {
     const key = hit.symbology + '\u0000' + hit.text;
-    if (!seen.has(key)) {
-      seen.add(key);
-      dst.push(hit);
-      added = true;
-    }
+    if (seen.has(key)) continue;
+    const hb = boxOf(hit.position);
+    const sameSpot = dst.some((c) => {
+      if (c.symbology !== hit.symbology) return false;
+      const cb = boxOf(c.position);
+      // Two 1D slivers from the same barcode can land on different rows of
+      // the same bar strip (a 800px-wide receipt barcode at 2112px is ~140px
+      // tall), so pad vertically proportionally to the strip's width (~12%).
+      const xOverlap = Math.min(hb.x1, cb.x1) - Math.max(hb.x0, cb.x0);
+      const minW = Math.min(hb.x1 - hb.x0, cb.x1 - cb.x0);
+      const padY = Math.max(24, minW * 0.12);
+      return minW > 0 && xOverlap > minW * 0.5 && hb.y0 <= cb.y1 + padY && hb.y1 >= cb.y0 - padY;
+    });
+    if (sameSpot) continue;
+    seen.add(key);
+    dst.push(hit);
+    added = true;
   }
   return added;
 };
@@ -827,7 +883,7 @@ const decodeStill = async (bitmap, formats, accuracy, latency) => {
           frame,
           linear,
           opts,
-          peripheralOnly ? 2 : 2,
+          2,
           Math.min(performance.now() + (peripheralOnly ? 1200 : 900), deadline),
           false,
         );

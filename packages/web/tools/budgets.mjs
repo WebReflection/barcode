@@ -37,13 +37,8 @@ const checks = [
   // which is exactly what they are for.
   { name: "wasm.wasm raw", bytes: wasm.length, budget: 1_000_000 },
   { name: "wasm.wasm brotli", bytes: brotliCompressSync(wasm).length, budget: 300_000 },
-  // Raised from 68 KB / 25 KB in 0.3.3: the center-priority work ships
-  // `src/rank.js` (the tiered reticle score) plus the reticle ROI crops
-  // and the ink-tight linear proposal, ~3.6 KB raw / ~1.5 KB gzip. The
-  // old budget left 0.4% headroom, which is not headroom; these keep the
-  // same ~4% while a regression that re-adds a table still fails.
-  { name: "main+worker raw", bytes: js.length, budget: 70_000 },
-  { name: "main+worker gzip", bytes: gzipSync(js, { level: 9 }).length, budget: 26_000 },
+  { name: "main+worker raw", bytes: js.length, budget: 68_000 },
+  { name: "main+worker gzip", bytes: gzipSync(js, { level: 9 }).length, budget: 25_000 },
 ];
 
 let failed = 0;
