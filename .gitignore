@@ -32,3 +32,13 @@ packages/web/test-codes/field/
 
 # --- internal dev notes/session log: local only, never public ---
 notes/
+
+# --- Python bytecode (never commit) ---
+__pycache__/
+*.pyc
+
+# --- Micro QR oracle extraction dumps (local-only dev provenance) ---
+# The committed vectors live in crates/barcode-microqr/tests/golden_*.txt;
+# these are the raw zint probes the algorithmic encoder/decoder was derived
+# from, kept on the maintainer's disk only.
+tools/m[0-9]*.json

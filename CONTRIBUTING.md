@@ -36,6 +36,21 @@ build in headless Chromium. The same check runs nightly in the `live`
 workflow; a red run right after a publish is usually propagation, so re-run
 before investigating.
 
+## Local-only development data
+
+`tools/` holds the probing scripts used to derive the clean-room implementations.
+Some of their inputs are **not** committed, because they are large and only useful
+to re-run a historical derivation:
+
+- `tools/m[0-9]*.json` — the Micro QR oracle extraction dumps behind
+  `tools/gen_frames.py` / `tools/gen_microqr.py`. The committed test vectors are
+  `crates/barcode-microqr/tests/golden_*.txt`; these dumps stay on the maintainer's
+  disk.
+- `packages/web/test-codes/field/` — the personal real-photo corpus.
+
+Both are gitignored. Missing files are expected in a fresh clone; nothing in the
+build or test suite reads them.
+
 ## Before opening a PR
 
 - `cargo test --workspace` (CI runs it with `--locked`; `--release` if you want
