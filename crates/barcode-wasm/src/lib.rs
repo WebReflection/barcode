@@ -498,16 +498,14 @@ impl BarcodeScanner {
                 return out;
             }
         }
-        if tiers.datamatrix {
-            out.extend(decode_datamatrix_mask_budget(
-                img,
-                dm_exhaustive,
-                dm_budget_ms,
-            ));
-            if !out.is_empty() {
-                return out;
-            }
-        }
+        // Ordering is a false-positive ranking, not a preference: the
+        // tier that returns first wins, so the *strict* locators run
+        // before the loose one. Aztec requires its central bullseye and
+        // PDF417 its repeated row start/stop pattern, while the DataMatrix
+        // locator accepts Aztec texture and can decode a 3-codeword
+        // fragment out of it (measured: two Bahn Aztec stills came back
+        // as DM "^5861"/"5551k"). Aztec/PDF417 also stay sub-frame, so
+        // trying them first costs the DM photos nothing measurable.
         if tiers.aztec {
             out.extend(decode_aztec_mask(img));
             if !out.is_empty() {
@@ -516,6 +514,16 @@ impl BarcodeScanner {
         }
         if tiers.pdf417 {
             out.extend(decode_pdf417_mask(img));
+            if !out.is_empty() {
+                return out;
+            }
+        }
+        if tiers.datamatrix {
+            out.extend(decode_datamatrix_mask_budget(
+                img,
+                dm_exhaustive,
+                dm_budget_ms,
+            ));
             if !out.is_empty() {
                 return out;
             }
