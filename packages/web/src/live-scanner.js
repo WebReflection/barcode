@@ -525,7 +525,7 @@ export class LiveScanner {
     // with nothing centered in view (e.g. a slightly off-center invoice DM),
     // allow the close-up so it finishes confirming fast instead of paying
     // full-frame DM sweeps on every frame.
-    const lone = raw.length === 1 ? raw.at(0) : null;
+    const lone = raw.length === 1 ? raw[0] : null;
     const r =
       raw.find((c) => HINTED.has(String(c.symbology)) && aimed(c)) ??
       (lone &&
