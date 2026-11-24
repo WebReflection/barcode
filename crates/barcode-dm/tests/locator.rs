@@ -255,6 +255,74 @@ fn locates_synthetic_symbol_in_all_four_orientations() {
 }
 
 #[test]
+fn clock_tracks_accept_small_square_symbols_at_every_quarter_turn() {
+    // The clock-track gate (`CLOCK_MIN_FRACTION`) is validated on canonical
+    // row/col parity from `axes(kind)`; a mapping bug would reject a real
+    // symbol at some rotation. Exercise the specs most exposed to the
+    // everything-mode false positive (10x10 / 12x12) at the smallest
+    // supported pitch, plus a larger symbol, at all four quarter turns.
+    use barcode_dm::encode::encode;
+    use barcode_dm::locator::{locate_binary, BinaryMap};
+    let render = |matrix: &[u8], rows: usize, cols: usize, pitch: usize| {
+        let pad = 4;
+        let (w, h) = ((cols + 2 * pad) * pitch, (rows + 2 * pad) * pitch);
+        let mut dark = vec![false; w * h];
+        for r in 0..rows {
+            for c in 0..cols {
+                if matrix[r * cols + c] == 0 {
+                    continue;
+                }
+                for dy in 0..pitch {
+                    for dx in 0..pitch {
+                        dark[((r + pad) * pitch + dy) * w + (c + pad) * pitch + dx] = true;
+                    }
+                }
+            }
+        }
+        BinaryMap { w, h, dark }
+    };
+    let rotate = |m: &BinaryMap, quarter: usize| {
+        let (w, h) = (m.w, m.h);
+        let (nw, nh) = if quarter % 2 == 0 { (w, h) } else { (h, w) };
+        let mut dark = vec![false; nw * nh];
+        for y in 0..nh {
+            for x in 0..nw {
+                let (sx, sy) = match quarter {
+                    0 => (x, y),
+                    1 => (y, h - 1 - x),
+                    2 => (w - 1 - x, h - 1 - y),
+                    _ => (w - 1 - y, x),
+                };
+                dark[y * nw + x] = m.dark[sy * w + sx];
+            }
+        }
+        BinaryMap { w: nw, h: nh, dark }
+    };
+    for payload in [
+        &b"AB"[..],                                       // 10x10
+        &b"HELLO WORLD"[..],                              // 12x12
+        &b"0123456789012345678901234567890123456789"[..], // 16x16+
+    ] {
+        let enc = encode(payload).expect("payload fits");
+        let (rows, cols) = (enc.spec.rows, enc.spec.cols);
+        for pitch in [4usize, 6, 9] {
+            let map = render(&enc.matrix, rows, cols, pitch);
+            for quarter in 0..4 {
+                let hits = locate_binary(&rotate(&map, quarter));
+                let found = hits
+                    .iter()
+                    .find(|l| l.decoded.payload.as_deref() == Some(payload));
+                assert!(
+                    found.is_some(),
+                    "{rows}x{cols} pitch {pitch} at {}° not located",
+                    quarter * 90
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn locates_viva_field_symbol() {
     // Personal-data fixture: present only locally (gitignored). Skip the
     // test silently in its absence — the committed suite must stay green.
