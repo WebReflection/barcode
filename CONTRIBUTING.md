@@ -36,6 +36,22 @@ build in headless Chromium. The same check runs nightly in the `live`
 workflow; a red run right after a publish is usually propagation, so re-run
 before investigating.
 
+### Tagging
+
+`npm version` only commits and tags when `package.json` is at the repository
+root. The published package lives in `packages/web/`, so npm bumps the file
+and silently skips the tag: create it explicitly once the version bump **and**
+the generated docs are pushed.
+
+```sh
+./tag.sh             # ./tag.sh --dry-run to preview
+```
+
+It tags `HEAD` as `v<version>` from `packages/web/package.json` and pushes only
+the tag. It refuses on a dirty tree, on a detached HEAD, when `HEAD` is not
+pushed to `origin/<branch>`, or when the tag already exists locally or on the
+remote.
+
 ## Local-only development data
 
 `tools/` holds the probing scripts used to derive the clean-room implementations.
