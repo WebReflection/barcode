@@ -25,9 +25,14 @@ const CDN = (version, file) =>
 const FILES = [
   ["main.js", 10_000],
   ["worker.js", 10_000],
-  ["wasm.wasm", 1_000_000],
+  // Floor only proves the CDN served a non-truncated body: 0.3.0's
+  // algorithmic Micro QR dropped the module from >1 MB to 855 KB, so an
+  // absolute size here ages badly. The `\0asm` magic check below is the
+  // real assertion (a size floor alone would happily accept an error page).
+  ["wasm.wasm", 100_000],
   ["css.css", 1_000],
 ];
+const WASM_MAGIC = [0x00, 0x61, 0x73, 0x6d];
 
 const argv = process.argv.slice(2);
 const has = (name) => argv.includes(`--${name}`);
@@ -79,10 +84,15 @@ async function main() {
     const url = CDN(version, file);
     try {
       const res = await fetch(url, { cache: "no-store" });
-      const size = res.ok
-        ? new Uint8Array(await res.arrayBuffer()).byteLength
-        : 0;
-      check(`cdn ${file}`, res.ok && size >= min, `${res.status} ${size}B`);
+      const bytes = res.ok ? new Uint8Array(await res.arrayBuffer()) : new Uint8Array();
+      const magic =
+        file !== "wasm.wasm" ||
+        WASM_MAGIC.every((b, i) => bytes[i] === b);
+      check(
+        `cdn ${file}`,
+        res.ok && bytes.byteLength >= min && magic,
+        `${res.status} ${bytes.byteLength}B${magic ? "" : " bad magic"}`,
+      );
     } catch (error) {
       check(`cdn ${file}`, false, String(error));
     }
