@@ -128,7 +128,9 @@ impl Ean8Decoder {
             }
         }
 
-        for f in [1.0f32, 0.92, 1.08, 0.85, 1.15, 0.8, 1.2, 0.95, 1.05, 0.9, 1.1] {
+        for f in [
+            1.0f32, 0.92, 1.08, 0.85, 1.15, 0.8, 1.2, 0.95, 1.05, 0.9, 1.1,
+        ] {
             let n = n_mod * f;
             let lo_g = 0.54 * n;
             let hi_g = 1.46 * n;
@@ -154,7 +156,11 @@ impl Ean8Decoder {
             };
             let x_start = row.offsets[start];
             let x_end = x_start + total;
-            return Some(Candidate { text: digits, x_start, x_end });
+            return Some(Candidate {
+                text: digits,
+                x_start,
+                x_end,
+            });
         }
         None
     }
@@ -164,11 +170,7 @@ impl Ean8Decoder {
         if runs.len() < start + 43 {
             return None;
         }
-        let g = [
-            runs[start].1,
-            runs[start + 1].1,
-            runs[start + 2].1,
-        ];
+        let g = [runs[start].1, runs[start + 1].1, runs[start + 2].1];
         let s = (g[0] + g[1] + g[2]) as f32 / 3.0;
         if s < 0.7 || g.iter().any(|&v| (v as f32 - s).abs() > s * 0.7) {
             return None;
@@ -200,12 +202,7 @@ impl Ean8Decoder {
             let mut ok = true;
             for d in 0..4 {
                 let i = start + 3 + d * 4;
-                let druns = [
-                    runs[i].1,
-                    runs[i + 1].1,
-                    runs[i + 2].1,
-                    runs[i + 3].1,
-                ];
+                let druns = [runs[i].1, runs[i + 1].1, runs[i + 2].1, runs[i + 3].1];
                 match best_digit(druns, scale, &L_RUNS) {
                     Some((dd, _)) => digits[d] = dd,
                     None => {
@@ -219,12 +216,7 @@ impl Ean8Decoder {
             }
             for d in 0..4 {
                 let i = start + 24 + d * 4;
-                let druns = [
-                    runs[i].1,
-                    runs[i + 1].1,
-                    runs[i + 2].1,
-                    runs[i + 3].1,
-                ];
+                let druns = [runs[i].1, runs[i + 1].1, runs[i + 2].1, runs[i + 3].1];
                 match best_digit(druns, scale, &R_RUNS) {
                     Some((dd, _)) => digits[4 + d] = dd,
                     None => {
@@ -292,35 +284,43 @@ impl Ean8Decoder {
         for d in 0..4 {
             let off = 3 + d * 7;
             let seg = ((bits >> off) & 0x7f) as u8;
-            let li = L_BITS.iter().position(|&b| b == seg).map(|i| i as u8).or_else(|| {
-                let mut found: Option<u8> = None;
-                for (i, &b) in L_BITS.iter().enumerate() {
-                    if dist1(seg, b) <= 1 {
-                        if found.is_some() {
-                            return None;
+            let li = L_BITS
+                .iter()
+                .position(|&b| b == seg)
+                .map(|i| i as u8)
+                .or_else(|| {
+                    let mut found: Option<u8> = None;
+                    for (i, &b) in L_BITS.iter().enumerate() {
+                        if dist1(seg, b) <= 1 {
+                            if found.is_some() {
+                                return None;
+                            }
+                            found = Some(i as u8);
                         }
-                        found = Some(i as u8);
                     }
-                }
-                found
-            })?;
+                    found
+                })?;
             digits[d] = li;
         }
         for d in 0..4 {
             let off = 36 + d * 7;
             let seg = ((bits >> off) & 0x7f) as u8;
-            let ri = R_BITS.iter().position(|&b| b == seg).map(|i| i as u8).or_else(|| {
-                let mut found: Option<u8> = None;
-                for (i, &b) in R_BITS.iter().enumerate() {
-                    if dist1(seg, b) <= 1 {
-                        if found.is_some() {
-                            return None;
+            let ri = R_BITS
+                .iter()
+                .position(|&b| b == seg)
+                .map(|i| i as u8)
+                .or_else(|| {
+                    let mut found: Option<u8> = None;
+                    for (i, &b) in R_BITS.iter().enumerate() {
+                        if dist1(seg, b) <= 1 {
+                            if found.is_some() {
+                                return None;
+                            }
+                            found = Some(i as u8);
                         }
-                        found = Some(i as u8);
                     }
-                }
-                found
-            })?;
+                    found
+                })?;
             digits[4 + d] = ri;
         }
 
@@ -337,10 +337,22 @@ impl Ean8Decoder {
             raw: text.as_bytes().to_vec(),
             text,
             position: [
-                Point { x: x0 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y1 as f32 },
-                Point { x: x0 as f32, y: y1 as f32 },
+                Point {
+                    x: x0 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y1 as f32,
+                },
+                Point {
+                    x: x0 as f32,
+                    y: y1 as f32,
+                },
             ],
         }
     }
@@ -366,9 +378,14 @@ impl LinearDecoder for Ean8Decoder {
             if lo == 0 || hi > lo * 2 {
                 continue;
             }
-            let Some(c) = Self::try_at(row, start) else { continue };
+            let Some(c) = Self::try_at(row, start) else {
+                continue;
+            };
             let (count, x0, x1, y0, y1) = {
-                let e = self.votes.entry(c.text).or_insert((0, c.x_start, c.x_end, y, y));
+                let e = self
+                    .votes
+                    .entry(c.text)
+                    .or_insert((0, c.x_start, c.x_end, y, y));
                 e.0 += 1;
                 e.1 = e.1.min(c.x_start);
                 e.2 = e.2.max(c.x_end);
@@ -385,9 +402,14 @@ impl LinearDecoder for Ean8Decoder {
             if (runs[start - 1].1 as f32) < s * 3.0 {
                 continue;
             }
-            let Some(c) = Self::try_variance(row, start) else { continue };
+            let Some(c) = Self::try_variance(row, start) else {
+                continue;
+            };
             let (count, x0, x1, y0, y1) = {
-                let e = self.votes.entry(c.text).or_insert((0, c.x_start, c.x_end, y, y));
+                let e = self
+                    .votes
+                    .entry(c.text)
+                    .or_insert((0, c.x_start, c.x_end, y, y));
                 e.0 += 1;
                 e.1 = e.1.min(c.x_start);
                 e.2 = e.2.max(c.x_end);
@@ -412,7 +434,11 @@ impl LinearDecoder for Ean8Decoder {
     }
 
     fn vote_count(&self) -> usize {
-        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
+        if self.votes.is_empty() {
+            0
+        } else {
+            self.votes.values().map(|v| v.0).sum()
+        }
     }
 }
 
@@ -512,5 +538,4 @@ mod tests {
         let canvas = barcode_fixtures::encode_ean8_raw("96385070", 4, 24, 9 * 4);
         assert_eq!(decode_canvas(&canvas, 2), None);
     }
-
 }

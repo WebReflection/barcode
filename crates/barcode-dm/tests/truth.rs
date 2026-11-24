@@ -39,7 +39,15 @@ fn load_truth() -> Option<Vec<(String, Entry)>> {
             .collect();
         assert_eq!(matrix.len(), rows * cols);
         let key = format!("{}x{}", rows, cols);
-        out.push((key, Entry { rows, cols, code, matrix }));
+        out.push((
+            key,
+            Entry {
+                rows,
+                cols,
+                code,
+                matrix,
+            },
+        ));
     }
     Some(out)
 }

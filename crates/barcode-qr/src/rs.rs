@@ -213,7 +213,10 @@ pub fn rs_correct(gf: &Gf, codewords: &mut [u8], nn: usize) -> Option<()> {
         return None;
     }
     // Decisive check: the corrected word must be a valid codeword.
-    syndromes(gf, codewords, nn).iter().all(|&x| x == 0).then_some(())
+    syndromes(gf, codewords, nn)
+        .iter()
+        .all(|&x| x == 0)
+        .then_some(())
 }
 
 /// Solve `A·x = b` over GF(2^8). `a` is a `count`×`count` row-major
@@ -357,7 +360,10 @@ pub fn rs_correct_erasures(
     for (i, &d) in degs.iter().enumerate() {
         codewords[n - 1 - d] ^= vals[i];
     }
-    syndromes(gf, codewords, nn).iter().all(|&x| x == 0).then_some(())
+    syndromes(gf, codewords, nn)
+        .iter()
+        .all(|&x| x == 0)
+        .then_some(())
 }
 
 /// Evaluate a polynomial with ascending coefficients at the field element `z`.
@@ -395,7 +401,9 @@ mod tests {
     #[test]
     fn encode_yields_valid_codeword() {
         let gf = Gf::new();
-        let data: Vec<u8> = (0..19u8).map(|i| i.wrapping_mul(37).wrapping_add(11)).collect();
+        let data: Vec<u8> = (0..19u8)
+            .map(|i| i.wrapping_mul(37).wrapping_add(11))
+            .collect();
         let mut block = data.clone();
         let parity = rs_encode(&gf, &data, 10);
         block.extend_from_slice(&parity);
@@ -405,7 +413,9 @@ mod tests {
     #[test]
     fn corrects_up_to_t_errors_and_rejects_beyond() {
         let gf = Gf::new();
-        let data: Vec<u8> = (0..16u8).map(|i| i.wrapping_mul(91).wrapping_add(7)).collect();
+        let data: Vec<u8> = (0..16u8)
+            .map(|i| i.wrapping_mul(91).wrapping_add(7))
+            .collect();
         let mut block = data.clone();
         block.extend_from_slice(&rs_encode(&gf, &data, 10));
         let clean = block.clone();
@@ -443,7 +453,9 @@ mod tests {
     #[test]
     fn erasures_double_the_capacity() {
         let gf = Gf::new();
-        let data: Vec<u8> = (0..16u8).map(|i| i.wrapping_mul(97).wrapping_add(5)).collect();
+        let data: Vec<u8> = (0..16u8)
+            .map(|i| i.wrapping_mul(97).wrapping_add(5))
+            .collect();
         let mut block = data.clone();
         block.extend_from_slice(&rs_encode(&gf, &data, 10));
         let clean = block.clone();
@@ -481,5 +493,4 @@ mod tests {
         }
         assert_eq!(rs_correct_erasures(&gf, &mut broken, 10, &over), None);
     }
-
 }

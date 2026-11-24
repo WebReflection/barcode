@@ -161,7 +161,10 @@ pub fn rs_correct(gf: &Gf, codewords: &mut [u16], nn: usize) -> Option<()> {
         return None;
     }
     // Decisive check: the corrected word must be a valid codeword.
-    syndromes(gf, codewords, nn).iter().all(|&x| x == 0).then_some(())
+    syndromes(gf, codewords, nn)
+        .iter()
+        .all(|&x| x == 0)
+        .then_some(())
 }
 
 /// Solve `A·x = b` over GF(2^b). `a` is a `count`×`count` row-major
@@ -209,7 +212,12 @@ fn solve_linear(gf: &Gf, a: &mut [u16], b: &mut [u16], count: usize) -> Option<V
 /// least two syndromes left as checks (`nn - (e + t) >= 2`) — a wrong
 /// symbol-size/orientation guess must not "correct" itself into a
 /// plausible codeword.
-pub fn rs_correct_erasures(gf: &Gf, codewords: &mut [u16], nn: usize, erasures: &[usize]) -> Option<()> {
+pub fn rs_correct_erasures(
+    gf: &Gf,
+    codewords: &mut [u16],
+    nn: usize,
+    erasures: &[usize],
+) -> Option<()> {
     let n = codewords.len();
     if nn == 0 || nn > n || n > gf.size() - 1 {
         return None;
@@ -299,7 +307,10 @@ pub fn rs_correct_erasures(gf: &Gf, codewords: &mut [u16], nn: usize, erasures: 
         let mag = gf.mul(vals[i], gf.pow(-(d as i32)));
         codewords[n - 1 - d] ^= mag;
     }
-    syndromes(gf, codewords, nn).iter().all(|&x| x == 0).then_some(())
+    syndromes(gf, codewords, nn)
+        .iter()
+        .all(|&x| x == 0)
+        .then_some(())
 }
 
 /// Evaluate a polynomial with ascending coefficients at the field element `z`.
@@ -358,8 +369,15 @@ mod tests {
                 let pos = (k * 5 + 2) % cw.len();
                 cw[pos] ^= gf.pow((k + 3) as i32).max(1);
             }
-            assert!(rs_correct(&gf, &mut cw, nn).is_some(), "correct failed for {bits} bits");
-            assert_eq!(&cw[..data.len()], &data[..], "payload wrong for {bits} bits");
+            assert!(
+                rs_correct(&gf, &mut cw, nn).is_some(),
+                "correct failed for {bits} bits"
+            );
+            assert_eq!(
+                &cw[..data.len()],
+                &data[..],
+                "payload wrong for {bits} bits"
+            );
         }
     }
 

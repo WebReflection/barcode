@@ -29,7 +29,10 @@ fn assert_safe(results: &[barcode_core::DecodeResult]) {
             r.symbology
         );
         for p in &r.position {
-            assert!(p.x.is_finite() && p.y.is_finite(), "non-finite position {p:?}");
+            assert!(
+                p.x.is_finite() && p.y.is_finite(),
+                "non-finite position {p:?}"
+            );
             assert!(p.x >= -1.0 && p.y >= -1.0, "negative position {p:?}");
         }
     }
@@ -90,9 +93,14 @@ fn mutated_fixtures_only_ever_read_the_original_text() {
         // Sanity: the unmutated fixture reads.
         let clean = decode(&canvas, 1_000);
         assert!(
-            clean.iter().any(|r| r.symbology.name() == sym && r.text == expected),
+            clean
+                .iter()
+                .any(|r| r.symbology.name() == sym && r.text == expected),
             "clean {sym} fixture did not decode: {:?}",
-            clean.iter().map(|r| (r.symbology.name(), &r.text)).collect::<Vec<_>>()
+            clean
+                .iter()
+                .map(|r| (r.symbology.name(), &r.text))
+                .collect::<Vec<_>>()
         );
 
         // Flip 5% of the modules. A read of the SAME symbology must be the
@@ -102,7 +110,8 @@ fn mutated_fixtures_only_ever_read_the_original_text() {
             let mut corrupt = Canvas::new(canvas.width, canvas.height);
             for y in 0..canvas.height {
                 for x in 0..canvas.width {
-                    let bit = (canvas.bits()[y as usize * canvas.bytes_per_row + (x >> 3) as usize]
+                    let bit = (canvas.bits()
+                        [y as usize * canvas.bytes_per_row + (x >> 3) as usize]
                         >> (x & 7))
                         & 1;
                     if next() % 100 < 5 {

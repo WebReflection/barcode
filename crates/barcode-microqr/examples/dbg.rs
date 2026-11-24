@@ -21,10 +21,17 @@ fn main() {
         println!(
             "{}",
             (0..sym.size)
-                .map(|i| if sym.cells[j * sym.size + i] == 1 { '#' } else { '.' })
+                .map(|i| if sym.cells[j * sym.size + i] == 1 {
+                    '#'
+                } else {
+                    '.'
+                })
                 .collect::<String>()
         );
     }
-    println!("decode_grid: {:?}", decoder::decode_grid(&sym.cells, sym.size));
+    println!(
+        "decode_grid: {:?}",
+        decoder::decode_grid(&sym.cells, sym.size)
+    );
     println!("decode: {:?}", decode(&img));
 }

@@ -41,5 +41,8 @@ fn main() {
     for r in &res {
         println!("  {:?} {:?} ({} bytes)", r.symbology, r.text, r.raw.len());
     }
-    println!("presence: {} (0=none, 1=present-marginal, 2=decoded)", dec.presence());
+    println!(
+        "presence: {} (0=none, 1=present-marginal, 2=decoded)",
+        dec.presence()
+    );
 }

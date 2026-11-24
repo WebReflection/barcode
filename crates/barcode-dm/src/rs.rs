@@ -216,7 +216,10 @@ pub fn rs_correct(gf: &Gf, codewords: &mut [u8], nn: usize) -> Option<()> {
         return None;
     }
     // Decisive check: the corrected word must be a valid codeword.
-    syndromes(gf, codewords, nn).iter().all(|&x| x == 0).then_some(())
+    syndromes(gf, codewords, nn)
+        .iter()
+        .all(|&x| x == 0)
+        .then_some(())
 }
 
 /// Solve `A·x = b` over GF(2^8). `a` is a `count`×`count` row-major matrix
@@ -373,7 +376,10 @@ pub fn rs_correct_erasures(
         let mag = gf.mul(vals[i], gf.pow(-(d as i32))); // unfold e_i = ẽ_i·X_i^{-1}
         codewords[n - 1 - d] ^= mag;
     }
-    syndromes(gf, codewords, nn).iter().all(|&x| x == 0).then_some(())
+    syndromes(gf, codewords, nn)
+        .iter()
+        .all(|&x| x == 0)
+        .then_some(())
 }
 
 /// Evaluate a polynomial with ascending coefficients at the field element `z`.
@@ -410,13 +416,18 @@ mod tests {
     fn encode_matches_libdmtx_ground_truth() {
         // 10x10 'A' symbol: data [66, 129, 70], ecc from dm_truth.
         let gf = Gf::new();
-        assert_eq!(rs_encode(&gf, &[66, 129, 70], 5), vec![138, 234, 82, 82, 95]);
+        assert_eq!(
+            rs_encode(&gf, &[66, 129, 70], 5),
+            vec![138, 234, 82, 82, 95]
+        );
     }
 
     #[test]
     fn encode_yields_valid_codeword() {
         let gf = Gf::new();
-        let data: Vec<u8> = (0..19u8).map(|i| i.wrapping_mul(37).wrapping_add(11)).collect();
+        let data: Vec<u8> = (0..19u8)
+            .map(|i| i.wrapping_mul(37).wrapping_add(11))
+            .collect();
         let mut block = data.clone();
         block.extend_from_slice(&rs_encode(&gf, &data, 10));
         assert!(syndromes(&gf, &block, 10).iter().all(|&x| x == 0));
@@ -425,7 +436,9 @@ mod tests {
     #[test]
     fn corrects_up_to_t_errors_and_rejects_beyond() {
         let gf = Gf::new();
-        let data: Vec<u8> = (0..16u8).map(|i| i.wrapping_mul(91).wrapping_add(7)).collect();
+        let data: Vec<u8> = (0..16u8)
+            .map(|i| i.wrapping_mul(91).wrapping_add(7))
+            .collect();
         let mut block = data.clone();
         block.extend_from_slice(&rs_encode(&gf, &data, 10));
         let clean = block.clone();
@@ -448,7 +461,9 @@ mod tests {
     #[test]
     fn erasures_double_the_capacity() {
         let gf = Gf::new();
-        let data: Vec<u8> = (0..16u8).map(|i| i.wrapping_mul(91).wrapping_add(7)).collect();
+        let data: Vec<u8> = (0..16u8)
+            .map(|i| i.wrapping_mul(91).wrapping_add(7))
+            .collect();
         let mut block = data.clone();
         block.extend_from_slice(&rs_encode(&gf, &data, 10));
         let clean = block.clone();
@@ -491,7 +506,9 @@ mod tests {
     #[test]
     fn erasure_input_is_trusted_but_verified() {
         let gf = Gf::new();
-        let data: Vec<u8> = (0..16u8).map(|i| i.wrapping_mul(37).wrapping_add(1)).collect();
+        let data: Vec<u8> = (0..16u8)
+            .map(|i| i.wrapping_mul(37).wrapping_add(1))
+            .collect();
         let mut block = data.clone();
         block.extend_from_slice(&rs_encode(&gf, &data, 10));
         let clean = block.clone();
@@ -500,7 +517,10 @@ mod tests {
         assert_eq!(rs_correct_erasures(&gf, &mut stale, 10, &[0, 5]), Some(()));
         assert_eq!(stale, clean);
         // Out-of-range / too many erasures are rejected, not panics.
-        assert_eq!(rs_correct_erasures(&gf, &mut stale.clone(), 10, &[26]), None);
+        assert_eq!(
+            rs_correct_erasures(&gf, &mut stale.clone(), 10, &[26]),
+            None
+        );
         assert_eq!(
             rs_correct_erasures(&gf, &mut stale.clone(), 10, &(0..=10).collect::<Vec<_>>()),
             None

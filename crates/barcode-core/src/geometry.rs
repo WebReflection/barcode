@@ -32,9 +32,16 @@ pub fn fit_homography(pairs: &[(f64, f64, f64, f64)]) -> Option<[f64; 9]> {
         let cx = pts.iter().map(|p| p.0).sum::<f64>() / n;
         let cy = pts.iter().map(|p| p.1).sum::<f64>() / n;
         let avg_dist = pts.iter().map(|p| (p.0 - cx).hypot(p.1 - cy)).sum::<f64>() / n;
-        let s = if avg_dist > 1e-9 { (2.0f64).sqrt() / avg_dist } else { 1.0 };
+        let s = if avg_dist > 1e-9 {
+            (2.0f64).sqrt() / avg_dist
+        } else {
+            1.0
+        };
         let t = [s, 0.0, -s * cx, 0.0, s, -s * cy, 0.0, 0.0, 1.0];
-        let mapped = pts.iter().map(|p| (s * (p.0 - cx), s * (p.1 - cy))).collect();
+        let mapped = pts
+            .iter()
+            .map(|p| (s * (p.0 - cx), s * (p.1 - cy)))
+            .collect();
         (t, mapped)
     };
 
@@ -74,7 +81,9 @@ pub fn fit_homography(pairs: &[(f64, f64, f64, f64)]) -> Option<[f64; 9]> {
     let h08 = gauss_solve(&lead, &b)?;
 
     // Un-normalize: H = T_dst^-1 * H_n * T_src.
-    let h_n = [h08[0], h08[1], h08[2], h08[3], h08[4], h08[5], h08[6], h08[7], 1.0];
+    let h_n = [
+        h08[0], h08[1], h08[2], h08[3], h08[4], h08[5], h08[6], h08[7], 1.0,
+    ];
     let t_dst_inv = invert3(&t_dst)?;
     let tmp = mul3(&t_dst_inv, &h_n);
     let h = mul3(&tmp, &t_src);
@@ -103,9 +112,15 @@ fn invert3(m: &[f64; 9]) -> Option<[f64; 9]> {
         return None;
     }
     Some([
-        (e * i - f * hh) / det, (c * hh - b * i) / det, (b * f - c * e) / det,
-        (f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det,
-        (d * hh - e * g) / det, (b * g - a * hh) / det, (a * e - b * d) / det,
+        (e * i - f * hh) / det,
+        (c * hh - b * i) / det,
+        (b * f - c * e) / det,
+        (f * g - d * i) / det,
+        (a * i - c * g) / det,
+        (c * d - a * f) / det,
+        (d * hh - e * g) / det,
+        (b * g - a * hh) / det,
+        (a * e - b * d) / det,
     ])
 }
 
@@ -116,7 +131,11 @@ fn gauss_solve(a: &[[f64; 8]; 8], b: &[f64; 8]) -> Option<[f64; 8]> {
     for col in 0..8 {
         // pivot
         let (piv, _) = (col..8).fold((col, a[col][col].abs()), |(bi, bv), r| {
-            if a[r][col].abs() > bv { (r, a[r][col].abs()) } else { (bi, bv) }
+            if a[r][col].abs() > bv {
+                (r, a[r][col].abs())
+            } else {
+                (bi, bv)
+            }
         });
         if a[piv][col].abs() < 1e-12 {
             return None;
@@ -179,14 +198,18 @@ mod tests {
         let h = fit_homography(&pairs).expect("fit");
         let (u, v) = apply_h(&h, 10.0, 10.0);
         let (eu, ev) = apply_h(&h_true, 10.0, 10.0);
-        assert!((u - eu).abs() < 0.5 && (v - ev).abs() < 0.5, "{u} {v} vs {eu} {ev}");
+        assert!(
+            (u - eu).abs() < 0.5 && (v - ev).abs() < 0.5,
+            "{u} {v} vs {eu} {ev}"
+        );
     }
 
     #[test]
     fn rejects_degenerate_input() {
         // Collinear points: no homography exists.
-        let pairs: Vec<(f64, f64, f64, f64)> =
-            (0..5).map(|i| (i as f64, 0.0, i as f64 * 2.0, 0.0)).collect();
+        let pairs: Vec<(f64, f64, f64, f64)> = (0..5)
+            .map(|i| (i as f64, 0.0, i as f64 * 2.0, 0.0))
+            .collect();
         assert!(fit_homography(&pairs).is_none());
     }
 }

@@ -146,11 +146,7 @@ impl Ean13Decoder {
         if runs.len() < start + 59 {
             return None;
         }
-        let g = [
-            runs[start].1,
-            runs[start + 1].1,
-            runs[start + 2].1,
-        ];
+        let g = [runs[start].1, runs[start + 1].1, runs[start + 2].1];
         let s = (g[0] + g[1] + g[2]) as f32 / 3.0;
         if s < 0.7 || g.iter().any(|&v| (v as f32 - s).abs() > s * 0.7) {
             return None;
@@ -182,12 +178,7 @@ impl Ean13Decoder {
             let mut ok = true;
             for d in 0..6 {
                 let i = start + 32 + d * 4;
-                let druns = [
-                    runs[i].1,
-                    runs[i + 1].1,
-                    runs[i + 2].1,
-                    runs[i + 3].1,
-                ];
+                let druns = [runs[i].1, runs[i + 1].1, runs[i + 2].1, runs[i + 3].1];
                 match best_digit(druns, scale, &R_RUNS) {
                     Some((dd, _)) => digits[7 + d] = dd,
                     None => {
@@ -202,12 +193,7 @@ impl Ean13Decoder {
             let mut parity = [0u8; 6];
             for d in 0..6 {
                 let i = start + 3 + d * 4;
-                let druns = [
-                    runs[i].1,
-                    runs[i + 1].1,
-                    runs[i + 2].1,
-                    runs[i + 3].1,
-                ];
+                let druns = [runs[i].1, runs[i + 1].1, runs[i + 2].1, runs[i + 3].1];
                 match best_left_digit(druns, scale) {
                     Some((dd, kind)) => {
                         digits[1 + d] = dd;
@@ -272,7 +258,9 @@ impl Ean13Decoder {
             }
         }
 
-        for f in [1.0f32, 0.92, 1.08, 0.85, 1.15, 0.8, 1.2, 0.95, 1.05, 0.9, 1.1] {
+        for f in [
+            1.0f32, 0.92, 1.08, 0.85, 1.15, 0.8, 1.2, 0.95, 1.05, 0.9, 1.1,
+        ] {
             let n = n_mod * f;
             // Check the 11 single-module guard runs before quantizing all 59.
             let lo_g = 0.54 * n;
@@ -305,7 +293,11 @@ impl Ean13Decoder {
             };
             let x_start = row.offsets[start];
             let x_end = x_start + total;
-            return Some(Candidate { text: digits, x_start, x_end });
+            return Some(Candidate {
+                text: digits,
+                x_start,
+                x_end,
+            });
         }
         None
     }
@@ -392,22 +384,28 @@ impl Ean13Decoder {
         for d in 0..6 {
             let off = 50 + d * 7;
             let seg = ((bits >> off) & 0x7f) as u8;
-            let ri = R_BITS.iter().position(|&b| b == seg).map(|i| i as u8).or_else(|| {
-                let mut found: Option<u8> = None;
-                for (i, &b) in R_BITS.iter().enumerate() {
-                    if dist1(seg, b) <= 1 {
-                        if found.is_some() {
-                            return None;
+            let ri = R_BITS
+                .iter()
+                .position(|&b| b == seg)
+                .map(|i| i as u8)
+                .or_else(|| {
+                    let mut found: Option<u8> = None;
+                    for (i, &b) in R_BITS.iter().enumerate() {
+                        if dist1(seg, b) <= 1 {
+                            if found.is_some() {
+                                return None;
+                            }
+                            found = Some(i as u8);
                         }
-                        found = Some(i as u8);
                     }
-                }
-                found
-            })?;
+                    found
+                })?;
             digits[7 + d] = ri;
         }
 
-        let first = PARITY.iter().position(|s| s.as_bytes() == parity.as_slice())?;
+        let first = PARITY
+            .iter()
+            .position(|s| s.as_bytes() == parity.as_slice())?;
         digits[0] = first as u8;
 
         if !check_digit_valid(&digits) {
@@ -424,10 +422,22 @@ impl Ean13Decoder {
             raw: text.as_bytes().to_vec(),
             text,
             position: [
-                Point { x: x0 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y1 as f32 },
-                Point { x: x0 as f32, y: y1 as f32 },
+                Point {
+                    x: x0 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y1 as f32,
+                },
+                Point {
+                    x: x0 as f32,
+                    y: y1 as f32,
+                },
             ],
         }
     }
@@ -455,9 +465,14 @@ impl LinearDecoder for Ean13Decoder {
             if lo == 0 || hi > lo * 2 {
                 continue;
             }
-            let Some(c) = Self::try_at(row, start) else { continue };
+            let Some(c) = Self::try_at(row, start) else {
+                continue;
+            };
             let (count, x0, x1, y0, y1) = {
-                let e = self.votes.entry(c.text).or_insert((0, c.x_start, c.x_end, y, y));
+                let e = self
+                    .votes
+                    .entry(c.text)
+                    .or_insert((0, c.x_start, c.x_end, y, y));
                 e.0 += 1;
                 e.1 = e.1.min(c.x_start);
                 e.2 = e.2.max(c.x_end);
@@ -478,9 +493,14 @@ impl LinearDecoder for Ean13Decoder {
             if (runs[start - 1].1 as f32) < s * 3.0 {
                 continue;
             }
-            let Some(c) = Self::try_variance(row, start) else { continue };
+            let Some(c) = Self::try_variance(row, start) else {
+                continue;
+            };
             let (count, x0, x1, y0, y1) = {
-                let e = self.votes.entry(c.text).or_insert((0, c.x_start, c.x_end, y, y));
+                let e = self
+                    .votes
+                    .entry(c.text)
+                    .or_insert((0, c.x_start, c.x_end, y, y));
                 e.0 += 1;
                 e.1 = e.1.min(c.x_start);
                 e.2 = e.2.max(c.x_end);
@@ -505,7 +525,11 @@ impl LinearDecoder for Ean13Decoder {
     }
 
     fn vote_count(&self) -> usize {
-        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
+        if self.votes.is_empty() {
+            0
+        } else {
+            self.votes.values().map(|v| v.0).sum()
+        }
     }
 }
 
@@ -606,7 +630,12 @@ mod tests {
 
     #[test]
     fn round_trip_synthetic_symbols() {
-        let cases: [&str; 4] = ["0404804131807", "4006381333931", "5901234123457", "9771234567003"];
+        let cases: [&str; 4] = [
+            "0404804131807",
+            "4006381333931",
+            "5901234123457",
+            "9771234567003",
+        ];
         for case in cases {
             for narrow in [2u32, 3, 4] {
                 let canvas = barcode_fixtures::encode_ean13(case, narrow, 24, 11 * narrow);
@@ -621,7 +650,8 @@ mod tests {
 
     #[test]
     fn rejects_bad_check_digit() {
-        let canvas = barcode_fixtures::encode_ean13_raw(&[0, 4, 0, 4, 8, 0, 4, 1, 3, 1, 8, 0, 0], 3, 24, 33);
+        let canvas =
+            barcode_fixtures::encode_ean13_raw(&[0, 4, 0, 4, 8, 0, 4, 1, 3, 1, 8, 0, 0], 3, 24, 33);
         assert_eq!(decode_canvas(&canvas, 2), None);
     }
 
@@ -659,10 +689,7 @@ mod tests {
         // Module layout: 0..2 start guard 101; the first left digit is L0
         // 0001101 at modules 3..9, its 2-module bar at modules 6..8.
         canvas.clear(quiet + 7 * narrow, 0, narrow, height);
-        assert_eq!(
-            decode_canvas(&canvas, 2).as_deref(),
-            Some("4006381333931")
-        );
+        assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some("4006381333931"));
     }
 
     #[test]
@@ -689,82 +716,82 @@ mod tests {
 
 #[cfg(test)]
 mod replay {
-    use barcode_core::BitImage;
     use super::*;
+    use barcode_core::BitImage;
 
     #[test]
     #[ignore = "known-failing: low-contrast/defocus frame erodes ~1 module; fix via GPU contrast normalization (docs/session-findings.md)"]
     fn replay_live_phone_frame() {
         // Row runs captured live from the GPU mask (y=424).
-    // AUTO-GENERATED from the live phone capture (frame y=424) - do not edit by hand.
-    let runs: [(bool, u32); 64] = [
-        (false, 0),
-        (false, 120),
-        (true, 5),
-        (false, 5),
-        (true, 4),
-        (false, 4),
-        (true, 4),
-        (false, 14),
-        (true, 8),
-        (false, 14),
-        (true, 6),
-        (false, 6),
-        (true, 5),
-        (false, 3),
-        (true, 5),
-        (false, 14),
-        (true, 8),
-        (false, 5),
-        (true, 6),
-        (false, 6),
-        (true, 12),
-        (false, 15),
-        (true, 7),
-        (false, 5),
-        (true, 3),
-        (false, 6),
-        (true, 5),
-        (false, 14),
-        (true, 6),
-        (false, 5),
-        (true, 4),
-        (false, 5),
-        (true, 4),
-        (false, 6),
-        (true, 6),
-        (false, 11),
-        (true, 8),
-        (false, 4),
-        (true, 4),
-        (false, 18),
-        (true, 5),
-        (false, 3),
-        (true, 8),
-        (false, 11),
-        (true, 7),
-        (false, 5),
-        (true, 3),
-        (false, 9),
-        (true, 4),
-        (false, 14),
-        (true, 12),
-        (false, 10),
-        (true, 3),
-        (false, 6),
-        (true, 3),
-        (false, 13),
-        (true, 5),
-        (false, 10),
-        (true, 4),
-        (false, 4),
-        (true, 5),
-        (false, 55),
-        (true, 6),
-        (false, 45),
-    ];
-    let width = 640u32;
-    let height = 8u32;
+        // AUTO-GENERATED from the live phone capture (frame y=424) - do not edit by hand.
+        let runs: [(bool, u32); 64] = [
+            (false, 0),
+            (false, 120),
+            (true, 5),
+            (false, 5),
+            (true, 4),
+            (false, 4),
+            (true, 4),
+            (false, 14),
+            (true, 8),
+            (false, 14),
+            (true, 6),
+            (false, 6),
+            (true, 5),
+            (false, 3),
+            (true, 5),
+            (false, 14),
+            (true, 8),
+            (false, 5),
+            (true, 6),
+            (false, 6),
+            (true, 12),
+            (false, 15),
+            (true, 7),
+            (false, 5),
+            (true, 3),
+            (false, 6),
+            (true, 5),
+            (false, 14),
+            (true, 6),
+            (false, 5),
+            (true, 4),
+            (false, 5),
+            (true, 4),
+            (false, 6),
+            (true, 6),
+            (false, 11),
+            (true, 8),
+            (false, 4),
+            (true, 4),
+            (false, 18),
+            (true, 5),
+            (false, 3),
+            (true, 8),
+            (false, 11),
+            (true, 7),
+            (false, 5),
+            (true, 3),
+            (false, 9),
+            (true, 4),
+            (false, 14),
+            (true, 12),
+            (false, 10),
+            (true, 3),
+            (false, 6),
+            (true, 3),
+            (false, 13),
+            (true, 5),
+            (false, 10),
+            (true, 4),
+            (false, 4),
+            (true, 5),
+            (false, 55),
+            (true, 6),
+            (false, 45),
+        ];
+        let width = 640u32;
+        let height = 8u32;
         let bytes_per_row = (width.div_ceil(8).div_ceil(4) * 4) as usize;
         let mut data = vec![0u8; bytes_per_row * height as usize];
         let mut x = 0u32;
@@ -782,7 +809,13 @@ mod replay {
         let mut d = Ean13Decoder::new(1);
         let mut row = RowRuns::with_capacity(128);
         row.scan_row(&img, 0);
-        println!("RUST_RUNS {:?}", row.runs.iter().map(|r| (r.0 as u8, r.1)).collect::<Vec<_>>());
+        println!(
+            "RUST_RUNS {:?}",
+            row.runs
+                .iter()
+                .map(|r| (r.0 as u8, r.1))
+                .collect::<Vec<_>>()
+        );
         // direct quantize probe at the JS-winning scale
         for f in [0.95f32, 1.0, 0.9] {
             let n = 4.358 * f;
@@ -792,7 +825,10 @@ mod replay {
             }
         }
         let res = d.decode(&img);
-        println!("REPLAY RESULT: {:?}", res.iter().map(|r| &r.text).collect::<Vec<_>>());
+        println!(
+            "REPLAY RESULT: {:?}",
+            res.iter().map(|r| &r.text).collect::<Vec<_>>()
+        );
         assert_eq!(res.first().map(|r| r.text.as_str()), Some("0404804131807"));
     }
 }
@@ -809,7 +845,9 @@ impl UpcaDecoder {
     /// # Arguments
     /// - `min_rows`: rows that must agree before a result is trusted (>= 1).
     pub fn new(min_rows: usize) -> Self {
-        Self { inner: Ean13Decoder::new(min_rows) }
+        Self {
+            inner: Ean13Decoder::new(min_rows),
+        }
     }
 }
 

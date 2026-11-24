@@ -56,8 +56,8 @@ pub(crate) fn correct_stream(mut stream: Vec<u16>, erasures: &[usize]) -> Option
         // voted is exactly that. Mixed damage (unknown errors too) fails
         // the erasure solve's full verification, so fall back to the
         // error-only pass.
-        let fixed = rs::rs_correct_mixed(&stream, k, erasures)
-            .or_else(|| rs::rs_correct(&stream, k));
+        let fixed =
+            rs::rs_correct_mixed(&stream, k, erasures).or_else(|| rs::rs_correct(&stream, k));
         match fixed {
             Some((fixed, _fixes)) => {
                 stream = fixed;

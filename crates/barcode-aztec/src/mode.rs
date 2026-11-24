@@ -41,7 +41,11 @@ pub fn read_mode(matrix: &[u8], spec: &Spec) -> Option<(u8, u16)> {
     // (k+2..k+9); full skips the corner + 1, takes 5, skips the corner
     // tick, takes 5 more (k+2..k+7, k+8..k+13).
     let mut bits = Vec::new();
-    for k in if spec.compact { [0usize, 10, 20, 30] } else { [0, 14, 28, 42] } {
+    for k in if spec.compact {
+        [0usize, 10, 20, 30]
+    } else {
+        [0, 14, 28, 42]
+    } {
         let idx: Box<dyn Iterator<Item = usize>> = if spec.compact {
             Box::new(k + 2..k + 9)
         } else {
@@ -57,7 +61,11 @@ pub fn read_mode(matrix: &[u8], spec: &Spec) -> Option<(u8, u16)> {
         .map(|ch| ch.iter().fold(0u16, |a, &b| (a << 1) | b as u16))
         .collect();
 
-    let (lw, ncheck) = if spec.compact { (2usize, 5usize) } else { (4, 6) };
+    let (lw, ncheck) = if spec.compact {
+        (2usize, 5usize)
+    } else {
+        (4, 6)
+    };
     let gf = field_for(4);
     let expect = rs_encode(&gf, &nibs[..lw], ncheck);
     if expect != nibs[lw..lw + ncheck] {

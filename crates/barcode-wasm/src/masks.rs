@@ -120,19 +120,29 @@ pub fn decode_datamatrix_mask(img: &BitImage) -> Vec<barcode_core::DecodeResult>
 /// `exhaustive` permits the reference sweep fallback after the fast
 /// locator misses (upright masks only — tilt retries stay fast-only so
 /// the ladder cannot multiply seconds per frame).
-pub fn decode_datamatrix_mask_ex(img: &BitImage, exhaustive: bool) -> Vec<barcode_core::DecodeResult> {
+pub fn decode_datamatrix_mask_ex(
+    img: &BitImage,
+    exhaustive: bool,
+) -> Vec<barcode_core::DecodeResult> {
     decode_datamatrix_mask_budget(img, exhaustive, 5000)
 }
 
 /// Camera-tier entry: the live budget (500ms — two consecutive frames
 /// confirm in <1s). Expiry = no-match; the stream retries fresh frames.
-pub fn decode_datamatrix_mask_stream(img: &BitImage, exhaustive: bool) -> Vec<barcode_core::DecodeResult> {
+pub fn decode_datamatrix_mask_stream(
+    img: &BitImage,
+    exhaustive: bool,
+) -> Vec<barcode_core::DecodeResult> {
     decode_datamatrix_mask_budget(img, exhaustive, 500)
 }
 
 /// `budget_ms` bounds the whole DM search for this frame via the
 /// calibrated sample allowance (36M charged ~ 4.7s on rig frames).
-pub fn decode_datamatrix_mask_budget(img: &BitImage, exhaustive: bool, budget_ms: u64) -> Vec<barcode_core::DecodeResult> {
+pub fn decode_datamatrix_mask_budget(
+    img: &BitImage,
+    exhaustive: bool,
+    budget_ms: u64,
+) -> Vec<barcode_core::DecodeResult> {
     const SAMPLES_PER_MS: u64 = 7_700;
     let total = budget_ms * SAMPLES_PER_MS;
     // Big masks: the exhaustive pitch sweep on a junk-rich frame costs
@@ -227,7 +237,12 @@ pub fn decode_datamatrix_mask_budget(img: &BitImage, exhaustive: bool, budget_ms
 /// a 2x-upscaled mask back to native coordinates).
 /// `exhaustive` enables the reference sweep fallback after the fast
 /// locator misses — only affordable at 4x downscale.
-pub(crate) fn decode_dm_at(img: &BitImage, f: f32, exhaustive: bool, budget: u64) -> Vec<barcode_core::DecodeResult> {
+pub(crate) fn decode_dm_at(
+    img: &BitImage,
+    f: f32,
+    exhaustive: bool,
+    budget: u64,
+) -> Vec<barcode_core::DecodeResult> {
     let w = img.width as usize;
     let h = img.height as usize;
     let mut dark = vec![false; w * h];
@@ -270,10 +285,12 @@ pub(crate) fn decode_dm_at(img: &BitImage, f: f32, exhaustive: bool, budget: u64
             .filter_map(|loc| {
                 let payload = loc.decoded.payload.as_ref()?;
                 let text = barcode_core::payload_text(payload);
-                let mut position: barcode_core::Quad =
-                    [barcode_core::Point { x: 0.0, y: 0.0 }; 4];
+                let mut position: barcode_core::Quad = [barcode_core::Point { x: 0.0, y: 0.0 }; 4];
                 for (i, (x, y)) in loc.quad().into_iter().enumerate() {
-                    position[i] = barcode_core::Point { x: x as f32 * f, y: y as f32 * f };
+                    position[i] = barcode_core::Point {
+                        x: x as f32 * f,
+                        y: y as f32 * f,
+                    };
                 }
                 Some(barcode_core::DecodeResult {
                     symbology: barcode_core::Symbology::DataMatrix,
@@ -312,17 +329,18 @@ pub fn decode_pdf417_mask(img: &BitImage) -> Vec<barcode_core::DecodeResult> {
     let h = img.height as usize;
     // Try one packed orientation: scanline first (cheap), then the
     // rectified quad detector (shear/crease).
-    let decode_packed = |packed: &[u8], pw: usize, ph: usize| -> Option<barcode_pdf417::detect::FrameDecode> {
-        let pimg = BitImage::new(pw as u32, ph as u32, packed);
-        let mut dark = vec![0u8; pw * ph];
-        for y in 0..ph {
-            for x in 0..pw {
-                dark[y * pw + x] = pimg.ink(x as u32, y as u32) as u8;
+    let decode_packed =
+        |packed: &[u8], pw: usize, ph: usize| -> Option<barcode_pdf417::detect::FrameDecode> {
+            let pimg = BitImage::new(pw as u32, ph as u32, packed);
+            let mut dark = vec![0u8; pw * ph];
+            for y in 0..ph {
+                for x in 0..pw {
+                    dark[y * pw + x] = pimg.ink(x as u32, y as u32) as u8;
+                }
             }
-        }
-        barcode_pdf417::read_frame(&dark, pw, ph)
-            .or_else(|| barcode_pdf417::read_frame_rectified(&pimg))
-    };
+            barcode_pdf417::read_frame(&dark, pw, ph)
+                .or_else(|| barcode_pdf417::read_frame_rectified(&pimg))
+        };
     // Boarding passes are printed landscape and scanned portrait: the
     // symbol arrives upside down (field report, 2026-11-12), and a code
     // can be presented in any cardinal rotation. Each orientation is one
@@ -371,25 +389,23 @@ pub fn decode_pdf417_mask(img: &BitImage) -> Vec<barcode_core::DecodeResult> {
             let packed = quarter(false);
             decode_packed(&packed, h, w).map(map270)
         });
-    hit
-        .map(|hit| {
-            let mut position: barcode_core::Quad =
-                [barcode_core::Point { x: 0.0, y: 0.0 }; 4];
-            for i in 0..4 {
-                position[i] = barcode_core::Point {
-                    x: hit.quad[2 * i] as f32,
-                    y: hit.quad[2 * i + 1] as f32,
-                };
-            }
-            barcode_core::DecodeResult {
-                symbology: barcode_core::Symbology::PDF417,
-                text: barcode_core::payload_text(&hit.payload),
-                raw: hit.payload.clone(),
-                position,
-            }
-        })
-        .into_iter()
-        .collect()
+    hit.map(|hit| {
+        let mut position: barcode_core::Quad = [barcode_core::Point { x: 0.0, y: 0.0 }; 4];
+        for i in 0..4 {
+            position[i] = barcode_core::Point {
+                x: hit.quad[2 * i] as f32,
+                y: hit.quad[2 * i + 1] as f32,
+            };
+        }
+        barcode_core::DecodeResult {
+            symbology: barcode_core::Symbology::PDF417,
+            text: barcode_core::payload_text(&hit.payload),
+            raw: hit.payload.clone(),
+            position,
+        }
+    })
+    .into_iter()
+    .collect()
 }
 
 /// Quarter-turn of the packed mask; the dimensions swap. Uses the SWAR 8×8

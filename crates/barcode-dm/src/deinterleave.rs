@@ -26,7 +26,9 @@ fn split_blocks(spec: &SymbolSpec, stream: &[u8]) -> Vec<Vec<u8>> {
             blocks[(i - d_total) % b].push(*v);
         }
     }
-    debug_assert!(blocks.iter().all(|bl| bl.len() == q + spec.nn() || bl.len() == q + 1 + spec.nn()));
+    debug_assert!(blocks
+        .iter()
+        .all(|bl| bl.len() == q + spec.nn() || bl.len() == q + 1 + spec.nn()));
     blocks
 }
 
@@ -112,7 +114,10 @@ pub fn encode_stream(spec: &SymbolSpec, gf: &Gf, data: &[u8]) -> Vec<u8> {
     }
     let mut stream = data.to_vec();
     // parities per block, then the ecc section in interleaved order
-    let parities: Vec<Vec<u8>> = blocks.iter().map(|bl| crate::rs::rs_encode(gf, bl, nn)).collect();
+    let parities: Vec<Vec<u8>> = blocks
+        .iter()
+        .map(|bl| crate::rs::rs_encode(gf, bl, nn))
+        .collect();
     for k in 0..nn {
         for par in &parities {
             stream.push(par[k]);
@@ -169,7 +174,11 @@ mod tests {
             let blocks = split_blocks(spec, &stream);
             for (i, &v) in stream.iter().enumerate() {
                 let (blk, off) = stream_position(spec, i);
-                assert_eq!(blocks[blk][off], v, "{}x{} stream {i}", spec.rows, spec.cols);
+                assert_eq!(
+                    blocks[blk][off], v,
+                    "{}x{} stream {i}",
+                    spec.rows, spec.cols
+                );
             }
         }
     }
@@ -196,7 +205,11 @@ mod tests {
         for &i in &erased {
             damaged[i] ^= 0xa7;
         }
-        assert_eq!(decode_stream(&spec, &damaged.clone()), None, "26/block > 21");
+        assert_eq!(
+            decode_stream(&spec, &damaged.clone()),
+            None,
+            "26/block > 21"
+        );
         assert_eq!(
             decode_stream_with_erasures(&spec, &damaged, &erased).unwrap(),
             data

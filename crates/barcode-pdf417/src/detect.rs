@@ -39,13 +39,11 @@ pub fn read_frame(dark: &[u8], w: usize, h: usize) -> Option<FrameDecode> {
     hits.sort_by_key(|hit| (hit.y, hit.x0));
     let mut clusters: Vec<(f64, f64, usize, Vec<(usize, f64, f64)>)> = Vec::new();
     for hit in hits {
-        let rows = match clusters
-            .iter_mut()
-            .find(|(x0, x1, ncols, _)| {
-                *ncols == hit.ncols
-                    && (*x0 - hit.x0 as f64).abs() <= 6.0
-                    && (*x1 - hit.x1 as f64).abs() <= 6.0
-            }) {
+        let rows = match clusters.iter_mut().find(|(x0, x1, ncols, _)| {
+            *ncols == hit.ncols
+                && (*x0 - hit.x0 as f64).abs() <= 6.0
+                && (*x1 - hit.x1 as f64).abs() <= 6.0
+        }) {
             Some((x0, x1, _, rows)) => {
                 let n = rows.len() as f64;
                 *x0 += (hit.x0 as f64 - *x0) / (n + 1.0);
@@ -65,10 +63,8 @@ pub fn read_frame(dark: &[u8], w: usize, h: usize) -> Option<FrameDecode> {
             decode_symbol(dark, w, (*x0 as usize, *x1 as usize, *ncols), rows)
         {
             let quad = [
-                bx0 as f64, by0 as f64,
-                bx1 as f64, by0 as f64,
-                bx1 as f64, by1 as f64,
-                bx0 as f64, by1 as f64,
+                bx0 as f64, by0 as f64, bx1 as f64, by0 as f64, bx1 as f64, by1 as f64, bx0 as f64,
+                by1 as f64,
             ];
             return Some(FrameDecode { payload, quad });
         }
@@ -204,7 +200,14 @@ fn scan_candidates(dark: &[u8], w: usize, h: usize) -> Vec<Hit> {
                 if (width_m - (69.0 + 17.0 * ncols as f64)).abs() > tol {
                     continue;
                 }
-                hits.push(Hit { x0: *x0 as usize, x1: *x1 as usize, s0: *s0, s1: *s1, y, ncols: ncols as usize });
+                hits.push(Hit {
+                    x0: *x0 as usize,
+                    x1: *x1 as usize,
+                    s0: *s0,
+                    s1: *s1,
+                    y,
+                    ncols: ncols as usize,
+                });
             }
         }
     }
@@ -304,7 +307,10 @@ fn parse_line(
             }
             let want_n = if ci == bounds.len() - 1 { 9 } else { 8 };
             let want_sum = if ci == bounds.len() - 1 { 18 } else { 17 };
-            if cell.len() != want_n || cell.iter().sum::<u8>() != want_sum || cell.iter().min() == Some(&0) {
+            if cell.len() != want_n
+                || cell.iter().sum::<u8>() != want_sum
+                || cell.iter().min() == Some(&0)
+            {
                 return None;
             }
             cells.push(cell);
@@ -324,7 +330,11 @@ fn parse_line(
     //    most of its rows this way.
     let stop = (0..elems.len().saturating_sub(8)).find(|&i| elems_match(i, &STOP_RUNS))?;
     let start_px = elems[start].2;
-    let stop_end = if stop + 9 < elems.len() { elems[stop + 9].2 } else { (hi - lo) as u32 };
+    let stop_end = if stop + 9 < elems.len() {
+        elems[stop + 9].2
+    } else {
+        (hi - lo) as u32
+    };
     if stop_end <= start_px {
         return None;
     }
@@ -356,7 +366,10 @@ fn parse_line(
         cell.push(n);
         let want_n = if ci == bounds.len() - 1 { 9 } else { 8 };
         let want_sum = if ci == bounds.len() - 1 { 18 } else { 17 };
-        if cell.len() != want_n || cell.iter().sum::<u8>() != want_sum || cell.iter().min() == Some(&0) {
+        if cell.len() != want_n
+            || cell.iter().sum::<u8>() != want_sum
+            || cell.iter().min() == Some(&0)
+        {
             return None;
         }
         cells.push(cell);
@@ -402,7 +415,9 @@ fn decode_symbol(
             continue;
         };
         // cluster trial via the first data cell
-        let cluster = (0..=6).step_by(3).find(|&c| value_of(c, &cells[2]).is_some());
+        let cluster = (0..=6)
+            .step_by(3)
+            .find(|&c| value_of(c, &cells[2]).is_some());
         let Some(cluster) = cluster else {
             why[1] += 1;
             continue;
@@ -438,7 +453,9 @@ fn decode_symbol(
     // DATA cells voted in — the row's cluster is known from the index.
     let missing: Vec<usize> = (1..=nrows).filter(|r| !votes.contains_key(r)).collect();
     if !missing.is_empty() {
-        let (ymin, ymax) = ys.iter().fold((usize::MAX, 0), |(a, b), &(y, ..)| (a.min(y), b.max(y)));
+        let (ymin, ymax) = ys
+            .iter()
+            .fold((usize::MAX, 0), |(a, b), &(y, ..)| (a.min(y), b.max(y)));
         let pitch = (ymax - ymin + 1) as f64 / nrows as f64;
         for &(y, s0, s1) in ys {
             let Some(cells) = parse_line(dark, w, y, x0, x1, s0, s1, ncols) else {
@@ -486,7 +503,9 @@ fn decode_symbol(
     let data = strip_pads(&full[1..desc]);
     let payload = interpret(data)?;
     // bounding box from the identified scan lines (± half a band)
-    let (ymin, ymax) = ys.iter().fold((usize::MAX, 0), |(a, b), &(y, ..)| (a.min(y), b.max(y)));
+    let (ymin, ymax) = ys
+        .iter()
+        .fold((usize::MAX, 0), |(a, b), &(y, ..)| (a.min(y), b.max(y)));
     let quad = (
         x0,
         x1,
@@ -691,7 +710,11 @@ impl RowLine {
     /// elements).
     fn elements(&self, from: usize, to: usize) -> Option<Vec<u8>> {
         let runs = bits_runs(&self.bits[from..to])?;
-        if runs.len() == 8 && runs.iter().sum::<u8>() == 17 { Some(runs) } else { None }
+        if runs.len() == 8 && runs.iter().sum::<u8>() == 17 {
+            Some(runs)
+        } else {
+            None
+        }
     }
 }
 
@@ -703,13 +726,16 @@ impl RowLine {
 /// quad. Each module is integrated vertically (5 samples) because a
 /// thermal print erodes 1-module bars to a single pixel that a 3x3
 /// majority rejects.
-fn sample_row_line(img: &BitImage, quad: &barcode_core::Quad, cols: u32, tv: f32) -> Option<RowLine> {
+fn sample_row_line(
+    img: &BitImage,
+    quad: &barcode_core::Quad,
+    cols: u32,
+    tv: f32,
+) -> Option<RowLine> {
     let [tl, tr, br, bl] = *quad;
     let w = img.width as i64;
     let h = img.height as i64;
-    let ink = |x: i64, y: i64| {
-        x >= 0 && y >= 0 && x < w && y < h && img.ink(x as u32, y as u32)
-    };
+    let ink = |x: i64, y: i64| x >= 0 && y >= 0 && x < w && y < h && img.ink(x as u32, y as u32);
     let left_x = tl.x + (bl.x - tl.x) * tv;
     let left_y = tl.y + (bl.y - tl.y) * tv;
     let right_x = tr.x + (br.x - tr.x) * tv;
@@ -765,7 +791,9 @@ fn sample_row_line(img: &BitImage, quad: &barcode_core::Quad, cols: u32, tv: f32
 fn line_row(line: &RowLine, modules: u32) -> Option<usize> {
     let m = modules as usize;
     let first_data = line.elements(34, 51)?;
-    let cluster = [0usize, 3, 6].into_iter().find(|&c| value_of(c, &first_data).is_some())?;
+    let cluster = [0usize, 3, 6]
+        .into_iter()
+        .find(|&c| value_of(c, &first_data).is_some())?;
     let left = value_of(cluster, &line.elements(17, 34)?)?;
     let x_ind = left / 30;
     let right = value_of(cluster, &line.elements(m - 35, m - 18)?)?;
@@ -829,8 +857,10 @@ fn sample_rows_snapped(
             seen[v] = Some((tvs[lo], tvs[hi - 1]));
         }
     }
-    let centers: Vec<Option<f32>> =
-        seen.iter().map(|b| b.map(|(lo, hi)| (lo + hi) / 2.0)).collect();
+    let centers: Vec<Option<f32>> = seen
+        .iter()
+        .map(|b| b.map(|(lo, hi)| (lo + hi) / 2.0))
+        .collect();
     // Fill missing bands by linear interpolation between the nearest
     // decoded rows (extrapolate with the average local spacing at the ends).
     let mut bands: Vec<(f32, f32)> = vec![(0.0, 0.0); nrows];
@@ -844,19 +874,34 @@ fn sample_rows_snapped(
         let half = match (prev, next) {
             (Some(p), Some(n)) => {
                 let span = (n - p) as f32;
-                let c = centers[p].unwrap() + (centers[n].unwrap() - centers[p].unwrap()) * ((v - p) as f32 / span);
+                let c = centers[p].unwrap()
+                    + (centers[n].unwrap() - centers[p].unwrap()) * ((v - p) as f32 / span);
                 let hp = seen[p].map(|(a, b)| b - a).unwrap_or(0.0);
                 let hn = seen[n].map(|(a, b)| b - a).unwrap_or(hp);
                 let hw = ((hp + (hn - hp) * ((v - p) as f32 / span)) / 2.0).max(0.01);
                 (c, hw)
             }
             (Some(p), None) => {
-                let step = if p > 0 { centers[p].unwrap() - centers[p - 1].unwrap_or(centers[p].unwrap()) } else { 0.0 };
-                (centers[p].unwrap() + step * (v - p) as f32, 0.35 / rows as f32)
+                let step = if p > 0 {
+                    centers[p].unwrap() - centers[p - 1].unwrap_or(centers[p].unwrap())
+                } else {
+                    0.0
+                };
+                (
+                    centers[p].unwrap() + step * (v - p) as f32,
+                    0.35 / rows as f32,
+                )
             }
             (None, Some(n)) => {
-                let step = if n + 1 < nrows { centers[n + 1].unwrap_or(centers[n].unwrap()) - centers[n].unwrap() } else { 0.0 };
-                (centers[n].unwrap() - step * (n - v) as f32, 0.35 / rows as f32)
+                let step = if n + 1 < nrows {
+                    centers[n + 1].unwrap_or(centers[n].unwrap()) - centers[n].unwrap()
+                } else {
+                    0.0
+                };
+                (
+                    centers[n].unwrap() - step * (n - v) as f32,
+                    0.35 / rows as f32,
+                )
             }
             (None, None) => (((v as f32 + 0.5) / rows as f32), 0.35 / rows as f32),
         };
@@ -869,14 +914,20 @@ fn sample_rows_snapped(
         let mut tvs: Vec<f32> = if lo_tv < hi_tv {
             // Uniform lines inside the band; 9 like the old spacing, capped.
             let n = ((hi_tv - lo_tv) * 400.0).round().clamp(3.0, 16.0) as usize;
-            (0..n).map(|k| lo_tv + (hi_tv - lo_tv) * (k as f32 + 0.5) / n as f32).collect()
+            (0..n)
+                .map(|k| lo_tv + (hi_tv - lo_tv) * (k as f32 + 0.5) / n as f32)
+                .collect()
         } else {
             let mid = (v as f32 + 0.5) / rows as f32;
-            (0..9).map(|k| mid + (k as f32 - 4.0) * 0.7 / (9.0 * rows as f32)).collect()
+            (0..9)
+                .map(|k| mid + (k as f32 - 4.0) * 0.7 / (9.0 * rows as f32))
+                .collect()
         };
         if tvs.len() > MAX_LINES {
             let stride = tvs.len() as f32 / MAX_LINES as f32;
-            tvs = (0..MAX_LINES).map(|k| tvs[(k as f32 * stride) as usize]).collect();
+            tvs = (0..MAX_LINES)
+                .map(|k| tvs[(k as f32 * stride) as usize])
+                .collect();
         }
         let mut votes = vec![0u8; modules as usize];
         let mut used = 0u8;
@@ -895,7 +946,11 @@ fn sample_rows_snapped(
             bits.push(used > 0 && *vote * 2 > used);
         }
     }
-    barcode_core::geometry::BitGrid { cols: modules, rows, bits }
+    barcode_core::geometry::BitGrid {
+        cols: modules,
+        rows,
+        bits,
+    }
 }
 
 /// Decode the first PDF417 symbol in a binarized frame, via the rectified
@@ -919,10 +974,14 @@ pub fn read_frame_rectified(img: &BitImage) -> Option<FrameDecode> {
         crate::decode_exact(&modules_bits, modules, rows)
     };
     let quad_f = [
-        quad[0].x as f64, quad[0].y as f64,
-        quad[1].x as f64, quad[1].y as f64,
-        quad[2].x as f64, quad[2].y as f64,
-        quad[3].x as f64, quad[3].y as f64,
+        quad[0].x as f64,
+        quad[0].y as f64,
+        quad[1].x as f64,
+        quad[1].y as f64,
+        quad[2].x as f64,
+        quad[2].y as f64,
+        quad[3].x as f64,
+        quad[3].y as f64,
     ];
     // The symbol's row count and per-row vertical bands come from the
     // row indicators themselves: scan the quad's row lines, decode the
@@ -934,7 +993,10 @@ pub fn read_frame_rectified(img: &BitImage) -> Option<FrameDecode> {
         if (2..=90).contains(&rows) {
             let grid = sample_rows_snapped(img, &quad, modules as u32, rows as u32, &labels);
             if let Some(payload) = decode_grid(&grid, rows) {
-                return Some(FrameDecode { payload, quad: quad_f });
+                return Some(FrameDecode {
+                    payload,
+                    quad: quad_f,
+                });
             }
         }
     }
@@ -948,9 +1010,11 @@ pub fn read_frame_rectified(img: &BitImage) -> Option<FrameDecode> {
         }
         let grid = sample_rows_snapped(img, &quad, modules as u32, rows as u32, &[]);
         if let Some(payload) = decode_grid(&grid, rows) {
-            return Some(FrameDecode { payload, quad: quad_f });
+            return Some(FrameDecode {
+                payload,
+                quad: quad_f,
+            });
         }
     }
     None
 }
-

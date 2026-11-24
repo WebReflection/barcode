@@ -55,7 +55,10 @@ fn encode_into(payload: &[u8], spec: &'static SymbolSpec) -> Option<Encoded> {
 
     let gf = Gf::new();
     let stream = encode_stream(spec, &gf, &padded);
-    Some(Encoded { spec, matrix: paint(spec, &stream) })
+    Some(Encoded {
+        spec,
+        matrix: paint(spec, &stream),
+    })
 }
 
 /// Payload -> data codewords, ASCII mode: digit pairs packed, 0..=127
@@ -110,10 +113,7 @@ fn paint(spec: &SymbolSpec, stream: &[u8]) -> Vec<u8> {
     // leftover stream cells (12x12/16x16/20x20/24x24): the last 2x2 map
     // corner gets the fixed diagonal-dark pattern
     if spec.kr == 1 && spec.kc == 1 && spec.map_rows() * spec.map_cols() > 8 * spec.codewords() {
-        for &(mr, mc) in &[
-            (spec.s_r - 2, spec.s_c - 2),
-            (spec.s_r - 1, spec.s_c - 1),
-        ] {
+        for &(mr, mc) in &[(spec.s_r - 2, spec.s_c - 2), (spec.s_r - 1, spec.s_c - 1)] {
             let (sr, sc) = spec.to_symbol(mr, mc);
             m[sr * c + sc] = 1;
         }
@@ -124,13 +124,17 @@ fn paint(spec: &SymbolSpec, stream: &[u8]) -> Vec<u8> {
         let y = i * spec.s_r + 2 * (i - 1) + 1;
         for j in 0..c {
             m[y * c + j] = 1;
-            if j % 2 == 0 { m[(y + 1) * c + j] = 1; }
+            if j % 2 == 0 {
+                m[(y + 1) * c + j] = 1;
+            }
         }
     }
     for i in 1..spec.kc {
         let x = i * spec.s_c + 2 * (i - 1) + 1;
         for j in 0..r {
-            if j % 2 == 1 { m[j * c + x] = 1; }
+            if j % 2 == 1 {
+                m[j * c + x] = 1;
+            }
             m[j * c + x + 1] = 1;
         }
     }

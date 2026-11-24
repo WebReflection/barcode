@@ -111,8 +111,16 @@ impl ItfDecoder {
             let mut bar_w = [0u8; 5];
             let mut sp_w = [0u8; 5];
             for i in 0..5 {
-                bar_w[i] = if (runs[k + 2 * i].1 as f32) >= thr { 2 } else { 1 };
-                sp_w[i] = if (runs[k + 2 * i + 1].1 as f32) >= thr { 2 } else { 1 };
+                bar_w[i] = if (runs[k + 2 * i].1 as f32) >= thr {
+                    2
+                } else {
+                    1
+                };
+                sp_w[i] = if (runs[k + 2 * i + 1].1 as f32) >= thr {
+                    2
+                } else {
+                    1
+                };
             }
             digits.push(pattern_digit(&bar_w)?);
             digits.push(pattern_digit(&sp_w)?);
@@ -133,7 +141,11 @@ impl ItfDecoder {
                     let text: String = digits.iter().map(|d| (b'0' + d) as char).collect();
                     let x_start = row.offsets[start];
                     let x_end = row.offsets[k + 2] + runs[k + 2].1;
-                    return Some(Candidate { text, x_start, x_end });
+                    return Some(Candidate {
+                        text,
+                        x_start,
+                        x_end,
+                    });
                 }
             }
             if digits.len() > 32 {
@@ -167,10 +179,22 @@ impl ItfDecoder {
             text: text.to_string(),
             raw: text.as_bytes().to_vec(),
             position: [
-                Point { x: x0 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y1 as f32 },
-                Point { x: x0 as f32, y: y1 as f32 },
+                Point {
+                    x: x0 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y1 as f32,
+                },
+                Point {
+                    x: x0 as f32,
+                    y: y1 as f32,
+                },
             ],
         }
     }
@@ -188,7 +212,9 @@ impl LinearDecoder for ItfDecoder {
         }
         debug_assert!(!runs[0].0);
         for start in (1..runs.len()).step_by(2) {
-            let Some(c) = Self::try_from(row, start) else { continue };
+            let Some(c) = Self::try_from(row, start) else {
+                continue;
+            };
             let (count, x0, x1, y0, y1) = {
                 let e = self
                     .votes
@@ -218,7 +244,11 @@ impl LinearDecoder for ItfDecoder {
     }
 
     fn vote_count(&self) -> usize {
-        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
+        if self.votes.is_empty() {
+            0
+        } else {
+            self.votes.values().map(|v| v.0).sum()
+        }
     }
 }
 
@@ -305,7 +335,10 @@ mod tests {
     #[test]
     fn live_payload_and_suffix_shadowing() {
         let canvas = barcode_fixtures::encode_itf("800138909760034646303132", 3, 2.5, 320);
-        assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some("800138909760034646303132"));
+        assert_eq!(
+            decode_canvas(&canvas, 2).as_deref(),
+            Some("800138909760034646303132")
+        );
     }
 
     /// A GS1 check digit is optional: parcel routing labels (the
@@ -374,12 +407,22 @@ mod dbg {
         eprintln!("n runs={} width={}", row.runs.len(), canvas.width);
         eprintln!("runs: {:?}", row.runs.iter().take(24).collect::<Vec<_>>());
         for start in 0..8 {
-            if !row.runs[start].0 { eprintln!("start={start}: bg"); continue; }
-            if start + 34 > row.runs.len() { eprintln!("start={start}: too short"); continue; }
+            if !row.runs[start].0 {
+                eprintln!("start={start}: bg");
+                continue;
+            }
+            if start + 34 > row.runs.len() {
+                eprintln!("start={start}: too short");
+                continue;
+            }
             let mut boot: Vec<u32> = (0..34).map(|k| row.runs[start + k].1).collect();
             boot.sort();
             let thr = (boot[21] + boot[22]) as f32 / 2.0;
-            eprintln!("start={start}: boot[20..24]={:?} thr={thr:.1} startruns={:?}", &boot[20..24], (0..4).map(|k| row.runs[start + k].1).collect::<Vec<_>>());
+            eprintln!(
+                "start={start}: boot[20..24]={:?} thr={thr:.1} startruns={:?}",
+                &boot[20..24],
+                (0..4).map(|k| row.runs[start + k].1).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -403,7 +446,9 @@ mod dbg2 {
             eprintln!("try_from({start}) = {:?}", r.as_ref().map(|c| &c.text));
         }
         let res = d.decode(&img);
-        eprintln!("decode: {:?}", res.iter().map(|r| &r.text).collect::<Vec<_>>());
+        eprintln!(
+            "decode: {:?}",
+            res.iter().map(|r| &r.text).collect::<Vec<_>>()
+        );
     }
 }
-

@@ -90,10 +90,7 @@ impl CodabarDecoder {
             *w = runs[k + i].1;
         }
         widths.sort_unstable();
-        let splits = [
-            (5usize, 2usize),
-            (4usize, 3usize),
-        ];
+        let splits = [(5usize, 2usize), (4usize, 3usize)];
         let mut result = None;
         let mut best_gap = 0.0f32;
         for &(first_wide, _n_wide) in &splits {
@@ -176,7 +173,11 @@ impl CodabarDecoder {
                 }
                 let x_start = row.offsets[start];
                 let x_end = row.offsets[k + 6] + runs[k + 6].1;
-                return Some(Candidate { text, x_start, x_end });
+                return Some(Candidate {
+                    text,
+                    x_start,
+                    x_end,
+                });
             }
             text.push(c);
             if k + 8 > runs.len() {
@@ -202,10 +203,22 @@ impl CodabarDecoder {
             text: text.to_string(),
             raw: text.as_bytes().to_vec(),
             position: [
-                Point { x: x0 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y1 as f32 },
-                Point { x: x0 as f32, y: y1 as f32 },
+                Point {
+                    x: x0 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y1 as f32,
+                },
+                Point {
+                    x: x0 as f32,
+                    y: y1 as f32,
+                },
             ],
         }
     }
@@ -223,7 +236,9 @@ impl LinearDecoder for CodabarDecoder {
         }
         debug_assert!(!runs[0].0);
         for start in (1..runs.len()).step_by(2) {
-            let Some(c) = Self::try_from(row, start) else { continue };
+            let Some(c) = Self::try_from(row, start) else {
+                continue;
+            };
             if c.text.len() < 4 {
                 continue;
             }
@@ -255,7 +270,11 @@ impl LinearDecoder for CodabarDecoder {
     }
 
     fn vote_count(&self) -> usize {
-        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
+        if self.votes.is_empty() {
+            0
+        } else {
+            self.votes.values().map(|v| v.0).sum()
+        }
     }
 }
 
@@ -353,4 +372,3 @@ mod tests {
         assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some("40156"));
     }
 }
-

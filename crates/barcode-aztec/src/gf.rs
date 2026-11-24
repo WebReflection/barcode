@@ -22,7 +22,10 @@ impl Gf {
     pub fn new(bits: u32, poly: u16) -> Gf {
         let size = 1usize << bits;
         let max = (1u32 << (bits + 1)) as u16;
-        assert!(poly > size as u16 && poly < max, "poly {poly:#x} not of degree {bits}");
+        assert!(
+            poly > size as u16 && poly < max,
+            "poly {poly:#x} not of degree {bits}"
+        );
         let order = size - 1; // cycle length of α, i.e. 2^b - 1
         let mut exp = vec![0u16; 2 * order];
         let mut log = vec![0u16; size];
@@ -40,7 +43,12 @@ impl Gf {
         for i in order..2 * order {
             exp[i] = exp[i - order];
         }
-        Gf { bits, poly, exp, log }
+        Gf {
+            bits,
+            poly,
+            exp,
+            log,
+        }
     }
 
     pub fn bits(&self) -> u32 {
@@ -68,7 +76,8 @@ impl Gf {
     #[inline]
     pub fn inv(&self, a: u16) -> u16 {
         debug_assert!(a != 0);
-        self.exp[((self.size() - 1 - self.log[a as usize] as usize) as u16).rem_euclid(2 * (self.size() - 1) as u16) as usize]
+        self.exp[((self.size() - 1 - self.log[a as usize] as usize) as u16)
+            .rem_euclid(2 * (self.size() - 1) as u16) as usize]
     }
 
     /// α^e for any integer e (negative via the cycle of length 2^b−1).
@@ -82,10 +91,10 @@ impl Gf {
 /// Aztec's five fields, keyed by codeword/mode bit width b.
 pub fn field_for(bits: u32) -> Gf {
     match bits {
-        4 => Gf::new(4, 0x13),    // x^4 + x + 1 (mode message)
-        6 => Gf::new(6, 0x43),    // x^6 + x + 1
-        8 => Gf::new(8, 0x12d),   // x^8 + x^5 + x^3 + x^2 + 1 (same as DM)
-        10 => Gf::new(10, 0x409), // x^10 + x^3 + 1
+        4 => Gf::new(4, 0x13),     // x^4 + x + 1 (mode message)
+        6 => Gf::new(6, 0x43),     // x^6 + x + 1
+        8 => Gf::new(8, 0x12d),    // x^8 + x^5 + x^3 + x^2 + 1 (same as DM)
+        10 => Gf::new(10, 0x409),  // x^10 + x^3 + 1
         12 => Gf::new(12, 0x1069), // x^12 + x^6 + x^5 + x^3 + 1
         _ => panic!("no Aztec field for {bits} bits"),
     }

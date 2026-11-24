@@ -36,7 +36,12 @@ fn read_pgm(path: &str) -> (usize, usize, Vec<u8>) {
     let _max: u32 = token(&mut i).parse().unwrap();
     i += 1; // the single whitespace before the raster
     let rest = bytes[i..].to_vec();
-    assert!(rest.len() >= w * h, "pgm data short: {} < {}", rest.len(), w * h);
+    assert!(
+        rest.len() >= w * h,
+        "pgm data short: {} < {}",
+        rest.len(),
+        w * h
+    );
     (w, h, rest)
 }
 
@@ -84,7 +89,9 @@ fn main() {
             "rot{} {rw}x{rh} thr{} -> {:?}",
             turns * 90,
             threshold,
-            hits.iter().map(|r| (format!("{:?}", r.symbology), r.text.clone())).collect::<Vec<_>>()
+            hits.iter()
+                .map(|r| (format!("{:?}", r.symbology), r.text.clone()))
+                .collect::<Vec<_>>()
         );
     }
 }

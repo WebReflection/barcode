@@ -153,7 +153,11 @@ impl Code93Decoder {
                 let text = build_text(data);
                 let x_start = row.offsets[start];
                 let x_end = row.offsets[k + 6] + row.runs[k + 6].1;
-                return Some(Candidate { text, x_start, x_end });
+                return Some(Candidate {
+                    text,
+                    x_start,
+                    x_end,
+                });
             }
             let (v, _) = Self::char_value(row, k)?;
             if v == START_STOP && !Self::stop_at(row, k) {
@@ -173,10 +177,22 @@ impl Code93Decoder {
             text: text.to_string(),
             raw: text.as_bytes().to_vec(),
             position: [
-                Point { x: x0 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y1 as f32 },
-                Point { x: x0 as f32, y: y1 as f32 },
+                Point {
+                    x: x0 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y1 as f32,
+                },
+                Point {
+                    x: x0 as f32,
+                    y: y1 as f32,
+                },
             ],
         }
     }
@@ -194,7 +210,9 @@ impl LinearDecoder for Code93Decoder {
         }
         debug_assert!(!runs[0].0);
         for start in (1..runs.len()).step_by(2) {
-            let Some(c) = Self::try_from(row, start) else { continue };
+            let Some(c) = Self::try_from(row, start) else {
+                continue;
+            };
             let (count, x0, x1, y0, y1) = {
                 let e = self
                     .votes
@@ -223,7 +241,11 @@ impl LinearDecoder for Code93Decoder {
     }
 
     fn vote_count(&self) -> usize {
-        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
+        if self.votes.is_empty() {
+            0
+        } else {
+            self.votes.values().map(|v| v.0).sum()
+        }
     }
 }
 
@@ -350,7 +372,10 @@ mod tests {
     fn pattern_table_is_well_formed() {
         for (i, p) in PATTERNS.iter().enumerate() {
             assert_eq!(p.iter().sum::<u8>(), 9, "pattern {i} sums to 9");
-            assert!(p.iter().all(|&w| (1..=4).contains(&w)), "pattern {i} widths 1-4");
+            assert!(
+                p.iter().all(|&w| (1..=4).contains(&w)),
+                "pattern {i} widths 1-4"
+            );
             // exactly 3 bars (even indices) whose widths pair with spaces:
             // bars and spaces must alternate as (bar, space) x3
         }
@@ -433,7 +458,10 @@ mod tests {
     fn round_trip_full_ascii() {
         // lowercase letters and punctuation need shift pairs
         let canvas = barcode_fixtures::encode_code93("Invoice-A1 (net 42)", 3, 30);
-        assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some("Invoice-A1 (net 42)"));
+        assert_eq!(
+            decode_canvas(&canvas, 2).as_deref(),
+            Some("Invoice-A1 (net 42)")
+        );
     }
 
     /// The ($)A..=Z pair carries U+0001..=U+001A. The decoder used to map
@@ -441,13 +469,15 @@ mod tests {
     /// read back as garbage — the round-trip was broken, not the encoder.
     #[test]
     fn round_trip_control_bytes() {
-        for text in ["\u{00}", "\u{01}", "\u{1a}", "\u{01}\u{1a}AB", "\u{0a}\u{0d}"] {
+        for text in [
+            "\u{00}",
+            "\u{01}",
+            "\u{1a}",
+            "\u{01}\u{1a}AB",
+            "\u{0a}\u{0d}",
+        ] {
             let canvas = barcode_fixtures::encode_code93(text, 4, 30);
-            assert_eq!(
-                decode_canvas(&canvas, 2).as_deref(),
-                Some(text),
-                "{text:?}"
-            );
+            assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some(text), "{text:?}");
         }
     }
 
@@ -494,8 +524,14 @@ mod dbg {
                 break;
             }
             match Code93Decoder::char_value(&row, k) {
-                Some((v, u)) => { eprintln!("k={k} v={v} unit={u:.2}"); values.push(v); }
-                None => { eprintln!("k={k} char_value=None"); break; }
+                Some((v, u)) => {
+                    eprintln!("k={k} v={v} unit={u:.2}");
+                    values.push(v);
+                }
+                None => {
+                    eprintln!("k={k} char_value=None");
+                    break;
+                }
             }
             k += 6;
         }

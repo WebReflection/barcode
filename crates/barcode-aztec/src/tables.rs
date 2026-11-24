@@ -59,6 +59,7 @@ impl Spec {
     }
 }
 
+#[rustfmt::skip]
 const SIZES: [Spec; 36] = [
     Spec { vers: 1, rows: 15, cols: 15, layers: 1, compact: true, bits: 6, total: 17, skip: 2 },
     Spec { vers: 2, rows: 19, cols: 19, layers: 2, compact: true, bits: 6, total: 40, skip: 0 },
@@ -118,7 +119,9 @@ pub fn spec_for(rows: u16, cols: u16, compact: bool) -> Option<&'static Spec> {
     if rows != cols {
         return None;
     }
-    SIZES.iter().find(|s| s.rows == rows && s.cols == cols && s.compact == compact)
+    SIZES
+        .iter()
+        .find(|s| s.rows == rows && s.cols == cols && s.compact == compact)
 }
 
 /// All specs, e.g. for exhaustive search over candidate sizes.
@@ -190,7 +193,10 @@ mod tests {
         for size in [19u16, 23, 27] {
             assert!(spec_for(size, size, true).is_some());
             assert!(spec_for(size, size, false).is_some());
-            let (c, f) = (spec_for(size, size, true).unwrap(), spec_for(size, size, false).unwrap());
+            let (c, f) = (
+                spec_for(size, size, true).unwrap(),
+                spec_for(size, size, false).unwrap(),
+            );
             assert!(c.layers != f.layers);
             assert_eq!(c.bullseye(), 9);
             assert_eq!(f.bullseye(), 13);

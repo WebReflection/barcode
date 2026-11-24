@@ -40,12 +40,25 @@ fn place(
             }
         }
     }
-    BinaryMap { w: width, h: height, dark }
+    BinaryMap {
+        w: width,
+        h: height,
+        dark,
+    }
 }
 
 fn tight(matrix: &[u8], rows: usize, cols: usize, pitch: usize) -> BinaryMap {
     let (w, h) = ((cols + 2 * QUIET) * pitch, (rows + 2 * QUIET) * pitch);
-    place(w, h, matrix, rows, cols, pitch, QUIET * pitch, QUIET * pitch)
+    place(
+        w,
+        h,
+        matrix,
+        rows,
+        cols,
+        pitch,
+        QUIET * pitch,
+        QUIET * pitch,
+    )
 }
 
 fn located(map: &BinaryMap, text: &str) -> bool {
@@ -61,7 +74,10 @@ fn fast_locates_every_dmre_size() {
         let enc = encode_as(text.as_bytes(), rows, cols).unwrap();
         for pitch in [6usize, 8, 10] {
             let map = tight(&enc.matrix, rows, cols, pitch);
-            assert!(located(&map, text), "{rows}x{cols}: not located at pitch {pitch}");
+            assert!(
+                located(&map, text),
+                "{rows}x{cols}: not located at pitch {pitch}"
+            );
         }
     }
 }
@@ -85,6 +101,9 @@ fn fast_locates_eroded_16x48_in_portrait() {
                 map.dark[yy * map.w + x] = false;
             }
         }
-        assert!(located(&map, text), "eroded 16x48: not located at pitch {pitch}");
+        assert!(
+            located(&map, text),
+            "eroded 16x48: not located at pitch {pitch}"
+        );
     }
 }

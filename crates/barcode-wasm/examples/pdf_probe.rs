@@ -25,9 +25,20 @@ fn main() {
     let img = barcode_core::BitImage::new(w, h, &data);
     if args.get(5).is_some_and(|a| a == "rect") {
         let hit = barcode_pdf417::read_frame_rectified(&img);
-        println!("rectified: {}", if hit.is_some() { "1 result" } else { "0 results" });
+        println!(
+            "rectified: {}",
+            if hit.is_some() {
+                "1 result"
+            } else {
+                "0 results"
+            }
+        );
         if let Some(hit) = hit {
-            println!("  {:?} ({} bytes)", barcode_core::payload_text(&hit.payload), hit.payload.len());
+            println!(
+                "  {:?} ({} bytes)",
+                barcode_core::payload_text(&hit.payload),
+                hit.payload.len()
+            );
         }
         return;
     }

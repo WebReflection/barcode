@@ -20,16 +20,22 @@ fn main() {
             Some(stream) => {
                 let (desc, data, _ecc) = barcode_pdf417::stream::split_stream(&stream).unwrap();
                 let data = barcode_pdf417::stream::strip_pads(data);
+                println!("{} {}x{} desc={} n={}", label, w, h, desc, data.len());
                 println!(
-                    "{} {}x{} desc={} n={}",
-                    label,
-                    w,
-                    h,
-                    desc,
-                    data.len()
+                    "  stream: {}",
+                    stream
+                        .iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
                 );
-                println!("  stream: {}", stream.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
-                println!("  data:   {}", data.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
+                println!(
+                    "  data:   {}",
+                    data.iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
             }
             None => println!("{label} FAILED to read"),
         }

@@ -24,7 +24,12 @@ fn render(matrix: &[u8], rows: usize, cols: usize, module: u32, margin: u32) -> 
     for y in 0..rows {
         for x in 0..cols {
             if matrix[y * cols + x] == 1 {
-                c.fill((ox + x as u32) * module, (oy + y as u32) * module, module, module);
+                c.fill(
+                    (ox + x as u32) * module,
+                    (oy + y as u32) * module,
+                    module,
+                    module,
+                );
             }
         }
     }
@@ -51,11 +56,17 @@ fn assert_bank(name: &str, canvas: &Canvas, tiers: Tiers, want: &str) {
             let hit = hits.iter().find(|h| h.text == want);
             let law = if still { "still" } else { "live" };
             let hit = hit.unwrap_or_else(|| {
-                panic!("{name} {law} {deg}°: no hit (got {:?})", hits.iter().map(|h| &h.text).collect::<Vec<_>>())
+                panic!(
+                    "{name} {law} {deg}°: no hit (got {:?})",
+                    hits.iter().map(|h| &h.text).collect::<Vec<_>>()
+                )
             });
             for p in &hit.position {
                 assert!(
-                    p.x >= 0.0 && p.y >= 0.0 && p.x <= canvas.width as f32 && p.y <= canvas.height as f32,
+                    p.x >= 0.0
+                        && p.y >= 0.0
+                        && p.x <= canvas.width as f32
+                        && p.y <= canvas.height as f32,
                     "{name} {law} {deg}°: quad ({}, {}) outside {}x{}",
                     p.x,
                     p.y,
@@ -71,19 +82,43 @@ fn assert_bank(name: &str, canvas: &Canvas, tiers: Tiers, want: &str) {
 fn datamatrix_reads_every_cardinal_and_diagonal_rotation() {
     let sym = barcode_dm::encode::encode(b"ROT-DM-TEST").unwrap();
     let c = render(&sym.matrix, sym.spec.rows, sym.spec.cols, 5, 4);
-    assert_bank("datamatrix", &c, Tiers { datamatrix: true, ..Default::default() }, "ROT-DM-TEST");
+    assert_bank(
+        "datamatrix",
+        &c,
+        Tiers {
+            datamatrix: true,
+            ..Default::default()
+        },
+        "ROT-DM-TEST",
+    );
 }
 
 #[test]
 fn aztec_reads_every_cardinal_and_diagonal_rotation() {
     let (spec, matrix) = barcode_aztec::encode::encode(b"ROT-AZTEC-TEST").unwrap();
     let c = render(&matrix, spec.rows as usize, spec.cols as usize, 5, 4);
-    assert_bank("aztec", &c, Tiers { aztec: true, ..Default::default() }, "ROT-AZTEC-TEST");
+    assert_bank(
+        "aztec",
+        &c,
+        Tiers {
+            aztec: true,
+            ..Default::default()
+        },
+        "ROT-AZTEC-TEST",
+    );
 }
 
 #[test]
 fn pdf417_reads_every_cardinal_and_diagonal_rotation() {
     let sym = barcode_pdf417::encode::encode_full(b"ROT-PDF417-TEST", 2).unwrap();
     let c = render(&sym.matrix, sym.height, sym.width, 5, 4);
-    assert_bank("pdf417", &c, Tiers { pdf417: true, ..Default::default() }, "ROT-PDF417-TEST");
+    assert_bank(
+        "pdf417",
+        &c,
+        Tiers {
+            pdf417: true,
+            ..Default::default()
+        },
+        "ROT-PDF417-TEST",
+    );
 }

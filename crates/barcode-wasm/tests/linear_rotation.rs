@@ -28,7 +28,11 @@ fn rotate(packed: &[u8], w: usize, h: usize, deg: usize) -> (Vec<u8>, usize, usi
             if !img.ink(x as u32, y as u32) {
                 continue;
             }
-            let (dx, dy) = if deg == 90 { (h - 1 - y, x) } else { (y, w - 1 - x) };
+            let (dx, dy) = if deg == 90 {
+                (h - 1 - y, x)
+            } else {
+                (y, w - 1 - x)
+            };
             out[dy * bpr + (dx >> 3)] |= 1 << (dx & 7);
         }
     }
@@ -65,12 +69,60 @@ fn linear_barcodes_read_at_every_quarter_turn() {
     let quiet = 10 * module;
 
     let cases: Vec<(&str, Canvas, Tiers, &str)> = vec![
-        ("code128", barcode_fixtures::encode_code128("++123456789", module, height), Tiers { code128: true, ..Default::default() }, "++123456789"),
-        ("ean13", barcode_fixtures::encode_ean13("4006381333931", module, height, quiet), Tiers { ean13: true, ..Default::default() }, "4006381333931"),
-        ("upca", barcode_fixtures::encode_upca("036000291452", module, height, quiet), Tiers { upca: true, ..Default::default() }, "036000291452"),
-        ("itf", barcode_fixtures::encode_itf("12345670", module, 2.5, height), Tiers { itf: true, ..Default::default() }, "12345670"),
-        ("code39", barcode_fixtures::encode_code39("ABC-123", module, 3.0, height), Tiers { code39: true, ..Default::default() }, "ABC-123"),
-        ("codabar", barcode_fixtures::encode_codabar("40156", module, 2.5, height), Tiers { codabar: true, ..Default::default() }, "40156"),
+        (
+            "code128",
+            barcode_fixtures::encode_code128("++123456789", module, height),
+            Tiers {
+                code128: true,
+                ..Default::default()
+            },
+            "++123456789",
+        ),
+        (
+            "ean13",
+            barcode_fixtures::encode_ean13("4006381333931", module, height, quiet),
+            Tiers {
+                ean13: true,
+                ..Default::default()
+            },
+            "4006381333931",
+        ),
+        (
+            "upca",
+            barcode_fixtures::encode_upca("036000291452", module, height, quiet),
+            Tiers {
+                upca: true,
+                ..Default::default()
+            },
+            "036000291452",
+        ),
+        (
+            "itf",
+            barcode_fixtures::encode_itf("12345670", module, 2.5, height),
+            Tiers {
+                itf: true,
+                ..Default::default()
+            },
+            "12345670",
+        ),
+        (
+            "code39",
+            barcode_fixtures::encode_code39("ABC-123", module, 3.0, height),
+            Tiers {
+                code39: true,
+                ..Default::default()
+            },
+            "ABC-123",
+        ),
+        (
+            "codabar",
+            barcode_fixtures::encode_codabar("40156", module, 2.5, height),
+            Tiers {
+                codabar: true,
+                ..Default::default()
+            },
+            "40156",
+        ),
     ];
     for (name, c, tiers, want) in cases {
         assert_reads(name, &c, tiers, want);
@@ -92,7 +144,15 @@ fn live_strided_scan_confirms_two_row_thin_symbol() {
                 .copy_from_slice(&sym.bits()[r * sym.bytes_per_row..(r + 1) * sym.bytes_per_row]);
         }
         let mut sc = BarcodeScanner::new();
-        let hits = sc.decode_live_core(w, h, &data, Tiers { code128: true, ..Default::default() });
+        let hits = sc.decode_live_core(
+            w,
+            h,
+            &data,
+            Tiers {
+                code128: true,
+                ..Default::default()
+            },
+        );
         assert_eq!(
             hits.first().map(|r| r.text.as_str()),
             Some("THIN-2PX"),

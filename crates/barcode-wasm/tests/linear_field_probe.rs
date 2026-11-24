@@ -41,9 +41,26 @@ fn check(name: &str, want: &str) {
     };
     let data = pack(w, h, &luma);
     let mut sc = BarcodeScanner::new();
-    let hits = sc.decode_still_core(w, h, &data, Tiers { code128: true, ..Default::default() }, 5000);
-    eprintln!("{name} hits: {:?}", hits.iter().map(|r| (&r.symbology, &r.text)).collect::<Vec<_>>());
-    assert!(hits.iter().any(|r| r.text == want), "{name}: barcode not read");
+    let hits = sc.decode_still_core(
+        w,
+        h,
+        &data,
+        Tiers {
+            code128: true,
+            ..Default::default()
+        },
+        5000,
+    );
+    eprintln!(
+        "{name} hits: {:?}",
+        hits.iter()
+            .map(|r| (&r.symbology, &r.text))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        hits.iter().any(|r| r.text == want),
+        "{name}: barcode not read"
+    );
 }
 
 #[test]

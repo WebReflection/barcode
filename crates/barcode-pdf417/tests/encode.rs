@@ -13,7 +13,10 @@ fn load() -> Vec<(String, u8, u8, Vec<u8>, Vec<Vec<u8>>)> {
                 v[0].to_string(),
                 v[1].parse().unwrap(),
                 v[2].parse().unwrap(),
-                (0..v[3].len()).step_by(2).map(|i| u8::from_str_radix(&v[3][i..i + 2], 16).unwrap()).collect(),
+                (0..v[3].len())
+                    .step_by(2)
+                    .map(|i| u8::from_str_radix(&v[3][i..i + 2], 16).unwrap())
+                    .collect(),
                 Vec::new(),
             ));
         } else if t[0] == "MATRIX" {
@@ -89,10 +92,25 @@ fn round_trips() {
         b"MiXeD 42!".to_vec(),
     ];
     for text in &cases {
-        let sym = encode_full_opts(text, 2, 0).unwrap_or_else(|e| panic!("{:?}: {e:?}", String::from_utf8_lossy(&text[..text.len().min(12)])));
+        let sym = encode_full_opts(text, 2, 0).unwrap_or_else(|e| {
+            panic!(
+                "{:?}: {e:?}",
+                String::from_utf8_lossy(&text[..text.len().min(12)])
+            )
+        });
         let payload = barcode_pdf417::decode_exact(&sym.matrix, sym.width, sym.height)
-            .unwrap_or_else(|| panic!("{:?}: decode failed", String::from_utf8_lossy(&text[..text.len().min(12)])));
-        assert_eq!(&payload, text, "{:?} round-trip", String::from_utf8_lossy(&text[..text.len().min(12)]));
+            .unwrap_or_else(|| {
+                panic!(
+                    "{:?}: decode failed",
+                    String::from_utf8_lossy(&text[..text.len().min(12)])
+                )
+            });
+        assert_eq!(
+            &payload,
+            text,
+            "{:?} round-trip",
+            String::from_utf8_lossy(&text[..text.len().min(12)])
+        );
     }
 }
 
@@ -106,7 +124,10 @@ fn defaults() {
 #[test]
 fn payload_too_large() {
     let big = vec![b'a'; 3000];
-    assert_eq!(encode_full_opts(&big, 2, 0).err(), Some(EncodeError::PayloadTooLarge));
+    assert_eq!(
+        encode_full_opts(&big, 2, 0).err(),
+        Some(EncodeError::PayloadTooLarge)
+    );
 }
 
 /// The zint-fitted numeric-decision table (docs/STATUS.md "PDF417 NC

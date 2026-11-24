@@ -4,6 +4,7 @@
 
 /// Canonical eight-element widths per symbol-character value, one nibble
 /// each, MSB first. Reverse the nibbles for a reversed orientation.
+#[rustfmt::skip]
 pub const EXP_WIDTHS: [u32; 4095] = [
     0x11113172, 0x11113271, 0x11123171, 0x12113171, 0x11114162, 0x11114261, 0x11124161, 0x12114161,
     0x11115152, 0x11115251, 0x11125151, 0x12115151, 0x11116142, 0x11116241, 0x11126141, 0x12116141,
@@ -521,6 +522,7 @@ pub const EXP_WIDTHS: [u32; 4095] = [
 
 /// Bit `v` set: the table orientation for value `v` is the reverse of
 /// `EXP_WIDTHS[v]` (the symbol characters alternate by position).
+#[rustfmt::skip]
 pub const EXP_ORIENT_REVERSED: [u8; 512] = [
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF7, 0xFF, 0xFF, 0x17, 0xFF, 0xFF, 0x17, 0xFF, 0x7F, 0xF1, 0x7F,
     0xF1, 0x17, 0x11, 0x11, 0x11, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -560,6 +562,7 @@ pub const EXP_ORIENT_REVERSED: [u8; 512] = [
 /// `n` (the last value is the constant term). Refit with zxing as the
 /// check oracle across method-1/compressed first characters, which the
 /// method-00-only distribution left unpinned.
+#[rustfmt::skip]
 pub const EXP_WEIGHTS: [u16; 1843] = [
     118, 137, 73, 122, 68, 50, 44, 42, 168, 208, 117, 55, 80, 155, 169, 0, 16, 20, 162, 139,
     61, 35, 167, 0, 0, 178, 197, 133, 182, 128, 110, 104, 102, 77, 25, 80, 34, 107, 115, 139,
@@ -657,6 +660,7 @@ pub const EXP_WEIGHTS: [u16; 1843] = [
 ];
 
 /// `EXP_WEIGHTS` offset for data-character count `n`.
+#[rustfmt::skip]
 pub const EXP_WEIGHT_OFFSET: [u16; 22] = [
     0, 0, 0, 0, 25, 58, 99, 148, 205, 270, 343, 424, 513, 610, 715, 828, 949, 1078, 1215, 1360,
     1513, 1674,
@@ -664,6 +668,7 @@ pub const EXP_WEIGHT_OFFSET: [u16; 22] = [
 
 /// 15-module finder blocks after every pair of data characters, by
 /// `s = n / 2`. Widths only: the run polarity alternates by construction.
+#[rustfmt::skip]
 pub const EXP_BLOCKS: [&[[u8; 5]]; 11] = [
     &[],
     &[[1, 1, 4, 8, 1]],

@@ -433,7 +433,8 @@ mod tests {
             (&[0xC3, 0x28], "\u{C3}("), // broken UTF-8 sequence
         ];
         for (data, text) in &cases {
-            let stream = frame_byte_payload(1, data, barcode_fixtures::qr_data_codewords(1, 1) as usize); // v1-L
+            let stream =
+                frame_byte_payload(1, data, barcode_fixtures::qr_data_codewords(1, 1) as usize); // v1-L
             let canvas = barcode_fixtures::encode_qr(1, 1, 2, &stream, 4);
             let img = image_of(&canvas);
             let mut d = crate::QrDecoder::new();
@@ -444,7 +445,11 @@ mod tests {
         }
         // Every byte value at once (v10-L fits 256 byte-mode bytes).
         let all: Vec<u8> = (0..=255u8).collect();
-        let stream = frame_byte_payload(10, &all, barcode_fixtures::qr_data_codewords(10, 1) as usize); // v10-L
+        let stream = frame_byte_payload(
+            10,
+            &all,
+            barcode_fixtures::qr_data_codewords(10, 1) as usize,
+        ); // v10-L
         let canvas = barcode_fixtures::encode_qr(10, 1, 2, &stream, 4);
         let img = image_of(&canvas);
         let mut d = crate::QrDecoder::new();
@@ -455,7 +460,11 @@ mod tests {
         // 16-bit-count version at scale: 1022 bytes (also cross-checked
         // byte-exact in zxing-cpp, see docs/STATUS.md).
         let big: Vec<u8> = (0..1022u32).map(|i| (i * 7 & 0xFF) as u8).collect();
-        let stream = frame_byte_payload(26, &big, barcode_fixtures::qr_data_codewords(26, 1) as usize);
+        let stream = frame_byte_payload(
+            26,
+            &big,
+            barcode_fixtures::qr_data_codewords(26, 1) as usize,
+        );
         let canvas = barcode_fixtures::encode_qr(26, 1, 2, &stream, 4);
         let img = image_of(&canvas);
         let mut d = crate::QrDecoder::new();
@@ -477,11 +486,11 @@ mod tests {
         // grids never sample a clean copy of a real symbol.
         let mut fallback: Option<(Grid, u8)> = None;
         for perm in crate::LABELINGS {
-            let [tl, tr, bl] =
-                [finders[perm[0]], finders[perm[1]], finders[perm[2]]];
-            let Some(grid) = crate::grid::Grid::from_finders(&tl, &tr, &bl) else { continue };
-            let Some((ec, mask, quality)) = crate::grid::read_format_ranked(&img, &grid)
-            else {
+            let [tl, tr, bl] = [finders[perm[0]], finders[perm[1]], finders[perm[2]]];
+            let Some(grid) = crate::grid::Grid::from_finders(&tl, &tr, &bl) else {
+                continue;
+            };
+            let Some((ec, mask, quality)) = crate::grid::read_format_ranked(&img, &grid) else {
                 continue;
             };
             if crate::codewords::read_codewords(&img, &grid, ec, mask).is_some() {
@@ -562,9 +571,17 @@ mod tests {
                 assert_eq!(got_ec, ec, "v{v} ec level");
                 assert_eq!(mask, mask_id as u8, "v{v} mask");
                 if v >= 7 {
-                    assert_eq!(crate::grid::read_version(&img, &grid), Some(v), "v{v} version info");
+                    assert_eq!(
+                        crate::grid::read_version(&img, &grid),
+                        Some(v),
+                        "v{v} version info"
+                    );
                 } else {
-                    assert_eq!(crate::grid::read_version(&img, &grid), None, "v{v} has no version info");
+                    assert_eq!(
+                        crate::grid::read_version(&img, &grid),
+                        None,
+                        "v{v} has no version info"
+                    );
                 }
                 let got = read_codewords(&img, &grid, ec, mask)
                     .unwrap_or_else(|| panic!("v{v} {ec:?}: no codewords"));
@@ -718,7 +735,9 @@ mod tests {
             let edge = dim - 24.0;
             let quad = &results[0].position;
             for (cx, cy) in [(24.0f32, 24.0), (edge, 24.0), (edge, edge), (24.0, edge)] {
-                let hit = quad.iter().any(|p| (p.x - cx).abs() < 2.0 && (p.y - cy).abs() < 2.0);
+                let hit = quad
+                    .iter()
+                    .any(|p| (p.x - cx).abs() < 2.0 && (p.y - cy).abs() < 2.0);
                 assert!(hit, "{kind}: quad misses corner ({cx},{cy}): {quad:?}");
             }
         }
@@ -789,9 +808,16 @@ mod tests {
         let img = image_of(&dest);
         let mut d = crate::QrDecoder::new();
         let f = d.find_finders(&img);
-        eprintln!("DBG30 finders: {:?}", f.as_ref().map(|x| x.iter().map(|q| (q.x, q.y, q.module)).collect::<Vec<_>>()));
+        eprintln!(
+            "DBG30 finders: {:?}",
+            f.as_ref()
+                .map(|x| x.iter().map(|q| (q.x, q.y, q.module)).collect::<Vec<_>>())
+        );
         let results = d.decode(&img);
-        eprintln!("DBG30 results: {:?}", results.iter().map(|r| &r.text).collect::<Vec<_>>());
+        eprintln!(
+            "DBG30 results: {:?}",
+            results.iter().map(|r| &r.text).collect::<Vec<_>>()
+        );
         assert_eq!(results.len(), 1, "30°-tilted QR must decode");
         assert_eq!(results[0].text, "TILT CHECK");
     }
@@ -835,7 +861,6 @@ mod tests {
     }
 }
 
-
 /// Field diagnostic: try every (EC level, mask) pair and report which
 /// yield Reed-Solomon-valid codewords, with the decoded text when the
 /// segments parse. The format read should agree with the first entry.
@@ -845,7 +870,9 @@ pub fn brute_force_format(img: &BitImage, grid: &Grid) -> Vec<((EcLevel, u8), Op
     let positions = placement_positions(n);
     let mut out = Vec::new();
     for &ec in &[EcLevel::L, EcLevel::M, EcLevel::Q, EcLevel::H] {
-        let Some(plan) = block_plan(version, ec) else { continue };
+        let Some(plan) = block_plan(version, ec) else {
+            continue;
+        };
         let total = plan.total_codewords() as usize;
         if positions.len() < total * 8 {
             continue;
@@ -878,7 +905,10 @@ pub fn brute_force_format(img: &BitImage, grid: &Grid) -> Vec<((EcLevel, u8), Op
                         if j < data_blocks[b].len() {
                             match it.next() {
                                 Some(v) => data_blocks[b][j] = *v,
-                                None => { ok = false; break; }
+                                None => {
+                                    ok = false;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -888,7 +918,10 @@ pub fn brute_force_format(img: &BitImage, grid: &Grid) -> Vec<((EcLevel, u8), Op
                         for b in 0..nblocks {
                             match it.next() {
                                 Some(v) => ec_blocks[b][j] = *v,
-                                None => { ok = false; break; }
+                                None => {
+                                    ok = false;
+                                    break;
+                                }
                             }
                         }
                     }

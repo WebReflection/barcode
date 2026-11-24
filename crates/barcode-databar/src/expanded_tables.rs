@@ -7,6 +7,7 @@
 //! value, so the width vector is all the decoder (and encoder) needs.
 
 /// Canonical element widths by symbol-character value (0..=4094).
+#[rustfmt::skip]
 pub const EXP_WIDTHS: [u32; 4095] = [
     0x11113172, // 0
     0x11113271, // 1

@@ -22,14 +22,50 @@ use barcode_core::{
 /// the element-string form. If a real-world symbol disagrees, the '*' row
 /// is the only one with published ambiguity (candidates "146" vs "168").
 const TABLE: [(&str, &str); 44] = [
-    ("0", "346"), ("1", "038"), ("2", "238"), ("3", "023"), ("4", "348"), ("5", "034"),
-    ("6", "234"), ("7", "368"), ("8", "036"), ("9", "236"), ("A", "058"), ("B", "258"),
-    ("C", "025"), ("D", "458"), ("E", "045"), ("F", "245"), ("G", "568"), ("H", "056"),
-    ("I", "256"), ("J", "456"), ("K", "078"), ("L", "278"), ("M", "027"), ("N", "478"),
-    ("O", "047"), ("P", "247"), ("Q", "678"), ("R", "067"), ("S", "267"), ("T", "467"),
-    ("U", "018"), ("V", "128"), ("W", "012"), ("X", "148"), ("Y", "014"), ("Z", "124"),
-    ("-", "168"), (".", "016"), (" ", "126"), ("$", "135"), ("/", "137"), ("+", "157"),
-    ("%", "357"), ("*", "146"),
+    ("0", "346"),
+    ("1", "038"),
+    ("2", "238"),
+    ("3", "023"),
+    ("4", "348"),
+    ("5", "034"),
+    ("6", "234"),
+    ("7", "368"),
+    ("8", "036"),
+    ("9", "236"),
+    ("A", "058"),
+    ("B", "258"),
+    ("C", "025"),
+    ("D", "458"),
+    ("E", "045"),
+    ("F", "245"),
+    ("G", "568"),
+    ("H", "056"),
+    ("I", "256"),
+    ("J", "456"),
+    ("K", "078"),
+    ("L", "278"),
+    ("M", "027"),
+    ("N", "478"),
+    ("O", "047"),
+    ("P", "247"),
+    ("Q", "678"),
+    ("R", "067"),
+    ("S", "267"),
+    ("T", "467"),
+    ("U", "018"),
+    ("V", "128"),
+    ("W", "012"),
+    ("X", "148"),
+    ("Y", "014"),
+    ("Z", "124"),
+    ("-", "168"),
+    (".", "016"),
+    (" ", "126"),
+    ("$", "135"),
+    ("/", "137"),
+    ("+", "157"),
+    ("%", "357"),
+    ("*", "146"),
 ];
 
 /// Character -> wide-element bitmask (bit k = element k is wide), derived
@@ -99,10 +135,7 @@ pub fn code32_text(raw: &str) -> Option<String> {
 /// checksum included) back to the six Code 39 characters to encode.
 pub fn code32_raw(aic: &str) -> Option<String> {
     let bytes = aic.as_bytes();
-    if bytes.len() != 10
-        || bytes[0] != b'A'
-        || !bytes[1..].iter().all(u8::is_ascii_digit)
-    {
+    if bytes.len() != 10 || bytes[0] != b'A' || !bytes[1..].iter().all(u8::is_ascii_digit) {
         return None;
     }
     let digits: [u8; 9] = bytes[1..].try_into().ok()?;
@@ -211,7 +244,11 @@ impl Code39Decoder {
                 return if text.is_empty() {
                     None
                 } else {
-                    Some(Candidate { text, x_start, x_end })
+                    Some(Candidate {
+                        text,
+                        x_start,
+                        x_end,
+                    })
                 };
             } else {
                 text.push(ch);
@@ -235,10 +272,22 @@ impl Code39Decoder {
             text: text.to_string(),
             raw: text.as_bytes().to_vec(),
             position: [
-                Point { x: x0 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y0 as f32 },
-                Point { x: x1 as f32, y: y1 as f32 },
-                Point { x: x0 as f32, y: y1 as f32 },
+                Point {
+                    x: x0 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y0 as f32,
+                },
+                Point {
+                    x: x1 as f32,
+                    y: y1 as f32,
+                },
+                Point {
+                    x: x0 as f32,
+                    y: y1 as f32,
+                },
             ],
         }
     }
@@ -256,7 +305,9 @@ impl LinearDecoder for Code39Decoder {
         }
         debug_assert!(!runs[0].0);
         for start in (1..runs.len()).step_by(2) {
-            let Some(c) = Self::try_from(row, start) else { continue };
+            let Some(c) = Self::try_from(row, start) else {
+                continue;
+            };
             let (count, x0, x1, y0, y1) = {
                 let e = self
                     .votes
@@ -285,7 +336,11 @@ impl LinearDecoder for Code39Decoder {
     }
 
     fn vote_count(&self) -> usize {
-        if self.votes.is_empty() { 0 } else { self.votes.values().map(|v| v.0).sum() }
+        if self.votes.is_empty() {
+            0
+        } else {
+            self.votes.values().map(|v| v.0).sum()
+        }
     }
 }
 
@@ -352,8 +407,11 @@ mod tests {
     #[test]
     fn round_trip_all_chars() {
         // '*' is the reserved start/stop sentinel and cannot appear in data.
-        let all: String =
-            TABLE.iter().map(|(c, _)| *c).filter(|c| *c != "*").collect();
+        let all: String = TABLE
+            .iter()
+            .map(|(c, _)| *c)
+            .filter(|c| *c != "*")
+            .collect();
         let canvas = barcode_fixtures::encode_code39(&all, 3, 2.5, 30);
         assert_eq!(decode_canvas(&canvas, 2).as_deref(), Some(all.as_str()));
     }

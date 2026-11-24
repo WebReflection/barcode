@@ -85,7 +85,11 @@ impl QrDecoder {
     /// ink-space-ink-space-ink whose widths fit 1:1:3:1:1 at some module
     /// size yields a candidate centered on the middle (3-wide) run.
     fn scan_line_candidates(&mut self, image: &BitImage, line: u32, horizontal: bool) {
-        let len = if horizontal { image.width } else { image.height };
+        let len = if horizontal {
+            image.width
+        } else {
+            image.height
+        };
         let ink_at = |i: u32| {
             if horizontal {
                 image.ink(i, line)
@@ -122,7 +126,10 @@ impl QrDecoder {
         }
         for k in 0..=self.runs.len() - 5 {
             // The window must be ink, space, ink, space, ink.
-            if !self.runs[k].0 || self.runs[k + 1].0 || !self.runs[k + 2].0 || self.runs[k + 3].0
+            if !self.runs[k].0
+                || self.runs[k + 1].0
+                || !self.runs[k + 2].0
+                || self.runs[k + 3].0
                 || !self.runs[k + 4].0
             {
                 continue;
@@ -408,8 +415,7 @@ impl QrDecoder {
         }
         let theta = 0.5 * (2.0 * sxy).atan2(sxx - syy);
         let (dx, dy) = (theta.cos(), theta.sin());
-        let (mut lo, mut hi, mut sum2, mut along_sum) =
-            (f32::MAX, f32::MIN, 0.0f32, 0.0f32);
+        let (mut lo, mut hi, mut sum2, mut along_sum) = (f32::MAX, f32::MIN, 0.0f32, 0.0f32);
         for (&x, &y) in xs.iter().zip(ys.iter()) {
             let (ex, ey) = (x - mx, y - my);
             let along = ex * dx + ey * dy;
@@ -531,8 +537,14 @@ impl QrDecoder {
 /// All six (tl, tr, bl) labelings of a finder triple. Exactly one matches
 /// the symbol's true orientation; the mirrored ones produce grids whose
 /// format read fails the BCH check, so the enumeration is self-selecting.
-pub const LABELINGS: [[usize; 3]; 6] =
-    [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+pub const LABELINGS: [[usize; 3]; 6] = [
+    [0, 1, 2],
+    [0, 2, 1],
+    [1, 0, 2],
+    [1, 2, 0],
+    [2, 0, 1],
+    [2, 1, 0],
+];
 
 /// Try every labeling of the finder triangle and return the first that
 /// decodes END TO END (format → codewords → segments). A format-only gate
@@ -544,8 +556,7 @@ pub(crate) fn locate_symbol(
     finders: &[Finder; 3],
 ) -> Option<(grid::Grid, [Finder; 3], grid::EcLevel, u8, Vec<u8>)> {
     for perm in LABELINGS {
-        let [tl, tr, bl] =
-            [finders[perm[0]], finders[perm[1]], finders[perm[2]]];
+        let [tl, tr, bl] = [finders[perm[0]], finders[perm[1]], finders[perm[2]]];
         let Some(grid) = grid::Grid::from_finders(&tl, &tr, &bl) else {
             continue;
         };
@@ -575,14 +586,7 @@ pub(crate) fn locate_symbol(
 /// module estimate, which under rotation/perspective is inflated along
 /// the scan axis and can put the nominal 3.0-module probe in the light
 /// gap — so locate the ring as a run rather than assuming a start point.
-fn ring_edge(
-    img: &BitImage,
-    cx: f64,
-    cy: f64,
-    dx: f64,
-    dy: f64,
-    m: f64,
-) -> Option<f64> {
+fn ring_edge(img: &BitImage, cx: f64, cy: f64, dx: f64, dy: f64, m: f64) -> Option<f64> {
     let ink_at = |r: f64| -> bool {
         let px = (cx + r * dx).round() as i64;
         let py = (cy + r * dy).round() as i64;
@@ -768,8 +772,10 @@ fn alignment_at(img: &BitImage, h: &[f64; 9], u: f64, v: f64) -> Option<(f64, f6
             for i in -2i32..=2 {
                 for j in -2i32..=2 {
                     let want = i.abs().max(j.abs()) == 2 || (i == 0 && j == 0);
-                    let p = (px + i as f64 * pu.0 + j as f64 * pv.0,
-                             py + i as f64 * pu.1 + j as f64 * pv.1);
+                    let p = (
+                        px + i as f64 * pu.0 + j as f64 * pv.0,
+                        py + i as f64 * pu.1 + j as f64 * pv.1,
+                    );
                     if ink(p.0, p.1) == want {
                         score += 1;
                     }
@@ -824,8 +830,7 @@ fn locate_symbol_perspective(
     finders: &[Finder; 3],
 ) -> Option<(grid::Grid, [Finder; 3], grid::EcLevel, u8, Vec<u8>)> {
     for perm in LABELINGS {
-        let [tl, tr, bl] =
-            [finders[perm[0]], finders[perm[1]], finders[perm[2]]];
+        let [tl, tr, bl] = [finders[perm[0]], finders[perm[1]], finders[perm[2]]];
         // Loose geometry gate: perspective compresses one axis, so the
         // squareness tolerance is wider than the affine path's; the
         // format read remains the real judge.
@@ -890,9 +895,7 @@ impl SymbologyDecoder for QrDecoder {
 
         // Symbol quad: the grid maps the module-space corners (exact under
         // perspective for projective grids, parallelogram-closed otherwise).
-        let position = grid
-            .symbol_quad()
-            .map(|(x, y)| Point { x, y });
+        let position = grid.symbol_quad().map(|(x, y)| Point { x, y });
         vec![DecodeResult {
             symbology: Symbology::QRCode,
             text,
@@ -980,8 +983,17 @@ mod perspective_tests {
             // invert the module->output H, then compose with the pixel shift
             let inv = invert3_pub(h);
             // composed: out -> module u,v  ->  src px
-            let (a, b, c, d, e, f, g, hh, ii) =
-                (inv[0] * m, inv[1] * m, inv[2] * m + quiet, inv[3] * m, inv[4] * m, inv[5] * m + quiet, inv[6], inv[7], inv[8]);
+            let (a, b, c, d, e, f, g, hh, ii) = (
+                inv[0] * m,
+                inv[1] * m,
+                inv[2] * m + quiet,
+                inv[3] * m,
+                inv[4] * m,
+                inv[5] * m + quiet,
+                inv[6],
+                inv[7],
+                inv[8],
+            );
             [a, b, c, d, e, f, g, hh, ii]
         };
         let mut data = vec![0u8; ((out + 31) / 32 * 4) as usize * out as usize];
@@ -990,9 +1002,12 @@ mod perspective_tests {
             for x in 0..out {
                 let (sx, sy) = apply_h(&hi, x as f64, y as f64);
                 let (sxi, syi) = (sx.round() as i64, sy.round() as i64);
-                let ink = sxi >= 0 && syi >= 0
-                    && sxi < canvas.width as i64 && syi < canvas.height as i64
-                    && canvas.bits()[syi as usize * canvas.bytes_per_row as usize + (sxi as usize >> 3)]
+                let ink = sxi >= 0
+                    && syi >= 0
+                    && sxi < canvas.width as i64
+                    && syi < canvas.height as i64
+                    && canvas.bits()
+                        [syi as usize * canvas.bytes_per_row as usize + (sxi as usize >> 3)]
                         >> (sxi as usize & 7)
                         & 1
                         == 1;
@@ -1009,9 +1024,15 @@ mod perspective_tests {
         let det = a * (e * i - f * hh) - b * (d * i - f * g) + c * (d * hh - e * g);
         assert!(det.abs() > 1e-12);
         [
-            (e * i - f * hh) / det, (c * hh - b * i) / det, (b * f - c * e) / det,
-            (f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det,
-            (d * hh - e * g) / det, (b * g - a * hh) / det, (a * e - b * d) / det,
+            (e * i - f * hh) / det,
+            (c * hh - b * i) / det,
+            (b * f - c * e) / det,
+            (f * g - d * i) / det,
+            (a * i - c * g) / det,
+            (c * d - a * f) / det,
+            (d * hh - e * g) / det,
+            (b * g - a * hh) / det,
+            (a * e - b * d) / det,
         ]
     }
 
@@ -1046,7 +1067,10 @@ mod perspective_tests {
 
         let mut d = QrDecoder::new();
         let results = d.decode(&img);
-        (version as usize, results.first().map(|r| r.text.clone()).unwrap_or_default())
+        (
+            version as usize,
+            results.first().map(|r| r.text.clone()).unwrap_or_default(),
+        )
     }
 
     /// Item 3 acceptance: the finders alone cannot bend far enough for a

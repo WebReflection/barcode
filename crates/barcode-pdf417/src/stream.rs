@@ -176,7 +176,9 @@ fn read_with(dark: &[u8], w: usize, h: usize, tolerant: bool) -> Option<(Vec<u16
         // into 5 lost codewords (the KLM pass lost >8 codewords that way).
         let start = &cells[0];
         let start_ok = if tolerant {
-            !start.is_empty() && start.iter().map(|&v| v as usize).sum::<usize>() == 17 && start[0] >= 7
+            !start.is_empty()
+                && start.iter().map(|&v| v as usize).sum::<usize>() == 17
+                && start[0] >= 7
         } else {
             *start == START
         };
@@ -197,7 +199,9 @@ fn read_with(dark: &[u8], w: usize, h: usize, tolerant: bool) -> Option<(Vec<u16
             stop.first().is_some_and(|&v| (6..=9).contains(&v))
                 && (17..=19).contains(&stop.iter().map(|&v| v as usize).sum::<usize>())
         } else {
-            stop.len() == STOP.len() && stop[..7] == STOP[..7] && stop.iter().map(|&v| v as usize).sum::<usize>() == 18
+            stop.len() == STOP.len()
+                && stop[..7] == STOP[..7]
+                && stop.iter().map(|&v| v as usize).sum::<usize>() == 18
         };
         if !stop_ok {
             let row = missing_row()?;
