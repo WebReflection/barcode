@@ -241,6 +241,24 @@ Requirements seen in the wild:
   pin per-file hashes, regenerate the whole `dist/` together (it builds
   as one unit).
 
+### Everything mode is best-effort
+
+Omitting `type` decodes every family. That is what a point-and-shoot UI
+wants, but a loose locator can accept another symbol's texture (a dense
+2D grid can yield a tiny DataMatrix fragment) and the one-code contract
+returns whichever hit ranks first. For production scanning pass the
+families you actually expect:
+
+```js
+// 'qr' expands to ['qrcode', 'microqr']; or list exact symbology names
+await scan({ type: ['qr', 'aztec'] });
+```
+
+Only the requested tiers run, and each requested family keeps its own
+confidence rules (the 1D tiers already refuse weak/loose hits, e.g. a
+noisy EAN-8 inside a 2D grid). Passing an explicit `type` does not make
+a bad photo readable — it removes cross-family ambiguity.
+
 ### Symbology names
 
 One vocabulary everywhere: the canonical lowercase names used by the
