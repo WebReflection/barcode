@@ -65,14 +65,20 @@ const CHAR_AVG_VARIANCE: f32 = 0.55;
 const STOP_AVG_VARIANCE: f32 = 0.6;
 const ELEMENT_VARIANCE: f32 = 1.4;
 
-/// ISO/IEC 15417 requires a quiet zone of at least 10 modules before the
-/// start and after the stop. The left one is also the structural gate the
-/// mod-103 checksum cannot be: a start pattern *inside* another symbol's
-/// bars (ITF/Code 39) has a narrow inter-element space before it, and a
-/// 1-in-103 checksum coincidence on consecutive rows used to confirm
-/// values like `:52620` on a pharma box holding only Code 32 + DataMatrix
-/// + ITF-10. Half a module of tolerance for print/crop smear.
-const QUIET_MODULES: f32 = 9.5;
+/// The left quiet zone is the structural gate the mod-103 checksum
+/// cannot be: a start pattern *inside* another symbol's bars (ITF/Code
+/// 39) has a 1-3 module inter-element space before it, and a 1-in-103
+/// checksum coincidence on consecutive rows used to confirm values like
+/// `:52620` on a pharma box holding only Code 32 + DataMatrix + ITF-10.
+///
+/// The standard mandates 10 modules, but real retail labels print ~6
+/// when the bars butt against the label's edge (the committed
+/// `code128-small-quiet-zone` fixture measured 6 and zxing reads it).
+/// 4.5 still rejects every intra-symbol space a Code 39/ITF/DataBar
+/// strip can contain, which is what the gate exists for; the stop
+/// pattern, the 1/103 checksum and the row plurality do the rest. Half a
+/// module of tolerance for print/crop smear.
+const QUIET_MODULES: f32 = 4.5;
 
 /// `PATTERNS` transposed for the SIMD closest-pattern search: element-major,
 /// padded to a multiple of the 4-lane vector. The padding patterns are
@@ -237,7 +243,11 @@ impl Code128Decoder {
                 return Some((v as u8, unit, true, 0.0));
             }
         }
-        if raw.iter().any(|&v| v < 0.5 || v > 4.5) {
+        // A 1-module element printed at ~2 px/module can binarize to a
+        // single pixel (0.43 modules): the old 0.5 floor rejected the
+        // WHOLE character, so a packed label's 2.1-2.4 px/module Code 128
+        // never produced a candidate. Let the fuzzy matcher arbitrate.
+        if raw.iter().any(|&v| v < 0.25 || v > 4.75) {
             return None;
         }
         closest_pattern(&raw).map(|(err, v)| (v, unit, false, err))
@@ -277,7 +287,7 @@ impl Code128Decoder {
                 return Some((*v, unit, true, 0.0));
             }
         }
-        if raw.iter().any(|&v| v < 0.5 || v > 4.5) {
+        if raw.iter().any(|&v| v < 0.25 || v > 4.75) {
             return None;
         }
         let mut near_start = false;
@@ -453,27 +463,42 @@ impl LinearDecoder for Code128Decoder {
         None
     }
 
+    /// Exact rows win over fuzzy ones, and BOTH need a plurality: a
+    /// fragment of the same strip (measured: `"W"` inside `"WX0X"`) can
+    /// win a couple of rows without ever being a real symbol. The fuzzy
+    /// fallback keeps the tight-label lever alive but demands a clear
+    /// majority too, so a corrupted string (`8(A%AC&042936RB`) can no
+    /// longer outrank the exact read of the same strip.
     fn finish_votes(&self) -> Option<DecodeResult> {
+        // (count, exact) accessors for the vote tuple.
+        let count = |v: &(usize, usize, u32, u32, u32, u32, f32)| v.0;
+        let exact = |v: &(usize, usize, u32, u32, u32, u32, f32)| v.1;
+        // Exact: plurality of the exact-row count.
         let mut pick: Option<(&String, &(usize, usize, u32, u32, u32, u32, f32))> = None;
+        let mut second = 0;
         for (t, v) in &self.votes {
-            if v.0 >= self.min_rows && v.1 >= self.min_rows {
-                let better = pick.map_or(true, |(_, p)| (v.1, v.0) > (p.1, p.0));
-                if better {
+            if exact(v) < self.min_rows {
+                continue;
+            }
+            match pick {
+                Some((_, p)) if exact(p) >= exact(v) => second = second.max(exact(v)),
+                Some((_, p)) => {
+                    second = second.max(exact(p));
                     pick = Some((t, v));
                 }
+                None => pick = Some((t, v)),
             }
         }
-        if pick.is_none() {
-            for (t, v) in &self.votes {
-                if v.0 >= self.min_rows {
-                    let better = pick.map_or(true, |(_, p)| v.6 < p.6);
-                    if better {
-                        pick = Some((t, v));
-                    }
-                }
-            }
+        if pick.is_some_and(|(_, p)| exact(p) > second) {
+            return pick.map(|(t, v)| self.finish(t, v.2, v.3, v.4, v.5));
         }
-        pick.map(|(t, v)| self.finish(t, v.2, v.3, v.4, v.5))
+        // Fuzzy: a print-damaged symbol has no exact rows at all (the
+        // receipt fixture), so this path cannot demand them. It still
+        // demands a plurality of the total votes, which is what rejects a
+        // fragment of the strip ("W" inside "WX0X") and a corrupted read
+        // that only a handful of rows produced.
+        barcode_core::plurality(&self.votes, count, self.min_rows)
+            .map(|(t, v)| self.finish(t, v.2, v.3, v.4, v.5))
     }
 
     fn vote_count(&self) -> usize {

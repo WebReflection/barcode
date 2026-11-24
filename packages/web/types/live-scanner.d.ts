@@ -103,6 +103,10 @@ export type DetectedCode = {
         x: number;
         y: number;
     }>;
+    /**
+     * Reticle priority from the worker (see src/rank.js).
+     */
+    score?: number | undefined;
 };
 export type Accuracy = "low" | "auto" | "high";
 export type LiveFrameResult = {

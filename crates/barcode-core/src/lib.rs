@@ -554,6 +554,42 @@ impl RowRuns {
     }
 }
 
+/// Pick the row-vote winner under a PLURALITY rule: the value needs at
+/// least `min_rows` agreeing rows and must agree on MORE rows than any
+/// other candidate. `count` reads the vote count out of the stored value.
+///
+/// Why not simply `max_by_key`: the human-readable digits printed under a
+/// 1D symbol binarize into a shifted, still check-valid window and can
+/// win a few rows near the frame center (where the center-out row scan
+/// starts). Measured on a real product box: `9182165783071` on 7 rows
+/// under `0197105783072` on 28 rows — a strict plurality rejects the
+/// decoy without weakening the check digit.
+pub fn plurality<'a, K, V>(
+    votes: &'a std::collections::HashMap<K, V>,
+    count: impl Fn(&V) -> usize,
+    min_rows: usize,
+) -> Option<(&'a K, &'a V)> {
+    let mut best: Option<(&'a K, &'a V)> = None;
+    let mut second = 0usize;
+    for (key, value) in votes {
+        let votes_n = count(value);
+        if votes_n < min_rows {
+            continue;
+        }
+        match best {
+            Some((_, best_value)) if count(best_value) >= votes_n => {
+                second = second.max(votes_n);
+            }
+            Some((_, best_value)) => {
+                second = second.max(count(best_value));
+                best = Some((key, value));
+            }
+            None => best = Some((key, value)),
+        }
+    }
+    best.filter(|(_, value)| count(value) > second)
+}
+
 /// A symbology decoder. Implementations must be allocation-frugal on the hot
 /// path (reuse scratch buffers internally) and must never panic on hostile
 /// input: barcodes come from an untrusted camera pointed at the world.
@@ -583,9 +619,11 @@ pub fn decode_linear_single<D: LinearDecoder>(dec: &mut D, image: &BitImage) -> 
     dec.reset();
     for y in 0..image.height {
         row.scan_row(image, y);
-        if let Some(hit) = dec.scan_line(&row, y) {
-            return vec![hit];
-        }
+        // Every row votes: the plurality in `finish_votes` arbitrates. An
+        // early return here would trust the FIRST row that decodes, and a
+        // symbol's human-readable digits can decode a few rows before its
+        // bars do.
+        dec.scan_line(&row, y);
     }
     dec.finish_votes().into_iter().collect()
 }

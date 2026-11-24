@@ -452,16 +452,45 @@ impl BarcodeScanner {
             }
             two_d
         };
+        // Quarter-turn passes are one fast SWAR transpose + shared row
+        // scans. On a still frame whose 2D sweep already spent the
+        // caller's budget, skip them (0° + 180° still run); the 1D
+        // pre-pass on a photo has no 2D cost, so it always gets them.
+        let allow_quarter = !still || now_ms().saturating_sub(start) < still_budget_ms;
         if !two_d.is_empty() {
+            // A CENTERED 2D read satisfies the one-code contract: the
+            // linear tier's only job is to compete for the reticle, so
+            // skip it (the fast path: unchanged cost for a normal scan).
+            let centered_2d = two_d
+                .iter()
+                .any(|r| is_centered_quad(&r.position, img.width, img.height));
+            if centered_2d || !tiers.any_linear() {
+                out.extend(two_d);
+                return out;
+            }
+            // An OFF-CENTER 2D read only (a corner QR on a packed label,
+            // the exact `lot-of-codes` report): the barcode under the
+            // reticle must still be able to win. Run the linear tier, but
+            // drop any 1D hit that overlaps a decoded 2D symbol's quad —
+            // that hit is the 2D symbol's own texture, and suppressing it
+            // is what the old whole-frame exclusivity rule existed for.
+            let boxes: Vec<(f32, f32, f32, f32)> = two_d.iter().map(quad_box).collect();
             out.extend(two_d);
+            out.extend(
+                decode_linear(self.linear_decoders(), img, tiers, allow_quarter, still)
+                    .into_iter()
+                    .filter(|r| {
+                        let (x0, y0, x1, y1) = quad_box(r);
+                        // Inflated overlap test: a 1D strip drawn from the
+                        // SAME pixels as a 2D symbol is its texture.
+                        !boxes
+                            .iter()
+                            .any(|&(a, b, c, d)| x0 < c && x1 > a && y0 < d && y1 > b)
+                    }),
+            );
             return out;
         }
         if tiers.any_linear() {
-            // Quarter-turn passes are one fast SWAR transpose + shared row
-            // scans. On a still frame whose 2D sweep already spent the
-            // caller's budget, skip them (0° + 180° still run); the 1D
-            // pre-pass on a photo has no 2D cost, so it always gets them.
-            let allow_quarter = !still || now_ms().saturating_sub(start) < still_budget_ms;
             out.extend(decode_linear(
                 self.linear_decoders(),
                 img,
@@ -583,6 +612,38 @@ impl BarcodeScanner {
         }
         Vec::new()
     }
+}
+
+/// Reticle test for a decoded quad: does the frame center point fall
+/// inside the symbol's bounding box? Padded by 4% of the shorter side
+/// (plus 2px) so a thin 1D strip survives mask rounding and a quad whose
+/// center row is one pixel below the frame's exact mid line still counts.
+fn is_centered_quad(position: &[Point; 4], width: u32, height: u32) -> bool {
+    if width == 0 || height == 0 {
+        return false;
+    }
+    let tol = 0.04 * width.min(height) as f32 + 2.0;
+    let (cx, cy) = (width as f32 / 2.0, height as f32 / 2.0);
+    let (x0, y0, x1, y1) = quad_box_of(position);
+    cx >= x0 - tol && cx <= x1 + tol && cy >= y0 - tol && cy <= y1 + tol
+}
+
+/// Bounding box `(x0, y0, x1, y1)` of a decoded result's quad.
+fn quad_box(r: &barcode_core::DecodeResult) -> (f32, f32, f32, f32) {
+    quad_box_of(&r.position)
+}
+
+/// Bounding box of a quad.
+fn quad_box_of(position: &[Point; 4]) -> (f32, f32, f32, f32) {
+    let (mut x0, mut y0) = (f32::MAX, f32::MAX);
+    let (mut x1, mut y1) = (f32::MIN, f32::MIN);
+    for p in position {
+        x0 = x0.min(p.x);
+        x1 = x1.max(p.x);
+        y0 = y0.min(p.y);
+        y1 = y1.max(p.y);
+    }
+    (x0, y0, x1, y1)
 }
 
 /// Fraction of the mask that is ink. A normal print on paper is mostly

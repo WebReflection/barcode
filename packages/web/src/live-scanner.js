@@ -17,6 +17,7 @@ import {
   setZoom,
   trackCapabilities,
 } from "./camera.js";
+import { CENTERED_SCORE, PERIPHERAL_CAP } from "./rank.js";
 
 /** @typedef {import("./camera.js").LensPreference} LensPreference */
 /** @typedef {import("./camera.js").TrackCaps} TrackCaps */
@@ -26,6 +27,7 @@ import {
  * @property {Uint8Array} raw Exact payload bytes (binary QR byte mode etc.).
  * @property {string} symbology Canonical lowercase name ("qrcode", "ean13", ...).
  * @property {Array<{x: number, y: number}>} position Corner quad in frame pixel coordinates.
+ * @property {number} [score] Reticle priority from the worker (see src/rank.js).
  */
 
 /** Decode-effort level, shared with the worker protocol. */
@@ -84,6 +86,15 @@ import {
  * Results carry canonical lowercase names (see `Symbology::name`).
  */
 const HINTED = new Set(["qrcode", "microqr", "datamatrix", "aztec", "pdf417"]);
+
+/**
+ * Reticle test for the live policies. A caller-injected decoder (and the
+ * e2e mocks) may omit `score` entirely: absence is "unknown", which must
+ * be treated as aimed-at rather than peripheral, or a foreign decoder
+ * would inherit the surrounding-code confirmation delay.
+ * @param {DetectedCode} code
+ */
+const aimed = (code) => code.score == null || code.score >= CENTERED_SCORE;
 
 const ZOOM_TARGET_FRACTION = 0.4; // want the code >= 40% of frame width
 const ZOOM_COOLDOWN_MS = 1200;
@@ -242,6 +253,12 @@ export class LiveScanner {
       // If this frame was a hinted close-up, map its results back to full
       // frame coordinates before anything consumes them.
       this.#mapFromHint(raw, msg);
+      // A close-up that reads nothing is not worth its remaining frames.
+      // The re-confirmation crop exists to speed up a code the full frame
+      // already found; when the crop clips the code (a tall 2D symbol
+      // inside the ±25% margin), holding the full frame back for five
+      // frames makes a readable symbol unconfirmable.
+      if (this._lastGrab?.format && raw.length === 0) this.#hint = null;
       const results = this.#confirm(
         raw,
         wallMs > (this._opts.budget ?? 500),
@@ -389,8 +406,12 @@ export class LiveScanner {
     const caps = trackCapabilities(track);
     if (!caps.zoom) return;
 
+    // A surrounding code must not drive the framing: zooming toward a
+    // corner QR would push the barcode the user is framing out of view.
+    const targets = results.filter(aimed);
+    if (!targets.length) return;
     let maxSide = 0;
-    for (const r of results) {
+    for (const r of targets) {
       const xs = r.position.map((p) => p.x);
       const ys = r.position.map((p) => p.y);
       maxSide = Math.max(
@@ -441,7 +462,22 @@ export class LiveScanner {
       if (entry) entry.streak += 1;
       else this.#streaks.set(key, { symbology: r.symbology, streak: 1 });
     }
-    const winner = results.find((r) => (this.#streaks.get(keyOf(r))?.streak ?? 0) >= 2);
+    // Frames a value needs before it may end the scan. The reticle is the
+    // promise: a code under the center point confirms as fast as ever (2
+    // frames), while a surrounding code needs more agreement — enough to
+    // never hijack a scan whose centered code is still settling, little
+    // enough that a lone peripheral code still confirms (~0.2-0.4s).
+    const streak = (/** @type {DetectedCode} */ r) => this.#streaks.get(keyOf(r))?.streak ?? 0;
+    // A centered candidate one frame away is racing: a surrounding read
+    // then needs two MORE frames. A margin, not a veto — a centered code
+    // that flickers must never be able to stall a readable scan forever.
+    const racing = results.some((r) => aimed(r) && streak(r) < 2);
+    const need = (/** @type {DetectedCode} */ r) =>
+      (aimed(r) ? 2 : (r.score ?? 0) >= PERIPHERAL_CAP ? 4 : 6) +
+      (racing && !aimed(r) ? 2 : 0);
+    // `results` is ranked best-first, so when several values reach their
+    // requirement on the same frame the centered one wins the tie.
+    const winner = results.find((r) => streak(r) >= need(r));
     return winner ? [winner] : [];
   }
 
@@ -483,9 +519,11 @@ export class LiveScanner {
       return;
     }
     if (this.#hint || !raw.length) return;
-    const r = raw[0];
+    // Never lock the next frames onto a SURROUNDING 2D code: a corner QR
+    // used to win the close-up for 5 frames, so the centered barcode was
+    // never seen again and the corner code confirmed instead.
+    const r = raw.find((c) => HINTED.has(String(c.symbology)) && aimed(c));
     if (!r) return;
-    if (!HINTED.has(String(r.symbology))) return;
     const video = this._opts.video;
     const vw = video.videoWidth;
     const vh = video.videoHeight;
@@ -507,6 +545,12 @@ export class LiveScanner {
     let w = Math.max(...xs) - x;
     let h = Math.max(...ys) - y;
     if (!(w > 0 && h > 0)) return;
+    // A code that already fills the frame gains nothing from a close-up,
+    // and the ±25% margin can only clip it: a tall 2D symbol measured a
+    // 508px crop around a 560px symbol, which decoded nowhere while the
+    // full frame read every time. The full frame is the better opinion.
+    const frameSide = Math.min(vw, vh) || 1;
+    if (Math.max(w, h) > frameSide * 0.4) return;
     const mx = Math.max(16, w * 0.25);
     const my = Math.max(16, h * 0.25);
     x = Math.max(0, Math.round(x - mx));

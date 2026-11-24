@@ -1,4 +1,27 @@
 /**
+ * The reticle itself as crops, best first: the code the user is aiming
+ * at, at native resolution, isolated from every surrounding code.
+ *
+ * Connected components merge a packed label's stacked barcodes + text
+ * into one blob, and the density ranking then favours whichever code in
+ * the frame has the most bars — not the one under the line. These
+ * deterministic boxes encode the UI contract directly:
+ *
+ *   - wide horizontal strip centered on the frame's mid line (the
+ *     viewfinder's scan line) for a 1D symbol under it;
+ *   - tight strip on the same line for a short centered symbol beside a
+ *     longer neighbor on the same band;
+ *   - center square for a centered 2D symbol.
+ *
+ * @param {number} sourceW @param {number} sourceH
+ * @param {{ linear?: boolean, square?: boolean }} [opts]
+ * @returns {RoiBox[]}
+ */
+export function centerRoiCandidates(sourceW: number, sourceH: number, opts?: {
+    linear?: boolean;
+    square?: boolean;
+}): RoiBox[];
+/**
  * Propose source-space ROI boxes for the native-resolution pass, best
  * first. `frame` is the binarized full-frame mask; `sourceW/sourceH` are
  * the original bitmap dimensions that mask came from.
@@ -72,6 +95,25 @@ export function cropDrawable(source: CanvasImageSource | HTMLVideoElement, box: 
     }[];
 }>;
 /**
+ * Shrink a linear proposal to the actual symbol INSIDE it, in source
+ * pixels. Two things a generous crop brings in that the row scanner
+ * cannot tolerate:
+ *
+ * 1. a solid dark edge — the label border, or the cardboard behind it —
+ *    sitting where the mandated quiet zone should be. A column that is
+ *    ink on nearly every row is a border, never a barcode element, so
+ *    such edges are trimmed first (bounded to 30% of the box per side).
+ * 2. paper margins beyond the bars. After the trim, the box shrinks to
+ *    its ink extents plus a small pad; the caller can then re-pad on
+ *    paper white to restore the quiet zone exactly.
+ *
+ * @param {BinarizedFrame} frame
+ * @param {RoiBox} box
+ * @param {number} sourceW @param {number} sourceH
+ * @returns {RoiBox | null}
+ */
+export function tightenLinearBox(frame: BinarizedFrame, box: RoiBox, sourceW: number, sourceH: number): RoiBox | null;
+/**
  * Horizontal mirror of a crop, at source resolution. A 180°-presented
  * 1D symbol is the common phone case (the label is upside down), and the
  * mask-level mirror in wasm is starved when the binarization itself is
@@ -134,7 +176,7 @@ export function padDrawable(source: CanvasImageSource, pad?: number): Promise<{
 export type BinarizedFrame = import("./gpu/binarizer.js").BinarizedFrame;
 /**
  * A candidate box in the frame's SOURCE pixel coordinates (not mask
- * coordinates).
+ * coordinates). `linear` marks a bar-strip proposal (1D decoders only).
  */
 export type RoiBox = {
     x: number;
@@ -142,4 +184,5 @@ export type RoiBox = {
     w: number;
     h: number;
     score: number;
+    linear?: boolean;
 };

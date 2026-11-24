@@ -10,7 +10,9 @@
 //
 // Latency laws travel per-request: live frames default to the 500ms
 // camera law, still images to 5000ms — both configurable per decode.
-// Results are ranked: most centered first, larger symbol as tiebreak.
+// Results are ranked by reticle priority: the code under the frame
+// center point first, then a code crossing the UI's center scan line,
+// then surrounding codes (see src/rank.js) — larger symbol as tiebreak.
 
 import binding, { options } from '@webreflection/bindings/message-port';
 import { createBinarizer } from '../src/binarizer-factory.js';
@@ -18,8 +20,9 @@ import { CpuBinarizer } from '../src/cpu-binarizer.js';
 import { getWasmScanner, decodeFrame } from '../src/decoder.js';
 import { rotateDrawable } from '../src/source-rotate.js';
 import { liftDim } from '../src/source-lift.js';
-import { cropDrawable, linearRoiCandidates, mirrorDrawable, otsuMask, padDrawable, roiCandidates } from '../src/roi.js';
+import { centerRoiCandidates, cropDrawable, linearRoiCandidates, mirrorDrawable, otsuMask, padDrawable, roiCandidates, tightenLinearBox } from '../src/roi.js';
 import { ALL_FORMATS, LINEAR, cheapFormats, dueForFullSweep, is2DResult, markFullSweep, needsScheduling } from '../src/live-schedule.js';
+import { CENTERED_SCORE, hasCentered, isCentered, rankCodes } from '../src/rank.js';
 import {
   encode_fixture_opts,
   encode_fixture_raw_opts,
@@ -31,7 +34,7 @@ import {
  * @typedef {import('../src/decoder.js').DecodedCode} DecodedCode
  */
 
-/** A decode result plus the centering score ranked() attaches. */
+/** A decode result plus the reticle-priority score rankCodes() attaches. */
 /** @typedef {DecodedCode & { score?: number }} RankedCode */
 
 /** Worker → main decode request. */
@@ -227,49 +230,22 @@ const withThreshold = async (bin, threshold, fn) => {
   }
 };
 
+/**
+ * Would at least one of these hits satisfy the reticle? A centered hit is
+ * the one-code contract: it may stop a still's fallback ladder, skip the
+ * 2D hunt, or end a live frame's extra opinions. A peripheral hit may
+ * not — it is ranked and kept, but every other path keeps running.
+ * @param {RankedCode[]} codes
+ * @param {{ width: number, height: number }} frame
+ */
+const centeredHit = (codes, frame) =>
+  hasCentered(rankCodes(codes, frame.width, frame.height));
+
 const stillLinearFormats = (/** @type {string[] | undefined} */ formats) =>
   formats == null
     ? [...LINEAR_FORMATS]
     : formats.filter((f) => LINEAR_FORMATS.has(String(f).toLowerCase()));
 
-/**
- * Attach the centering score to every code and sort best-first: the
- * quad centroid's distance from the frame center (normalized by the
- * half-diagonal, so 1 = dead center, 0 = at a corner), larger quad
- * area as tiebreak. Coordinates are mask-space — the same space the
- * quads are already in. Ranking only ever reorders: a peripheral code
- * still confirms when it is the only readable one, it just loses the
- * race to 2 consecutive frames when a centered one also reads.
- * @param {RankedCode[]} codes
- * @param {number} width
- * @param {number} height
- * @returns {RankedCode[]}
- */
-const ranked = (codes, width, height) => {
-  const cx = width / 2;
-  const cy = height / 2;
-  const half = Math.hypot(width, height) / 2 || 1;
-  const area = (/** @type {RankedCode['position']} */ p) => {
-    let a = 0;
-    for (let i = 0; i < p.length; i++) {
-      const cur = p[i] ?? { x: 0, y: 0 };
-      const next = p[(i + 1) % p.length] ?? cur;
-      a += cur.x * next.y - next.x * cur.y;
-    }
-    return Math.abs(a) / 2;
-  };
-  for (const c of codes) {
-    let mx = 0;
-    let my = 0;
-    for (const p of c.position) {
-      mx += p.x;
-      my += p.y;
-    }
-    const d = Math.hypot(mx / c.position.length - cx, my / c.position.length - cy) / half;
-    c.score = Math.max(0, Math.min(1, 1 - d));
-  }
-  return codes.sort((a, b) => ((b.score ?? 0) - (a.score ?? 0)) || (area(b.position) - area(a.position)));
-};
 
 /** Live: at most one native-ROI pass per this many ms (crop + binarize). */
 const ROI_MIN_INTERVAL_MS = 250;
@@ -317,14 +293,20 @@ const mapRoiHits = (hits, crop, croppedFrame, fullFrame, sourceW, sourceH) => {
  * @param {string[] | undefined} formats
  * @param {{still?: boolean, latency?: number}} opts
  * @param {number} limit @param {number} deadline
+ * @param {boolean} [centerOnly] Skip the density proposals: probe the
+ *   reticle crops only. Used when a peripheral read already exists and
+ *   the question is just "is the centered code also readable?" — bounded
+ *   to a couple of native crops instead of a full ROI sweep.
  * @returns {Promise<import('../src/decoder.js').DecodedCode[]>}
  */
-const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, deadline) => {
+const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, deadline, centerOnly = false) => {
   const sourceW = bitmap.width;
   const sourceH = bitmap.height;
   if (!sourceW || !sourceH) return [];
   const wantsLinear =
     !formats?.length || formats.some((f) => LINEAR.includes(String(f).toLowerCase()));
+  const wants2D =
+    !formats?.length || formats.some((f) => !LINEAR.includes(String(f).toLowerCase()));
   /** The requested 1D families only: a bar strip must never pay for a 2D
    *  tier (DataMatrix/PDF417 on the strip can spend the whole live
    *  deadline before the row scanners run). */
@@ -333,12 +315,27 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
     : [...LINEAR];
   // Linear bands first: a wide bar strip is often not a "compact cluster"
   // (it merges with the page/box around it, or loses to the text below).
+  // The reticle crops lead EVERY list: they are the boxes the UI promises,
+  // so a packed label's surrounding codes cannot take their crop budget.
   const linear = wantsLinear
     ? linearRoiCandidates(frame, sourceW, sourceH, limit).map((box) => ({ ...box, linear: true }))
     : [];
+  const center = centerRoiCandidates(sourceW, sourceH, { linear: wantsLinear, square: wants2D });
+  /** @type {{ x: number, y: number, w: number, h: number, score: number, linear?: boolean }[]} */
+  const proposals = centerOnly
+    ? center
+    : [...center, ...linear, ...roiCandidates(frame, sourceW, sourceH, limit)];
+  // Every linear proposal also gets its ink-tight twin: the generous crop
+  // keeps the quiet-zone margin an inverted symbol needs, the tight one
+  // excludes a dark box/label edge that would otherwise eat the zone.
+  for (const box of [...proposals]) {
+    if (!box.linear) continue;
+    const tight = tightenLinearBox(frame, box, sourceW, sourceH);
+    if (tight) proposals.push(tight);
+  }
   /** @type {{ x: number, y: number, w: number, h: number, score: number, linear?: boolean }[]} */
   const boxes = [];
-  for (const box of [...linear, ...roiCandidates(frame, sourceW, sourceH, limit)]) {
+  for (const box of proposals) {
     const overlap = boxes.some((p) => {
       const ix = Math.max(0, Math.min(box.x + box.w, p.x + p.w) - Math.max(box.x, p.x));
       const iy = Math.max(0, Math.min(box.y + box.h, p.y + p.h) - Math.max(box.y, p.y));
@@ -397,6 +394,29 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
     weakHit ??= { hits, mask, mapper };
     return null;
   };
+  /**
+   * A crop's hits: return them only when one is under the reticle (the
+   * one-code contract is satisfied). A peripheral read is remembered as
+   * the fallback and the remaining crops still run — the whole point of
+   * the center-first box order. `hits` are already in full-frame mask
+   * coordinates.
+   * @type {DecodedCode[] | null}
+   */
+  let peripheral = null;
+  /**
+   * @param {DecodedCode[]} hits
+   * @returns {DecodedCode[] | null}
+   */
+  const settle = (hits) => {
+    if (!hits.length) return null;
+    rankCodes(hits, frame.width, frame.height);
+    const top = hits[0];
+    if (!top) return null;
+    if (isCentered(top)) return hits;
+    const fallback = peripheral?.[0];
+    if (!fallback || (top.score ?? 0) > (fallback.score ?? 0)) peripheral = hits;
+    return null;
+  };
 
   // Pass 1: cheap opinions on every candidate. The 0.92/inverted pair is
   // the established path; for a linear strip a 0.88 SOURCE mirror and the
@@ -412,13 +432,19 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
     /** @type {import('../src/gpu/binarizer.js').BinarizedFrame} */
     const f = await bin.process(crop.canvas);
     let found = offer(decodeFrame(scanner, f, boxFormats, callOpts()), f, crop);
-    if (found) return found;
+    if (found) {
+      const settled = settle(found);
+      if (settled) return settled;
+    }
     // WASM's still path already tries both polarities (`suspicious = still`);
     // only live frames need the explicit JS inversion for light-page islands.
     if (opts.still !== true) {
       const inverted = { ...f, data: f.data.map((/** @type {number} */ b) => ~b) };
       found = offer(decodeFrame(scanner, inverted, boxFormats, callOpts()), f, crop);
-      if (found) return found;
+      if (found) {
+        const settled = settle(found);
+        if (settled) return settled;
+      }
     }
     if (!box.linear) continue;
 
@@ -452,7 +478,10 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
       };
       return offer(decodeFrame(scanner, fm, boxFormats, callOpts()), fm, mirrorMap);
     });
-    if (found) return found;
+    if (found) {
+      const settled = settle(found);
+      if (settled) return settled;
+    }
   }
 
   // Pass 2: the local threshold floods thin spaces on a blurry bar strip;
@@ -475,10 +504,14 @@ const decodeRoi = async (scanner, bin, bitmap, frame, formats, opts, limit, dead
         : [otsu, { ...otsu, data: otsu.data.map((/** @type {number} */ b) => ~b) }];
       for (const data of masks) {
         const found = offer(decodeFrame(scanner, data, linearOnly, callOpts()), otsu, scaled);
-        if (found) return found;
+        if (found) {
+          const settled = settle(found);
+          if (settled) return settled;
+        }
       }
     }
   }
+  if (peripheral) return peripheral;
   return weakHit ? done(weakHit.hits, weakHit.mask, weakHit.mapper) : [];
 };
 
@@ -516,7 +549,7 @@ const mergeUnique = (dst, hits) => {
  */
 const makeResult = (codes, frame, t0, partial, checked, scanner, formats) => ({
   type: 'result',
-  codes: ranked(codes, frame.width, frame.height),
+  codes: rankCodes(codes, frame.width, frame.height),
   decodeMs: Math.round(performance.now() - t0),
   frameW: frame.width,
   frameH: frame.height,
@@ -638,23 +671,28 @@ const decodeStill = async (bitmap, formats, accuracy, latency) => {
           const f = threshold === 0.92 ? frame : await withThreshold(bin, threshold, () => bin.process(input));
           const lin = decodeFrame(scanner, f, linear, opts);
           if (lin.length) {
-            codes = lin;
+            // A peripheral read at 0.92 must not hide a centered read at
+            // 0.82/0.7 (two stacked barcodes on one label): merge every
+            // threshold and stop only when the reticle is satisfied.
+            mergeUnique(codes, lin);
             stillLinearHit = true;
-            break;
+            if (centeredHit(codes, frame)) break;
           }
         }
       }
     }
 
-    // A centered, reliable 1D barcode (score >= 0.82: covers all centered
-    // receipts/books/labels/chocolate/pharma-ITF while staying well above
-    // gs1-two-codes' peripheral EAN-13 at 0.737) already satisfies the
-    // one-code contract — skip the 5-8s DataMatrix/2D hunt. Weak/loose 1D
-    // hits (ean8/upce/codabar/code39) never short-circuit 2D so a noisy
-    // ean8 inside an Aztec/QR grid (bahn-509724794512) cannot hide it.
+    // A CENTERED, reliable 1D barcode already satisfies the one-code
+    // contract — skip the 5-8s DataMatrix/2D hunt. "Centered" is the
+    // reticle tier from src/rank.js (center point inside the quad, or a
+    // strong center-scan-line hit): a barcode in the corner never stops
+    // the 2D hunt, which is what let a corner QR outrank a centered
+    // EAN-13 on a packed label. Weak/loose 1D hits (ean8/upce/codabar/
+    // code39) never short-circuit 2D so a noisy ean8 inside an Aztec/QR
+    // grid (bahn-509724794512) cannot hide it.
     const strongLinear = codes.some((c) => STRONG_1D.has(c.symbology) || c.symbology === "itf");
     const centeredLinear =
-      stillLinearHit && strongLinear && ((ranked(codes, frame.width, frame.height)[0]?.score ?? 0) >= 0.82);
+      stillLinearHit && strongLinear && centeredHit(codes, frame);
 
     // 2. GPU stills: CPU first opinion for STILL_CPU_FAMILIES unless a
     // centered reliable 1D hit already satisfied the one-code contract.
@@ -772,10 +810,16 @@ const decodeStill = async (bitmap, formats, accuracy, latency) => {
       }
     }
 
-    // 4. Small 1D native-resolution ROI before the exotic 2D sweep.
-    if (!stillLinearHit && codes.length === 0) {
+    // 4. Small 1D native-resolution ROI before the exotic 2D sweep. A
+    // peripheral read does not satisfy the reticle, so it still runs —
+    // and with the full proposal list, because the tight dense-row band
+    // is exactly what isolates a bar strip printed next to a dark label
+    // border (its printed quiet zone is ~6 modules, where the standard
+    // mandates 10): the crop then gets re-padded on paper white.
+    if (!centeredHit(codes, frame)) {
       const linear = stillLinearFormats(formats);
       if (linear.length) {
+        const peripheralOnly = codes.length > 0;
         const roi = await decodeRoi(
           scanner,
           bin,
@@ -783,11 +827,12 @@ const decodeStill = async (bitmap, formats, accuracy, latency) => {
           frame,
           linear,
           opts,
-          2,
-          Math.min(performance.now() + 900, deadline),
+          peripheralOnly ? 2 : 2,
+          Math.min(performance.now() + (peripheralOnly ? 1200 : 900), deadline),
+          false,
         );
         if (roi.length) {
-          codes = roi;
+          mergeUnique(codes, roi);
           stillLinearHit = true;
         }
       }
@@ -816,10 +861,24 @@ const decodeStill = async (bitmap, formats, accuracy, latency) => {
       }
     }
 
-    // 7. Full native-resolution ROI pass.
-    if (codes.length === 0 && !outOfTime()) {
-      const roi = await decodeRoi(scanner, bin, bitmap, frame, formats, budgetOpts(), 4, deadline);
-      if (roi.length) codes = roi;
+    // 7. Full native-resolution ROI pass. With a peripheral read already
+    // in hand the question is narrower — is the centered code readable
+    // too? — so the pass collapses to the reticle crops and keeps the
+    // peripheral fallback either way.
+    if (!centeredHit(codes, frame) && !outOfTime()) {
+      const peripheralOnly = codes.length > 0;
+      const roi = await decodeRoi(
+        scanner,
+        bin,
+        bitmap,
+        frame,
+        formats,
+        budgetOpts(),
+        peripheralOnly ? 2 : 4,
+        deadline,
+        peripheralOnly,
+      );
+      if (roi.length) mergeUnique(codes, roi);
     }
 
     // 8. Dim still brightness lift + small-roll source rotation retry.
@@ -942,7 +1001,7 @@ const decodeLive = async (bitmap, formats, accuracy, latency) => {
         const strongCentered1D =
           linearOnly &&
           codes.some((c) => STRONG_1D.has(c.symbology)) &&
-          ((ranked(codes, frame.width, frame.height)[0]?.score ?? 0) >= 0.85);
+          centeredHit(codes, frame);
         if (!codes.length || (linearOnly && !strongCentered1D)) {
           const ranCheap = new Set(cheapList.map((f) => String(f).toLowerCase()));
           const rest = (activeFormats ?? ALL_FORMATS).filter(
@@ -955,9 +1014,11 @@ const decodeLive = async (bitmap, formats, accuracy, latency) => {
         codes = decodeFrame(scanner, frame, activeFormats, opts);
       }
       const firstMs = performance.now() - t0;
+      // A peripheral read does not end the frame's opinions: the second
+      // threshold may be the one that reads the centered code.
       const sweep =
         accuracy === 'high' ||
-        (accuracy === 'auto' && codes.length === 0 && firstMs < 220);
+        (accuracy === 'auto' && !centeredHit(codes, frame) && firstMs < 220);
       if (sweep && typeof bin.setThreshold === "function") {
         const alt = await withThreshold(bin, 0.82, () => bin.process(bitmap));
         mergeUnique(codes, decodeFrame(scanner, alt, activeFormats, opts));
@@ -965,8 +1026,9 @@ const decodeLive = async (bitmap, formats, accuracy, latency) => {
       }
     }
 
-    // Live CPU second opinion: only after a true miss (`codes.length === 0`).
-    if (bin.kind === "gpu" && codes.length === 0) {
+    // Live CPU second opinion: after a true miss, or a peripheral-only
+    // read (the centered code may need the CPU mask's relative floor).
+    if (bin.kind === "gpu" && !centeredHit(codes, frame)) {
       const families = cpuSecondOpinionFormats(activeFormats, codes);
       const now = performance.now();
       const due =
@@ -976,20 +1038,32 @@ const decodeLive = async (bitmap, formats, accuracy, latency) => {
         lastCpuSecondOpinionAt = now;
         const hits = await runCpuSecondOpinion(scanner, liveCpuBinarizer(), bitmap, frame, families, opts);
         if (hits.length) {
-          codes = codes.concat(hits);
+          mergeUnique(codes, hits);
           cpuSecondOpinionHotUntil = now + 600;
         }
       }
     }
 
     // Live native-resolution ROI pass (2 crops, 120ms budget, hot bypass for confirmation).
-    if (codes.length === 0) {
+    // With a peripheral read in hand, probe the reticle crops only.
+    if (!centeredHit(codes, frame)) {
       const now = performance.now();
       if (now <= roiHotUntil || now - lastRoiAt >= ROI_MIN_INTERVAL_MS) {
         lastRoiAt = now;
-        const roi = await decodeRoi(scanner, bin, bitmap, frame, activeFormats, opts, 2, now + 120);
+        const peripheralOnly = codes.length > 0;
+        const roi = await decodeRoi(
+          scanner,
+          bin,
+          bitmap,
+          frame,
+          activeFormats,
+          opts,
+          peripheralOnly ? 1 : 2,
+          now + 120,
+          peripheralOnly,
+        );
         if (roi.length) {
-          codes = roi;
+          mergeUnique(codes, roi);
           roiHotUntil = now + 600;
         }
       }
@@ -1007,7 +1081,13 @@ const decodeLive = async (bitmap, formats, accuracy, latency) => {
       }
     }
 
-    if (full) lastFullHad2D = codes.some((c) => is2DResult(c.symbology));
+    // Only a CENTERED 2D read may mute the linear tier on the next cheap
+    // frames: a corner QR used to disable 1D for the rest of the sweep
+    // interval, which is how it outranked the barcode under the line.
+    if (full) {
+      rankCodes(codes, frame.width, frame.height);
+      lastFullHad2D = codes.some((c) => is2DResult(c.symbology) && isCentered(c));
+    }
     lastCandidates = codes.map((c) => c.symbology);
     return makeResult(codes, frame, t0, !full, checked, scanner, activeFormats);
   } finally {

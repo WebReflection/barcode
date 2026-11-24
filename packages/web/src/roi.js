@@ -23,8 +23,8 @@ import { LINEAR } from "./live-schedule.js";
 
 /**
  * A candidate box in the frame's SOURCE pixel coordinates (not mask
- * coordinates).
- * @typedef {{ x: number, y: number, w: number, h: number, score: number }} RoiBox
+ * coordinates). `linear` marks a bar-strip proposal (1D decoders only).
+ * @typedef {{ x: number, y: number, w: number, h: number, score: number, linear?: boolean }} RoiBox
  */
 
 /** Coarse cell side in mask pixels. */
@@ -37,6 +37,81 @@ const CELL_INK = 0.045;
 const MIN_SIDE = 8;
 /** Never propose a crop that is almost the whole frame. */
 const MAX_AREA_FRACTION = 0.72;
+
+/**
+ * Reticle weight for a proposal: the decoder's crop budget and deadline
+ * are finite, so the box under the UI's center reticle must be tried
+ * before surrounding boxes. Returns 3 when the box contains the frame
+ * center, 1.8 when it crosses either center axis (the UI scan line), and
+ * decays to 0.5 at the corners.
+ * @param {number} x @param {number} y @param {number} w @param {number} h
+ * @param {number} sourceW @param {number} sourceH
+ */
+const centerWeight = (x, y, w, h, sourceW, sourceH) => {
+  const cx = sourceW / 2;
+  const cy = sourceH / 2;
+  if (cx >= x && cx <= x + w && cy >= y && cy <= y + h) return 3;
+  const onAxis = (cy >= y && cy <= y + h) || (cx >= x && cx <= x + w);
+  const d =
+    Math.hypot(
+      Math.max(x - cx, 0, cx - (x + w)),
+      Math.max(y - cy, 0, cy - (y + h)),
+    ) / (Math.min(sourceW, sourceH) / 2 || 1);
+  return (onAxis ? 1.8 : 1) * Math.max(0.5, 1 - 0.6 * Math.min(1, d));
+};
+
+/**
+ * The reticle itself as crops, best first: the code the user is aiming
+ * at, at native resolution, isolated from every surrounding code.
+ *
+ * Connected components merge a packed label's stacked barcodes + text
+ * into one blob, and the density ranking then favours whichever code in
+ * the frame has the most bars — not the one under the line. These
+ * deterministic boxes encode the UI contract directly:
+ *
+ *   - wide horizontal strip centered on the frame's mid line (the
+ *     viewfinder's scan line) for a 1D symbol under it;
+ *   - tight strip on the same line for a short centered symbol beside a
+ *     longer neighbor on the same band;
+ *   - center square for a centered 2D symbol.
+ *
+ * @param {number} sourceW @param {number} sourceH
+ * @param {{ linear?: boolean, square?: boolean }} [opts]
+ * @returns {RoiBox[]}
+ */
+export function centerRoiCandidates(sourceW, sourceH, opts = {}) {
+  const { linear = true, square = true } = opts;
+  if (!(sourceW > 0 && sourceH > 0)) return [];
+  const cx = sourceW / 2;
+  const cy = sourceH / 2;
+  const minSide = Math.min(sourceW, sourceH);
+  /** @type {RoiBox[]} */
+  const boxes = [];
+  if (linear) {
+    const wideH = Math.min(sourceH, Math.max(96, Math.round(sourceH * 0.24)));
+    const tightH = Math.min(sourceH, Math.max(64, Math.round(sourceH * 0.14)));
+    const wideW = Math.max(MIN_SIDE, Math.round(sourceW * 0.92));
+    const tightW = Math.max(MIN_SIDE, Math.round(sourceW * 0.65));
+    const push = (/** @type {number} */ w, /** @type {number} */ h, /** @type {number} */ score) => {
+      const x = Math.max(0, Math.round(cx - w / 2));
+      const y = Math.max(0, Math.round(cy - h / 2));
+      const bw = Math.min(sourceW - x, Math.round(w));
+      const bh = Math.min(sourceH - y, Math.round(h));
+      if (bw < MIN_SIDE || bh < MIN_SIDE) return;
+      boxes.push({ x, y, w: bw, h: bh, score, linear: true });
+    };
+    push(wideW, wideH, 30);
+    push(tightW, tightH, 26);
+  }
+  if (square) {
+    const side = Math.max(MIN_SIDE, Math.round(minSide * 0.5));
+    const x = Math.max(0, Math.round(cx - side / 2));
+    const y = Math.max(0, Math.round(cy - side / 2));
+    const s = Math.min(side, sourceW - x, sourceH - y);
+    if (s >= MIN_SIDE) boxes.push({ x, y, w: s, h: s, score: 28, linear: false });
+  }
+  return boxes;
+}
 
 /** @param {BinarizedFrame} frame @param {number} x @param {number} y */
 const inkAt = (frame, x, y) =>
@@ -191,8 +266,14 @@ export function roiCandidates(frame, sourceW, sourceH, limit = 4) {
     // code scores ~1; a sparse text block or a page rule scores lower.
     const coverage = cells.length / ((maxX - minX + 1) * (maxY - minY + 1));
     // Prefer dense, compact clusters; area only breaks near-ties so a
-    // 200px QR is not buried by a 24px speck of print noise.
-    const score = density * (0.55 + 0.45 * coverage) * (1 + Math.log10(1 + bw * bh) / 8);
+    // 200px QR is not buried by a 24px speck of print noise. The reticle
+    // weight then puts the cluster under the UI's center reticle ahead of
+    // an equally dense surrounding one on a packed label.
+    const score =
+      density *
+      (0.55 + 0.45 * coverage) *
+      (1 + Math.log10(1 + bw * bh) / 8) *
+      centerWeight(mx0, my0, bw, bh, frame.width, frame.height);
     // Ink bounds stop at the first/last dark module — the quiet zone is
     // white and invisible. 12% of the box side is ~4 QR modules and ~10
     // Code128 modules at typical module counts.
@@ -286,12 +367,18 @@ export function linearRoiCandidates(frame, sourceW, sourceH, limit = 2) {
   // A real 1D symbol is a contiguous run of rows with a near-constant,
   // very high transition count. A lower floor (0.4) also picks up the
   // human-readable text line and label borders, and those merge with the
-  // bars into a full-width, 300px-tall crop on a phone photo. 0.85 keeps
+  // bars into a full-width, 300px-tall crop on a phone photo. 0.7 keeps
   // only the bar rows; the x extent then comes from the same rows, so the
   // crop is the symbol (plus quiet zone) instead of the whole label.
+  //
+  // 0.85 used to keep ONLY the densest strip in the frame. On a packed
+  // label (several barcodes stacked) the widest one owns `max`, and a
+  // narrower neighbour fell below the floor and never got a tight crop —
+  // the P/N and Serial strips of the lot-of-codes box measured 0.76/0.70
+  // of `max`. 0.7 still separates bars from text rows.
   const sx = sourceW <= width ? 1 : sourceW / width;
   const sy = sourceH <= height ? 1 : sourceH / height;
-  const denseFloor = Math.max(24, max * 0.85);
+  const denseFloor = Math.max(24, max * 0.7);
   /** @type {{ y0: number, y1: number }[]} */
   const dense = [];
   for (let y = 0; y < height; y++) {
@@ -359,7 +446,10 @@ export function linearRoiCandidates(frame, sourceW, sourceH, limit = 2) {
     const w = Math.min(sourceW - x, Math.round((x1 - x0 + 2 * padX) * sx));
     const h = Math.min(sourceH - y, Math.round((bh + 2 * padY) * sy));
     if (w < MIN_SIDE || h < MIN_SIDE) continue;
-    tight.push({ x, y, w, h, score: x1 - x0 });
+    tight.push({
+      x, y, w, h,
+      score: (x1 - x0) * centerWeight(x, y, w, h, sourceW, sourceH),
+    });
   }
   tight.sort((a, b) => b.score - a.score);
   // Fallback: the original looser band grouping. A frame with no clean
@@ -437,7 +527,10 @@ export function linearRoiCandidates(frame, sourceW, sourceH, limit = 2) {
     const w = Math.min(sourceW - x, Math.round((best.x1 - best.x0 + 2 * padX) * sx));
     const h = Math.min(sourceH - y, Math.round((band.y1 - band.y0 + 1 + 2 * padY) * sy));
     if (w < MIN_SIDE || h < MIN_SIDE) continue;
-    boxes.push({ x, y, w, h, score: best.total });
+    boxes.push({
+      x, y, w, h,
+      score: best.total * centerWeight(x, y, w, h, sourceW, sourceH),
+    });
   }
 
   boxes.sort((a, b) => b.score - a.score);
@@ -589,6 +682,89 @@ export async function cropDrawable(source, box) {
       return points.map(({ x: px, y: py }) => ({ x: x + px * sx, y: y + py * sy }));
     },
   };
+}
+
+/**
+ * Shrink a linear proposal to the actual symbol INSIDE it, in source
+ * pixels. Two things a generous crop brings in that the row scanner
+ * cannot tolerate:
+ *
+ * 1. a solid dark edge — the label border, or the cardboard behind it —
+ *    sitting where the mandated quiet zone should be. A column that is
+ *    ink on nearly every row is a border, never a barcode element, so
+ *    such edges are trimmed first (bounded to 30% of the box per side).
+ * 2. paper margins beyond the bars. After the trim, the box shrinks to
+ *    its ink extents plus a small pad; the caller can then re-pad on
+ *    paper white to restore the quiet zone exactly.
+ *
+ * @param {BinarizedFrame} frame
+ * @param {RoiBox} box
+ * @param {number} sourceW @param {number} sourceH
+ * @returns {RoiBox | null}
+ */
+export function tightenLinearBox(frame, box, sourceW, sourceH) {
+  if (!(frame.width > 0 && frame.height > 0 && sourceW > 0 && sourceH > 0)) return null;
+  const sx = sourceW <= frame.width ? 1 : sourceW / frame.width;
+  const sy = sourceH <= frame.height ? 1 : sourceH / frame.height;
+  let mx0 = Math.max(0, Math.floor(box.x / sx));
+  let my0 = Math.max(0, Math.floor(box.y / sy));
+  let mx1 = Math.min(frame.width, Math.ceil((box.x + box.w) / sx));
+  let my1 = Math.min(frame.height, Math.ceil((box.y + box.h) / sy));
+  if (mx1 - mx0 < 8 || my1 - my0 < 4) return null;
+
+  /** @type {number[]} */
+  const columnInk = new Array(mx1 - mx0).fill(0);
+  /** @type {number[]} */
+  const rowInk = new Array(my1 - my0).fill(0);
+  for (let y = my0; y < my1; y++) {
+    let row = 0;
+    for (let x = mx0; x < mx1; x++) {
+      if (inkAt(frame, x, y)) {
+        columnInk[x - mx0] = (columnInk[x - mx0] ?? 0) + 1;
+        row += 1;
+      }
+    }
+    rowInk[y - my0] = row;
+  }
+
+  // 1. trim solid edges (>= 80% ink along their whole length).
+  const limitX = Math.floor((mx1 - mx0) * 0.3);
+  const limitY = Math.floor((my1 - my0) * 0.3);
+  const height = my1 - my0;
+  const width = mx1 - mx0;
+  for (let i = 0; i < limitX && (columnInk[i] ?? 0) >= height * 0.8; i++) mx0 += 1;
+  for (let i = 1; i <= limitX && (columnInk[width - i] ?? 0) >= height * 0.8; i++) mx1 -= 1;
+  const trimmedW = mx1 - mx0;
+  if (trimmedW < 8) return null;
+  for (let i = 0; i < limitY && (rowInk[i] ?? 0) >= trimmedW * 0.8; i++) my0 += 1;
+  for (let i = 1; i <= limitY && (rowInk[height - i] ?? 0) >= trimmedW * 0.8; i++) my1 -= 1;
+
+  // 2. ink extents inside the trimmed box.
+  let ix0 = mx1;
+  let iy0 = my1;
+  let ix1 = mx0;
+  let iy1 = my0;
+  for (let y = my0; y < my1; y++) {
+    for (let x = mx0; x < mx1; x++) {
+      if (!inkAt(frame, x, y)) continue;
+      if (x < ix0) ix0 = x;
+      if (x > ix1) ix1 = x;
+      if (y < iy0) iy0 = y;
+      if (y > iy1) iy1 = y;
+    }
+  }
+  if (ix1 < ix0 || iy1 < iy0) return null;
+  const w = (ix1 - ix0 + 1) * sx;
+  const h = (iy1 - iy0 + 1) * sy;
+  const padX = Math.max(4, Math.round(w * 0.03));
+  const padY = Math.max(4, Math.round(h * 0.15));
+  const x = Math.max(0, Math.round(ix0 * sx) - padX);
+  const y = Math.max(0, Math.round(iy0 * sy) - padY);
+  const bw = Math.min(sourceW - x, Math.round(w) + 2 * padX);
+  const bh = Math.min(sourceH - y, Math.round(h) + 2 * padY);
+  if (bw < MIN_SIDE || bh < MIN_SIDE) return null;
+  if (bw >= box.w * 0.98 && bh >= box.h * 0.98) return null;
+  return { x, y, w: bw, h: bh, score: box.score + 1, linear: true };
 }
 
 /**

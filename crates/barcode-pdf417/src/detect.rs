@@ -188,7 +188,10 @@ fn scan_candidates(dark: &[u8], w: usize, h: usize) -> Vec<Hit> {
                 // modules is measured against the end-pitch average,
                 // which is the correct divisor for the full span.
                 let s_avg = (s0 + s1) / 2.0;
-                let width_m = (*x1 - x0) as f64 / s_avg;
+                // A stop candidate can sit left of a start candidate on a
+                // junk row; the old `-` panicked on the native build
+                // (release wraps silently, so only tests/CI caught it).
+                let width_m = (*x1).saturating_sub(*x0) as f64 / s_avg;
                 let ncols = ((width_m - 69.0) / 17.0).round() as isize;
                 if !(1..=30).contains(&ncols) {
                     continue;
