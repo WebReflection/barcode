@@ -31,8 +31,12 @@ const wasm = read("wasm.wasm");
 const js = Buffer.concat([main, worker]);
 
 const checks = [
-  { name: "wasm.wasm raw", bytes: wasm.length, budget: 1_850_000 },
-  { name: "wasm.wasm brotli", bytes: brotliCompressSync(wasm).length, budget: 370_000 },
+  // 0.3.0 ships 855 KB raw / 254 KB brotli (algorithmic Micro QR replaced
+  // the 6 MB frame table). These budgets sit ~17% above that on purpose:
+  // they still fail a regression that reintroduces a hard-coded table,
+  // which is exactly what they are for.
+  { name: "wasm.wasm raw", bytes: wasm.length, budget: 1_000_000 },
+  { name: "wasm.wasm brotli", bytes: brotliCompressSync(wasm).length, budget: 300_000 },
   { name: "main+worker raw", bytes: js.length, budget: 68_000 },
   { name: "main+worker gzip", bytes: gzipSync(js, { level: 9 }).length, budget: 25_000 },
 ];
