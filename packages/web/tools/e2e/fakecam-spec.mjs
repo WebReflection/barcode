@@ -42,8 +42,6 @@ export const CASES = [
   // inverted codes on a WHITE page: only the ROI crop retry can read these
   ["island-qrcode", "ISLAND-QR-E2E"],
   ["island-code128", "ISLAND-C128-E2E"],
-  // quarter-turn gate (sideways 1D, e.g. loyalty cards / receipts)
-  ["rotated-code128", "ROTATED-CODE128"],
   // diagonal gate (source-rotation retry, real camera path)
   ["diagonal-aztec", "DIAGONAL-AZTEC"],
   // small-in-frame specimens: the full-frame downscale loses the module
@@ -83,13 +81,8 @@ export const MOCK = `
     island = true;
     q = q.slice("island-".length);
   }
-  // rotated-<symbology>:<text> — quarter-turned specimen (sideways 1D)
-  let rotate = 0;
-  if (q.startsWith("rotated-")) {
-    rotate = 90;
-    q = q.slice("rotated-".length);
-  }
   // diagonal-<symbology>:<text> — 45° specimen (source-rotation retry)
+  let rotate = 0;
   if (q.startsWith("diagonal-")) {
     rotate = 45;
     q = q.slice("diagonal-".length);

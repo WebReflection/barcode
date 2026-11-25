@@ -452,11 +452,15 @@ impl BarcodeScanner {
             }
             two_d
         };
-        // Quarter-turn passes are one fast SWAR transpose + shared row
-        // scans. On a still frame whose 2D sweep already spent the
-        // caller's budget, skip them (0° + 180° still run); the 1D
-        // pre-pass on a photo has no 2D cost, so it always gets them.
-        let allow_quarter = !still || now_ms().saturating_sub(start) < still_budget_ms;
+        // Sideways 1D scans are a STILL-only fallback: a gallery photo may be
+        // stored quarter-turned. Live frames keep 0° + 180° only — the UI's
+        // horizontal reticle makes the user rotate the phone to aim, which
+        // rotates the frame too, so a live 90/270° pass can only surface a
+        // code the user did NOT aim at (and a vertical strip crossing the
+        // reticle line ranks above a peripheral intended target). Still
+        // frames whose 2D sweep already spent the caller's budget also skip
+        // them.
+        let allow_quarter = still && now_ms().saturating_sub(start) < still_budget_ms;
         if !two_d.is_empty() {
             // A CENTERED 2D read satisfies the one-code contract: the
             // linear tier's only job is to compete for the reticle, so
