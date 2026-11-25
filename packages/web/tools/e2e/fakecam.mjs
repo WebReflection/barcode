@@ -136,12 +136,11 @@ const cases = args[0] === "--all"
     })();
 
 for (const [s, t] of cases) {
-  // inverted-/rotated-/diagonal-/tinyNN-<sym> are fixture variants, not
+  // inverted-/island-/diagonal-/tinyNN-<sym> are fixture variants, not
   // decoder formats
   const format = s
     .replace(/^inverted-/, "")
     .replace(/^island-/, "")
-    .replace(/^rotated-/, "")
     .replace(/^diagonal-/, "")
     .replace(/^tiny\d+-/, "");
   const max = s.startsWith("tiny") ? "&max=1056" : "";

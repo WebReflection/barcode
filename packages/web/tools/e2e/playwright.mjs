@@ -256,7 +256,6 @@ async function suiteFakecam(browser, project) {
     const format = s
       .replace(/^inverted-/, "")
       .replace(/^island-/, "")
-      .replace(/^rotated-/, "")
       .replace(/^diagonal-/, "")
       .replace(/^tiny\d+-/, "");
     const max = s.startsWith("tiny") ? "&max=1056" : "";

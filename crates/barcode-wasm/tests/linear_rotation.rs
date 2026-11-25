@@ -1,7 +1,10 @@
 //! Quarter-turn gate for the linear tier: a 1D barcode printed sideways
 //! (loyalty cards, receipts held in portrait) is invisible to a row
-//! scanner. The tier now tries 90° and 270° after the upright and mirrored
-//! passes, mapping the hit quads back into the original frame.
+//! scanner. Still photos try 90° and 270° after the upright and mirrored
+//! passes, mapping the hit quads back into the original frame. Live frames
+//! deliberately do not: the UI keeps a horizontal reticle, so the user
+//! rotates the phone to aim, and a live 90/270° pass would only surface a
+//! code they did not aim at (2026-11-25 scope decision).
 //!
 //! Field anchor: a loyalty-card Code 128 read zero hits upright and
 //! decoded at 90° at native resolution (the payload stays in the
@@ -42,12 +45,13 @@ fn rotate(packed: &[u8], w: usize, h: usize, deg: usize) -> (Vec<u8>, usize, usi
 fn assert_reads(name: &str, c: &Canvas, tiers: Tiers, want: &str) {
     for deg in [0usize, 90, 180, 270] {
         let (packed, w, h) = rotate(c.bits(), c.width as usize, c.height as usize, deg);
+        // Still photos keep sideways reads (stored quarter-turned images).
         let mut sc = BarcodeScanner::new();
-        let hits = sc.decode_live_core(w, h, &packed, tiers);
+        let hits = sc.decode_still_core(w, h, &packed, tiers, 4000);
         let hit = hits.iter().find(|h| h.text == want);
         let hit = hit.unwrap_or_else(|| {
             panic!(
-                "{name} {deg}°: no hit (got {:?})",
+                "{name} still {deg}°: no hit (got {:?})",
                 hits.iter().map(|h| &h.text).collect::<Vec<_>>()
             )
         });
@@ -59,11 +63,27 @@ fn assert_reads(name: &str, c: &Canvas, tiers: Tiers, want: &str) {
                 p.y
             );
         }
+        // Live stays reticle-aligned: 0/180 read, 90/270 must not.
+        let mut sc = BarcodeScanner::new();
+        let live = sc.decode_live_core(w, h, &packed, tiers);
+        if deg == 0 || deg == 180 {
+            assert!(
+                live.iter().any(|h| h.text == want),
+                "{name} live {deg}°: upright/upside-down must read (got {:?})",
+                live.iter().map(|h| &h.text).collect::<Vec<_>>()
+            );
+        } else {
+            assert!(
+                live.is_empty(),
+                "{name} live {deg}°: the quarter-turn pass is still-only (got {:?})",
+                live.iter().map(|h| &h.text).collect::<Vec<_>>()
+            );
+        }
     }
 }
 
 #[test]
-fn linear_barcodes_read_at_every_quarter_turn() {
+fn still_linear_barcodes_read_at_every_quarter_turn() {
     let module = 4;
     let height = 120;
     let quiet = 10 * module;
