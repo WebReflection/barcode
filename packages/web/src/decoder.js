@@ -13,6 +13,10 @@ import wasmUrl from "./wasm/pkg/barcode_wasm_bg.wasm?url";
  * @property {string} symbology
  * @property {Uint8Array} raw Exact payload bytes (binary QR byte mode etc.).
  * @property {Array<{x: number, y: number}>} position Corner quad in frame coordinates.
+ * @property {number} [rows] Data Matrix ECC200 module rows, borders
+ *   included (a rectangular DMRE keeps its shape on re-render); absent for
+ *   every other symbology.
+ * @property {number} [cols] see `rows`.
  * @property {number} [score] Reticle priority attached by api/worker.js
  *   (1 = under the frame center, 0 = peripheral); absent on raw frames.
  */
@@ -61,7 +65,7 @@ export async function getSupportedSymbologies() {
 export function decodeFrame(scanner, frame, formats, opts = {}) {
   const still = opts.still === true;
   const latency = opts.latency ?? 5000;
-  const raw = /** @type {Array<{text: string, raw: number[] | Uint8Array, symbology: string, quad: number[]}>} */ (
+  const raw = /** @type {Array<{text: string, raw: number[] | Uint8Array, symbology: string, rows?: number, cols?: number, quad: number[]}>} */ (
     formats?.length
       ? still
         ? scanner.decode_filtered_still(frame.width, frame.height, frame.data, formats, latency)
@@ -76,6 +80,8 @@ export function decodeFrame(scanner, frame, formats, opts = {}) {
     // over as a plain array — make the typed view here, once.
     raw: r.raw instanceof Uint8Array ? r.raw : Uint8Array.from(r.raw ?? []),
     symbology: r.symbology,
+    rows: r.rows,
+    cols: r.cols,
     position: [0, 1, 2, 3].map((i) => ({
       x: r.quad[i * 2] ?? 0,
       y: r.quad[i * 2 + 1] ?? 0,

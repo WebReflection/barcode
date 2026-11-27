@@ -58,6 +58,17 @@ struct WasmResult {
     symbology: String,
     /// x0, y0, x1, y1, x2, y2, x3, y3
     quad: [f32; 8],
+    /// Data Matrix ECC200 size in modules (borders included), so a
+    /// re-render keeps a rectangular DMRE rectangular. Omitted for every
+    /// other symbology (0/0), leaving their result shape unchanged.
+    #[serde(skip_serializing_if = "is_zero")]
+    rows: u16,
+    #[serde(skip_serializing_if = "is_zero")]
+    cols: u16,
+}
+
+fn is_zero(v: &u16) -> bool {
+    *v == 0
 }
 
 #[wasm_bindgen]
@@ -1270,6 +1281,8 @@ impl WasmResult {
             raw: r.raw,
             symbology,
             quad,
+            rows: r.rows,
+            cols: r.cols,
         }
     }
 }

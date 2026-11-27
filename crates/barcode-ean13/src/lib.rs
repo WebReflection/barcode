@@ -435,6 +435,8 @@ impl Ean13Decoder {
         let text: String = digits.iter().map(|d| (b'0' + d) as char).collect();
         DecodeResult {
             symbology: Symbology::EAN13,
+            rows: 0,
+            cols: 0,
             raw: text.as_bytes().to_vec(),
             text,
             position: [

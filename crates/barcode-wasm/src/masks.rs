@@ -294,6 +294,8 @@ pub(crate) fn decode_dm_at(
                 }
                 Some(barcode_core::DecodeResult {
                     symbology: barcode_core::Symbology::DataMatrix,
+                    rows: loc.rows as u16,
+                    cols: loc.cols as u16,
                     text,
                     raw: payload.to_vec(),
                     position,
@@ -399,6 +401,8 @@ pub fn decode_pdf417_mask(img: &BitImage) -> Vec<barcode_core::DecodeResult> {
         }
         barcode_core::DecodeResult {
             symbology: barcode_core::Symbology::PDF417,
+            rows: 0,
+            cols: 0,
             text: barcode_core::payload_text(&hit.payload),
             raw: hit.payload.clone(),
             position,
@@ -447,6 +451,8 @@ pub fn decode_aztec_mask(img: &BitImage) -> Vec<barcode_core::DecodeResult> {
             }
             barcode_core::DecodeResult {
                 symbology: barcode_core::Symbology::Aztec,
+                rows: 0,
+                cols: 0,
                 text,
                 raw: payload,
                 position,

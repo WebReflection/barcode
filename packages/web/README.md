@@ -19,7 +19,7 @@ import '@webreflection/barcode/css'; // optional: the default scan UI
 
 const { scan, render } = barcode();
 
-// scan: one code per call — resolves with { symbology, text, raw, position, score }
+// scan: one code per call — resolves with { symbology, text, raw, position, rows?, cols?, score }
 // or undefined (graceful end: abort, or the latency expired)
 const code = await scan();          // default UI: viewfinder + ✕
 if (code) {
@@ -90,11 +90,13 @@ const { scan } = barcode({
 
 ### scan(options) → Promise&lt;Code | undefined&gt;
 
-`Code` is `{ symbology, text, raw, position, score }` — most-centered
+`Code` is `{ symbology, text, raw, position, rows?, cols?, score }` — most-centered
 result first, larger symbol as tiebreak. `raw` holds the exact payload
-bytes; `text` is their display form. The promise resolves **once**: a
-real error (camera denied, broken pipeline) rejects; a graceful end
-resolves `undefined` and never throws.
+bytes; `text` is their display form. A Data Matrix result also carries its
+ECC200 `rows`/`cols` (borders included, so a rectangular DMRE stays
+rectangular on re-render); every other symbology omits them. The promise
+resolves **once**: a real error (camera denied, broken pipeline) rejects; a
+graceful end resolves `undefined` and never throws.
 
 Exactly one mode per call:
 
@@ -131,7 +133,7 @@ yields the same value.
 | `version` | QR | smallest that fits | version 1–40; pads the symbol to that size |
 | `level` | PDF417 | encoder default | error correction level 0–8 |
 | `columns` | PDF417 | auto | data columns 1–30 |
-| `rows`, `cols` | Data Matrix | smallest square | ECC200 size in modules **including borders** (e.g. `12` / `36` for a DMRE) |
+| `rows`, `cols` | Data Matrix | decoded size (else smallest square) | ECC200 size in modules **including borders** (e.g. `12` / `36` for a DMRE); a scan result re-renders at the size it decoded at, falling back to the smallest square when the payload does not fit |
 
 Every option is optional and keeps the historical default; options that
 do not apply to the symbology are ignored. Out-of-range values throw a

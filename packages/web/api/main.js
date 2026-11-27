@@ -87,6 +87,8 @@ const handled = new WeakSet();
  *   text: string,
  *   raw: Uint8Array,
  *   position: Array<{x: number, y: number}>,
+ *   rows?: number,
+ *   cols?: number,
  *   score?: number,
  * }} Code
  */
@@ -126,6 +128,8 @@ const handled = new WeakSet();
  *   symbology: string,
  *   text?: string,
  *   raw?: Uint8Array,
+ *   rows?: number,
+ *   cols?: number,
  * }} RenderInput
  */
 
@@ -647,7 +651,9 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
    *   module (4), height (30 * module)
    *   ec "L"|"M"|"Q"|"H" (M), mask 0..7 (2), version 1..40 (smallest)
    *   level 0..8 (PDF417 default), columns 1..30 (auto)
-   *   rows/cols (Data Matrix ECC200 size incl. borders; smallest square)
+   *   rows/cols (Data Matrix ECC200 size incl. borders; a scan result
+   *   re-renders at the size it decoded at — rectangular DMRE included;
+   *   otherwise smallest square)
    * Out-of-range values throw a TypeError here, before the worker.
    *
    * @param {Code | RenderInput | null | undefined} result
@@ -661,8 +667,16 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
     // Decode results are canonical already; hand-built inputs may use any
     // case, so this boundary still normalizes once for the encoder.
     const symbology = String(result.symbology ?? '').trim().toLowerCase();
+    // A Data Matrix scan result knows the ECC200 size it decoded at: keep a
+    // rectangular DMRE rectangular on re-render unless the caller asks for
+    // another size. If the payload does not fit that recorded size under
+    // the encoder's current mode support, fall back to the smallest symbol
+    // rather than failing a convenience re-render.
+    const rows = result.rows ?? 0;
+    const cols = result.cols ?? 0;
+    const inherit = opts.rows == null && rows > 0 && cols > 0 ? { rows, cols } : null;
     // Throws a clear TypeError for out-of-range / unknown options.
-    const layout = normalizeRenderOptions(opts);
+    const layout = normalizeRenderOptions(inherit ? { ...opts, ...inherit } : opts);
     const module = opts.module ?? 4;
     // binary-capable symbologies encode the exact bytes; for everything
     // else a `raw` must be the UTF-8 of the intended text (as it always
@@ -671,14 +685,21 @@ export default (/** @type {BarcodeOptions} */ opts = {}) => {
     // GS1 DataBar scan text is `(01)` + 14 digits; encoders take the
     // 13-digit body (see encodableText).
     const payload = encodableText(symbology, text);
-    const fx = await utils.encode({
+    const request = {
       symbology,
       text: payload,
       raw: useRaw ? raw : null,
       module,
       height: opts.height ?? 30 * module,
       ...layout,
-    });
+    };
+    let fx;
+    try {
+      fx = await utils.encode(request);
+    } catch (err) {
+      if (!inherit) throw err;
+      fx = await utils.encode({ ...request, rows: 0, cols: 0 });
+    }
     return bitmapToSVG(fx, text || `binary: ${raw?.length ?? 0} bytes`);
   };
 

@@ -631,6 +631,8 @@ pub fn decode(image: &BitImage) -> Vec<DecodeResult> {
                 let text = barcode_core::payload_text(&payload);
                 out.push(DecodeResult {
                     symbology: Symbology::QRCodeMicro,
+                    rows: 0,
+                    cols: 0,
                     raw: payload,
                     text,
                     position: quad,
@@ -647,6 +649,8 @@ pub fn decode(image: &BitImage) -> Vec<DecodeResult> {
         let text = barcode_core::payload_text(&payload);
         out.push(DecodeResult {
             symbology: Symbology::QRCodeMicro,
+            rows: 0,
+            cols: 0,
             raw: payload,
             text,
             position: quad,
