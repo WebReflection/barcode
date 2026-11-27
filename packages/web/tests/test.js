@@ -319,6 +319,35 @@ async function optionsPass() {
       console.error("options-pass:", c.symbology, c.opts, err);
     }
   }
+  // A Data Matrix scan result carries its ECC200 size, so render(code)
+  // keeps a rectangular DMRE rectangular; a payload that does not fit the
+  // recorded size must fall back instead of failing.
+  total++;
+  try {
+    let node = /** @type {SVGSVGElement} */ (
+      await api.render({ symbology: "datamatrix", text: "OPTIONS-DM" }, { rows: 12, cols: 36 })
+    );
+    if (!node) throw new Error("DMRE render → null");
+    node.setAttribute("style", "max-height:32px;max-width:240px;width:auto;height:auto");
+    const code = await api.scan({ image: await rasterizeSVG(node, 2) });
+    if (!code) throw new Error("DMRE scan → null");
+    if (code.rows !== 12 || code.cols !== 36) throw new Error(`result size ${code.rows}x${code.cols}`);
+    node = /** @type {SVGSVGElement} */ (await api.render(code));
+    if (!node) throw new Error("inherited render → null");
+    const box = node.viewBox.baseVal;
+    if (box.width !== (36 + 8) * 4 || box.height !== (12 + 8) * 4) {
+      throw new Error(`inherited geometry ${box.width}x${box.height}`);
+    }
+    // 300 lowercase chars need 72x72: the recorded 12x36 cannot hold them.
+    node = /** @type {SVGSVGElement} */ (
+      await api.render({ symbology: "datamatrix", text: "a".repeat(300), rows: 12, cols: 36 })
+    );
+    if (!node) throw new Error("fallback render → null");
+    if (node.viewBox.baseVal.width <= (36 + 8) * 4) throw new Error("fallback kept the too-small size");
+    ok++;
+  } catch (err) {
+    console.error("dm-inherit-pass:", err);
+  }
   return { ok, total };
 }
 

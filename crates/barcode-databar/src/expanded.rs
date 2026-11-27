@@ -55,6 +55,8 @@ impl DataBarExpandedDecoder {
     fn finish(&self, text: &str, x0: u32, x1: u32, y0: u32, y1: u32) -> DecodeResult {
         DecodeResult {
             symbology: Symbology::DataBarExpanded,
+            rows: 0,
+            cols: 0,
             text: text.to_string(),
             raw: text.as_bytes().to_vec(),
             position: [

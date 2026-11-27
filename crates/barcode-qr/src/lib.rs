@@ -898,6 +898,8 @@ impl SymbologyDecoder for QrDecoder {
         let position = grid.symbol_quad().map(|(x, y)| Point { x, y });
         vec![DecodeResult {
             symbology: Symbology::QRCode,
+            rows: 0,
+            cols: 0,
             text,
             raw: payload,
             position,

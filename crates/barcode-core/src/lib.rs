@@ -94,6 +94,13 @@ pub struct DecodeResult {
     /// they are mapped to `text` Latin-1-style (byte → U+0000..U+00FF).
     pub raw: Vec<u8>,
     pub position: Quad,
+    /// Module-grid size, borders included, for symbologies whose version
+    /// is not otherwise in the result: Data Matrix ECC200 (including the
+    /// rectangular DMRE sizes, e.g. 12×36). `0`/`0` for every other
+    /// symbology. This is the exact size the symbol decoded at, so a
+    /// re-render can keep a DMRE rectangular instead of forcing a square.
+    pub rows: u16,
+    pub cols: u16,
 }
 
 /// Byte → `char` (Latin-1 style) display mapping: the stable text form

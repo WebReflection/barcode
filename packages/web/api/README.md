@@ -110,10 +110,12 @@ Resolves **once**, with the best code or `undefined` when the scan
 ended without a read (aborted, or the still latency expired). It never
 throws for a graceful end; real errors (camera denied, broken
 pipeline) reject. `Code` is
-`{ symbology, text, raw, position: [{x, y} × 4], score }` — `raw` is
+`{ symbology, text, raw, position: [{x, y} × 4], rows?, cols?, score }` — `raw` is
 the exact payload `Uint8Array` (binary QR byte mode, Aztec, DataMatrix,
 PDF417 payloads survive only there; `text` maps non-UTF-8 bytes
-Latin-1-style), `score` is the
+Latin-1-style), `rows`/`cols` are the Data Matrix ECC200 size (borders
+included, so a rectangular DMRE keeps its shape on `render()`; omitted
+for every other symbology), `score` is the
 reticle rank (1 = the code the viewfinder is aimed at, 0 = peripheral;
 see **Center priority** below, larger symbol wins ties). One code per
 scan by design: the most accurate single read. The confirmation law
@@ -282,6 +284,12 @@ Re-encodes a result as a standalone SVG (`{ module, height }` to tune
 module size/height; style via `--barcode-ink` / `--barcode-paper`).
 `undefined` or an empty result → `null`. Stateless — fire N in
 parallel.
+
+A Data Matrix result re-renders at the ECC200 size it decoded at (a
+rectangular DMRE stays rectangular); pass `rows`/`cols` to force another
+size. If the payload does not fit the recorded size under the encoder's
+current mode support, it falls back to the smallest square instead of
+failing.
 
 ### Center priority (what the viewfinder is aiming at)
 

@@ -15,6 +15,12 @@ export interface Code {
   raw: Uint8Array;
   /** The four corner points, in mask coordinates. */
   position: Array<{ x: number; y: number }>;
+  /** Data Matrix ECC200 module rows, borders included — a rectangular
+   *  DMRE (e.g. 12×36) keeps its shape when `render(code)` re-renders it.
+   *  Absent for every other symbology. */
+  rows?: number;
+  /** Data Matrix ECC200 module columns; present together with `rows`. */
+  cols?: number;
   /** Centering rank: 1 = dead center, 0 = frame corner. */
   score?: number;
 }

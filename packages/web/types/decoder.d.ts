@@ -42,6 +42,16 @@ export type DecodedCode = {
         y: number;
     }>;
     /**
+     * Data Matrix ECC200 module rows, borders
+     * included (a rectangular DMRE keeps its shape on re-render); absent for
+     * every other symbology.
+     */
+    rows?: number | undefined;
+    /**
+     * see `rows`.
+     */
+    cols?: number | undefined;
+    /**
      * Reticle priority attached by api/worker.js
      * (1 = under the frame center, 0 = peripheral); absent on raw frames.
      */

@@ -108,11 +108,14 @@ fn datamatrix_size_is_honoured() {
         assert_eq!((enc.spec.rows, enc.spec.cols), (rows, cols));
         let c = render(&enc.matrix, rows, cols, 4, 4);
         let img = BitImage::new(c.width, c.height, c.bits());
-        assert!(
-            decode_datamatrix_mask_budget(&img, true, 5000)
-                .iter()
-                .any(|h| h.text == "OPTIONS-DM"),
-            "{rows}x{cols}: did not decode"
+        let hit = decode_datamatrix_mask_budget(&img, true, 5000)
+            .into_iter()
+            .find(|h| h.text == "OPTIONS-DM")
+            .unwrap_or_else(|| panic!("{rows}x{cols}: did not decode"));
+        assert_eq!(
+            (hit.rows, hit.cols),
+            (rows as u16, cols as u16),
+            "{rows}x{cols}: the decode result must carry the ECC200 size"
         );
     }
 }
